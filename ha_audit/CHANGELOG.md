@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.2
+
+- Added source line numbers for missing active include targets
+- Added source line numbers for missing entity reference candidates
+- Classified inactive YAML into:
+  - blueprints
+  - Zigbee2MQTT configuration
+  - backup/archive files
+  - orphan candidates
+- Reduced false orphan warnings by separating known non-HA configuration files
+- Improved configuration-quality report readability
+
 ## 0.6.1
 
 - Added active YAML include-tree discovery starting from `configuration.yaml`
