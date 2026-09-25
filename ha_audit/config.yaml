@@ -1,0 +1,21 @@
+name: "HA Audit"
+version: "0.1.0"
+slug: "ha_audit"
+description: "Read-only Home Assistant health and configuration auditor"
+
+arch:
+  - amd64
+
+boot: manual
+init: false
+
+hassio_api: true
+homeassistant_api: true
+hassio_role: default
+
+map:
+  - type: addon_config
+    read_only: false
+
+options: {}
+schema: {}
