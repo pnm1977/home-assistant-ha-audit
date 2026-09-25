@@ -6,7 +6,8 @@ description: "Read-only Home Assistant health and configuration auditor"
 arch:
   - amd64
 
-boot: manual
+startup: once
+boot: manual_only
 init: false
 
 hassio_api: true
