@@ -18,5 +18,8 @@ map:
   - type: addon_config
     read_only: false
 
+  - type: homeassistant_config
+    read_only: true
+
 options: {}
 schema: {}
