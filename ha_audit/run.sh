@@ -1,6 +1,6 @@
 #!/usr/bin/with-contenv bashio
 
-bashio::log.info "Starting HA Audit v0.5.0"
+bashio::log.info "Starting HA Audit v0.5.1"
 
 if ! python3 /audit.py; then
     bashio::log.error "System audit module failed"
