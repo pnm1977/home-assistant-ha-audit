@@ -7,6 +7,7 @@ RUN apk add --no-cache python3 py3-requests py3-websocket-client
 
 COPY run.sh /
 COPY audit.py /
+COPY config_scan.py /
 
 RUN chmod a+x /run.sh
 
