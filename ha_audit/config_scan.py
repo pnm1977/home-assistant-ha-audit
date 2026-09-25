@@ -173,7 +173,7 @@ inventory = {
         timezone.utc
     ).isoformat(),
 
-    "scanner_version": "0.5.1",
+    "scanner_version": "0.6.0",
 
     "config_root": CONFIG_ROOT,
 
