@@ -6,10 +6,14 @@ from datetime import datetime, timezone
 import requests
 import websocket
 
+
 TOKEN = os.environ["SUPERVISOR_TOKEN"]
 
 SUPERVISOR = "http://supervisor"
 WS_URL = "ws://supervisor/core/websocket"
+
+OUTPUT_FILE = "/config/audit_snapshot.json"
+PREVIOUS_FILE = "/config/audit_snapshot_previous.json"
 
 HEADERS = {
     "Authorization": f"Bearer {TOKEN}",
@@ -67,7 +71,7 @@ def safe_collect(function):
 
 
 # ------------------------------------------------------------
-# WebSocket helper
+# WebSocket registry collector
 # ------------------------------------------------------------
 
 def collect_registries():
@@ -78,11 +82,11 @@ def collect_registries():
     )
 
     try:
-        message = json.loads(ws.recv())
+        greeting = json.loads(ws.recv())
 
-        if message.get("type") != "auth_required":
+        if greeting.get("type") != "auth_required":
             raise RuntimeError(
-                f"Unexpected WebSocket greeting: {message}"
+                f"Unexpected WebSocket greeting: {greeting}"
             )
 
         ws.send(
@@ -94,11 +98,11 @@ def collect_registries():
             )
         )
 
-        auth_result = json.loads(ws.recv())
+        authentication = json.loads(ws.recv())
 
-        if auth_result.get("type") != "auth_ok":
+        if authentication.get("type") != "auth_ok":
             raise RuntimeError(
-                f"WebSocket authentication failed: {auth_result}"
+                f"WebSocket authentication failed: {authentication}"
             )
 
         commands = [
@@ -142,7 +146,25 @@ def collect_registries():
 
 
 # ------------------------------------------------------------
-# Basic HA information
+# Load previous audit
+# ------------------------------------------------------------
+
+previous_snapshot = None
+
+if os.path.exists(OUTPUT_FILE):
+    try:
+        with open(
+            OUTPUT_FILE,
+            "r",
+            encoding="utf-8",
+        ) as file:
+            previous_snapshot = json.load(file)
+    except Exception:
+        previous_snapshot = None
+
+
+# ------------------------------------------------------------
+# Collect HA information
 # ------------------------------------------------------------
 
 supervisor_result = safe_collect(
@@ -178,7 +200,7 @@ registry_result = safe_collect(
 
 
 # ------------------------------------------------------------
-# Extract safe results
+# Safe extraction
 # ------------------------------------------------------------
 
 supervisor = (
@@ -219,7 +241,7 @@ registry_data = (
 
 
 # ------------------------------------------------------------
-# Entity registry
+# Registries
 # ------------------------------------------------------------
 
 entity_display = registry_data.get(
@@ -239,10 +261,6 @@ entity_registry_by_id = {
 }
 
 
-# ------------------------------------------------------------
-# Device registry
-# ------------------------------------------------------------
-
 devices = registry_data.get(
     "config/device_registry/list",
     [],
@@ -254,10 +272,6 @@ device_by_id = {
     if device.get("id")
 }
 
-
-# ------------------------------------------------------------
-# Area registry
-# ------------------------------------------------------------
 
 areas = registry_data.get(
     "config/area_registry/list",
@@ -272,7 +286,7 @@ area_by_id = {
 
 
 # ------------------------------------------------------------
-# Current states
+# Entity analysis
 # ------------------------------------------------------------
 
 domain_counts = Counter()
@@ -280,10 +294,13 @@ domain_counts = Counter()
 unavailable_entities = []
 unknown_entities = []
 
-updates_available = []
-
 unavailable_by_platform = Counter()
 unknown_by_platform = Counter()
+
+unavailable_by_device = Counter()
+unknown_by_device = Counter()
+
+updates_available = []
 
 
 def enrich_entity(state_entry):
@@ -320,11 +337,23 @@ def enrich_entity(state_entry):
             or registry.get("en")
         ),
         "platform": platform,
-        "area": area_by_id.get(area_id),
         "device": device_name,
+        "device_id": device_id,
+        "area": area_by_id.get(area_id),
         "manufacturer": device.get("manufacturer"),
         "model": device.get("model"),
+        "last_changed": state_entry.get("last_changed"),
     }
+
+
+def device_label(entity):
+    device_name = entity.get("device")
+    platform = entity.get("platform")
+
+    if device_name:
+        return f"{device_name} [{platform}]"
+
+    return f"No device [{platform}]"
 
 
 for state_entry in states:
@@ -342,18 +371,28 @@ for state_entry in states:
 
     if state == "unavailable":
         enriched = enrich_entity(state_entry)
+
         unavailable_entities.append(enriched)
 
         unavailable_by_platform[
             enriched["platform"]
         ] += 1
 
+        unavailable_by_device[
+            device_label(enriched)
+        ] += 1
+
     elif state == "unknown":
         enriched = enrich_entity(state_entry)
+
         unknown_entities.append(enriched)
 
         unknown_by_platform[
             enriched["platform"]
+        ] += 1
+
+        unknown_by_device[
+            device_label(enriched)
         ] += 1
 
     if domain == "update" and state == "on":
@@ -374,20 +413,8 @@ for state_entry in states:
 
 
 # ------------------------------------------------------------
-# Registry statistics
+# Device structure
 # ------------------------------------------------------------
-
-enabled_entities_by_platform = Counter()
-
-for entry in entity_registry:
-    enabled_entities_by_platform[
-        entry.get("pl", "unknown")
-    ] += 1
-
-
-# Core 2026.9 introduces child devices.
-# We deliberately recognise them separately rather than
-# assuming every device has normal hardware metadata.
 
 child_devices = [
     device
@@ -403,11 +430,87 @@ regular_devices = [
 
 
 # ------------------------------------------------------------
+# Compare against previous audit
+# ------------------------------------------------------------
+
+current_unavailable_ids = {
+    item["entity_id"]
+    for item in unavailable_entities
+}
+
+current_unknown_ids = {
+    item["entity_id"]
+    for item in unknown_entities
+}
+
+
+previous_unavailable_ids = set()
+previous_unknown_ids = set()
+
+previous_generated_at = None
+
+
+if previous_snapshot:
+    previous_generated_at = previous_snapshot.get(
+        "generated_at"
+    )
+
+    try:
+        previous_unavailable_ids = {
+            item["entity_id"]
+            for item in previous_snapshot[
+                "entities"
+            ][
+                "unavailable"
+            ][
+                "entities"
+            ]
+        }
+    except Exception:
+        previous_unavailable_ids = set()
+
+    try:
+        previous_unknown_ids = {
+            item["entity_id"]
+            for item in previous_snapshot[
+                "entities"
+            ][
+                "unknown"
+            ][
+                "entities"
+            ]
+        }
+    except Exception:
+        previous_unknown_ids = set()
+
+
+new_unavailable = sorted(
+    current_unavailable_ids
+    - previous_unavailable_ids
+)
+
+resolved_unavailable = sorted(
+    previous_unavailable_ids
+    - current_unavailable_ids
+)
+
+new_unknown = sorted(
+    current_unknown_ids
+    - previous_unknown_ids
+)
+
+resolved_unknown = sorted(
+    previous_unknown_ids
+    - current_unknown_ids
+)
+
+
+# ------------------------------------------------------------
 # Snapshot
 # ------------------------------------------------------------
 
 snapshot = {
-    "audit_version": "0.3.0",
+    "audit_version": "0.4.0",
 
     "generated_at": datetime.now(
         timezone.utc
@@ -425,11 +528,15 @@ snapshot = {
 
     "inventory": {
         "state_entities": len(states),
-        "registered_enabled_entities": len(
+        "registered_entities": len(
             entity_registry
         ),
-        "regular_devices": len(regular_devices),
-        "child_devices": len(child_devices),
+        "regular_devices": len(
+            regular_devices
+        ),
+        "child_devices": len(
+            child_devices
+        ),
         "areas": len(areas),
     },
 
@@ -438,15 +545,17 @@ snapshot = {
             sorted(domain_counts.items())
         ),
 
-        "by_platform": dict(
-            enabled_entities_by_platform.most_common()
-        ),
-
         "unavailable": {
-            "count": len(unavailable_entities),
+            "count": len(
+                unavailable_entities
+            ),
 
             "by_platform": dict(
                 unavailable_by_platform.most_common()
+            ),
+
+            "by_device": dict(
+                unavailable_by_device.most_common()
             ),
 
             "entities": sorted(
@@ -459,10 +568,16 @@ snapshot = {
         },
 
         "unknown": {
-            "count": len(unknown_entities),
+            "count": len(
+                unknown_entities
+            ),
 
             "by_platform": dict(
                 unknown_by_platform.most_common()
+            ),
+
+            "by_device": dict(
+                unknown_by_device.most_common()
             ),
 
             "entities": sorted(
@@ -473,6 +588,30 @@ snapshot = {
                 ),
             ),
         },
+    },
+
+    "changes_since_previous": {
+        "previous_generated_at": previous_generated_at,
+
+        "new_unavailable_count": len(
+            new_unavailable
+        ),
+        "new_unavailable": new_unavailable,
+
+        "resolved_unavailable_count": len(
+            resolved_unavailable
+        ),
+        "resolved_unavailable": resolved_unavailable,
+
+        "new_unknown_count": len(
+            new_unknown
+        ),
+        "new_unknown": new_unknown,
+
+        "resolved_unknown_count": len(
+            resolved_unknown
+        ),
+        "resolved_unknown": resolved_unknown,
     },
 
     "automations": {
@@ -493,7 +632,6 @@ snapshot = {
         "available_count": len(
             updates_available
         ),
-
         "available": updates_available,
     },
 
@@ -512,13 +650,31 @@ snapshot = {
 
 
 # ------------------------------------------------------------
-# Save
+# Preserve previous report
 # ------------------------------------------------------------
 
-output_file = "/config/audit_snapshot.json"
+if previous_snapshot:
+    try:
+        with open(
+            PREVIOUS_FILE,
+            "w",
+            encoding="utf-8",
+        ) as file:
+            json.dump(
+                previous_snapshot,
+                file,
+                indent=2,
+            )
+    except Exception:
+        pass
+
+
+# ------------------------------------------------------------
+# Save latest report
+# ------------------------------------------------------------
 
 with open(
-    output_file,
+    OUTPUT_FILE,
     "w",
     encoding="utf-8",
 ) as file:
@@ -535,43 +691,15 @@ with open(
 
 print("")
 print("==========================================")
-print(" HA AUDIT v0.3.0")
+print(" HA AUDIT v0.4.0")
 print("==========================================")
 
-print(
-    f"Core:                "
-    f"{snapshot['system']['core_version']}"
-)
+print(f"Core:                {core.get('version')}")
+print(f"Supervisor:          {supervisor.get('version')}")
+print(f"OS:                  {os_info.get('version')}")
 
-print(
-    f"Supervisor:          "
-    f"{snapshot['system']['supervisor_version']}"
-)
-
-print(
-    f"OS:                  "
-    f"{snapshot['system']['os_version']}"
-)
-
-print(
-    f"Entities:            "
-    f"{len(states)}"
-)
-
-print(
-    f"Registered entities: "
-    f"{len(entity_registry)}"
-)
-
-print(
-    f"Devices:             "
-    f"{len(regular_devices)}"
-)
-
-print(
-    f"Child devices:       "
-    f"{len(child_devices)}"
-)
+print(f"Entities:            {len(states)}")
+print(f"Devices:             {len(regular_devices)}")
 
 print(
     f"Unavailable:         "
@@ -611,20 +739,52 @@ print("")
 print("Unavailable by platform:")
 print("------------------------------------------")
 
-for platform, count in unavailable_by_platform.most_common(20):
-    print(
-        f"{platform:<28} {count:>5}"
-    )
+for platform, count in unavailable_by_platform.most_common(15):
+    print(f"{platform:<28} {count:>5}")
 
 
 print("")
-print("Unknown by platform:")
+print("Top unavailable devices:")
 print("------------------------------------------")
 
-for platform, count in unknown_by_platform.most_common(20):
+for device, count in unavailable_by_device.most_common(20):
+    print(f"{device:<48} {count:>5}")
+
+
+print("")
+print("Top unknown devices:")
+print("------------------------------------------")
+
+for device, count in unknown_by_device.most_common(15):
+    print(f"{device:<48} {count:>5}")
+
+
+print("")
+print("Changes since previous audit:")
+print("------------------------------------------")
+
+if previous_snapshot:
     print(
-        f"{platform:<28} {count:>5}"
+        f"New unavailable:      "
+        f"{len(new_unavailable)}"
     )
+
+    print(
+        f"Recovered unavailable:"
+        f" {len(resolved_unavailable)}"
+    )
+
+    print(
+        f"New unknown:          "
+        f"{len(new_unknown)}"
+    )
+
+    print(
+        f"Resolved unknown:     "
+        f"{len(resolved_unknown)}"
+    )
+else:
+    print("No previous audit available.")
 
 
 print("")
@@ -634,11 +794,10 @@ print("------------------------------------------")
 for collector, status in snapshot[
     "collector_status"
 ].items():
-    print(
-        f"{collector:<28} {status}"
-    )
+    print(f"{collector:<28} {status}")
 
 
 print("==========================================")
 print("")
-print(f"Full snapshot: {output_file}")
+print(f"Latest snapshot:   {OUTPUT_FILE}")
+print(f"Previous snapshot: {PREVIOUS_FILE}")
