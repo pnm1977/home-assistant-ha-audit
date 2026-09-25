@@ -14,6 +14,7 @@ VERSION = os.environ.get(
 )
 
 CONFIG_ROOT = "/homeassistant"
+
 ROOT_CONFIG = os.path.join(
     CONFIG_ROOT,
     "configuration.yaml",
@@ -47,8 +48,6 @@ EXCLUDED_DIRS = {
     "www",
 }
 
-# These may contain perfectly valid strings that resemble
-# entity IDs but are not useful for this audit.
 ENTITY_SCAN_EXCLUDED_TOP_LEVEL = {
     "themes",
     "blueprints",
@@ -59,8 +58,6 @@ INCLUDE_PATTERN = re.compile(
     r"\s+([^\s#]+)"
 )
 
-# Requires a real alphabetic HA-style domain.
-# This deliberately does NOT match values such as 0.05.
 DIRECT_ENTITY_PATTERN = re.compile(
     r"(?<![\w.])"
     r"([a-z_][a-z0-9_]*)"
@@ -70,8 +67,6 @@ DIRECT_ENTITY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Handles Jinja such as:
-# states.sensor.outdoor_temperature
 STATES_ENTITY_PATTERN = re.compile(
     r"\bstates\."
     r"([a-z_][a-z0-9_]*)"
@@ -213,21 +208,6 @@ def safe_load_yaml(path):
         return None
 
 
-def active_text(text):
-    """
-    Remove fully commented lines.
-
-    This deliberately ignores old YAML/template versions
-    retained as commented rollback/reference blocks.
-    """
-
-    return "\n".join(
-        line
-        for line in text.splitlines()
-        if not line.lstrip().startswith("#")
-    )
-
-
 def discover_all_yaml_files():
     results = set()
 
@@ -328,19 +308,68 @@ def get_ha_json(
     return payload
 
 
+def classify_inactive_file(
+    path,
+):
+    rel = relative(
+        path
+    )
+
+    rel_lower = rel.lower()
+
+    filename = os.path.basename(
+        rel_lower
+    )
+
+    if rel_lower.startswith(
+        "blueprints/"
+    ):
+        return "blueprint"
+
+    if rel_lower.startswith(
+        "zigbee2mqtt/"
+    ):
+        return "zigbee2mqtt"
+
+    backup_markers = (
+        "backup",
+        "_old",
+        "-old",
+        ".old",
+        "_copy",
+        "-copy",
+    )
+
+    if any(
+        marker in filename
+        for marker in backup_markers
+    ):
+        return "backup_or_archive"
+
+    return "orphan_candidate"
+
+
 # ------------------------------------------------------------
-# Discover active include tree
+# Discover all YAML
 # ------------------------------------------------------------
 
 all_yaml_files = (
     discover_all_yaml_files()
 )
 
+
+# ------------------------------------------------------------
+# Discover ACTIVE include tree
+# ------------------------------------------------------------
+
 active_files = set()
+
 missing_include_targets = []
+
 include_references = []
 
 files_to_process = []
+
 
 if os.path.isfile(
     ROOT_CONFIG
@@ -368,82 +397,128 @@ while files_to_process:
         current_file
     )
 
-    text = active_text(
-        read_text(
-            current_file
-        )
+    text = read_text(
+        current_file
     )
 
-    for match in INCLUDE_PATTERN.finditer(
-        text
+    for line_number, line in enumerate(
+        text.splitlines(),
+        start=1,
     ):
-        include_type = match.group(1)
-        target = match.group(2)
-
-        resolved = os.path.normpath(
-            os.path.join(
-                os.path.dirname(
-                    current_file
-                ),
-                target,
-            )
-        )
-
-        is_directory_include = (
-            include_type.startswith(
-                "include_dir_"
-            )
-        )
-
-        exists = (
-            os.path.isdir(resolved)
-            if is_directory_include
-            else os.path.isfile(resolved)
-        )
-
-        record = {
-            "source": relative(
-                current_file
-            ),
-            "type": include_type,
-            "target": target,
-            "resolved": (
-                relative(resolved)
-                if resolved.startswith(
-                    CONFIG_ROOT
-                )
-                else resolved
-            ),
-            "exists": exists,
-        }
-
-        include_references.append(
-            record
-        )
-
-        if not exists:
-            missing_include_targets.append(
-                record
-            )
+        if line.lstrip().startswith(
+            "#"
+        ):
             continue
 
-        if is_directory_include:
-            files_to_process.extend(
-                yaml_files_in_directory(
+        for match in INCLUDE_PATTERN.finditer(
+            line
+        ):
+            include_type = match.group(1)
+
+            target = match.group(2)
+
+            resolved = os.path.normpath(
+                os.path.join(
+                    os.path.dirname(
+                        current_file
+                    ),
+                    target,
+                )
+            )
+
+            is_directory_include = (
+                include_type.startswith(
+                    "include_dir_"
+                )
+            )
+
+            exists = (
+                os.path.isdir(
+                    resolved
+                )
+                if is_directory_include
+                else os.path.isfile(
                     resolved
                 )
             )
 
-        else:
-            files_to_process.append(
-                resolved
+            record = {
+                "source": relative(
+                    current_file
+                ),
+                "line": line_number,
+                "type": include_type,
+                "target": target,
+                "resolved": (
+                    relative(
+                        resolved
+                    )
+                    if resolved.startswith(
+                        CONFIG_ROOT
+                    )
+                    else resolved
+                ),
+                "exists": exists,
+            }
+
+            include_references.append(
+                record
             )
+
+            if not exists:
+                missing_include_targets.append(
+                    record
+                )
+
+                continue
+
+            if is_directory_include:
+                files_to_process.extend(
+                    yaml_files_in_directory(
+                        resolved
+                    )
+                )
+
+            else:
+                files_to_process.append(
+                    resolved
+                )
 
 
 inactive_files = (
     all_yaml_files
     - active_files
 )
+
+
+# ------------------------------------------------------------
+# Classify inactive YAML
+# ------------------------------------------------------------
+
+inactive_by_type = {
+    "blueprint": [],
+    "zigbee2mqtt": [],
+    "backup_or_archive": [],
+    "orphan_candidate": [],
+}
+
+
+for path in sorted(
+    inactive_files
+):
+    category = (
+        classify_inactive_file(
+            path
+        )
+    )
+
+    inactive_by_type[
+        category
+    ].append(
+        relative(
+            path
+        )
+    )
 
 
 # ------------------------------------------------------------
@@ -457,7 +532,9 @@ automation_file = os.path.join(
 
 automations = []
 
+
 if automation_file in active_files:
+
     loaded = safe_load_yaml(
         automation_file
     )
@@ -500,14 +577,18 @@ for index, automation in enumerate(
 
     if automation_id:
         automation_ids[
-            str(automation_id)
+            str(
+                automation_id
+            )
         ].append(
             index
         )
 
     if alias:
         automation_aliases[
-            str(alias).strip()
+            str(
+                alias
+            ).strip()
         ].append(
             index
         )
@@ -538,15 +619,20 @@ duplicate_automation_ids = {
     for key, indexes in (
         automation_ids.items()
     )
-    if len(indexes) > 1
+    if len(
+        indexes
+    ) > 1
 }
+
 
 duplicate_automation_aliases = {
     key: indexes
     for key, indexes in (
         automation_aliases.items()
     )
-    if len(indexes) > 1
+    if len(
+        indexes
+    ) > 1
 }
 
 
@@ -561,7 +647,9 @@ script_file = os.path.join(
 
 scripts = {}
 
+
 if script_file in active_files:
+
     loaded = safe_load_yaml(
         script_file
     )
@@ -595,7 +683,9 @@ for script_key, script in (
 
     if alias:
         script_aliases[
-            str(alias).strip()
+            str(
+                alias
+            ).strip()
         ].append(
             script_key
         )
@@ -625,16 +715,20 @@ duplicate_script_aliases = {
     for key, values in (
         script_aliases.items()
     )
-    if len(values) > 1
+    if len(
+        values
+    ) > 1
 }
 
 
 # ------------------------------------------------------------
-# Current Home Assistant entities/services
+# Current HA entities and services
 # ------------------------------------------------------------
 
 existing_entities = set()
+
 known_services = set()
+
 live_entity_domains = set()
 
 
@@ -644,7 +738,9 @@ try:
     )
 
     existing_entities = {
-        item.get("entity_id")
+        item.get(
+            "entity_id"
+        )
         for item in states
         if isinstance(
             item,
@@ -700,11 +796,11 @@ allowed_entity_domains = (
 
 
 # ------------------------------------------------------------
-# Active entity-reference audit
+# Active entity-reference audit WITH line numbers
 # ------------------------------------------------------------
 
-entity_reference_locations = (
-    defaultdict(set)
+entity_reference_locations = defaultdict(
+    lambda: defaultdict(set)
 )
 
 
@@ -721,84 +817,100 @@ for path in sorted(
         1,
     )[0]
 
+
     if (
         top_level
         in ENTITY_SCAN_EXCLUDED_TOP_LEVEL
     ):
         continue
 
-    text = active_text(
-        read_text(
-            path
-        )
+
+    text = read_text(
+        path
     )
 
-    candidates = set()
 
-
-    # Standard domain.object references.
-    for match in (
-        DIRECT_ENTITY_PATTERN.finditer(
-            text
-        )
+    for line_number, line in enumerate(
+        text.splitlines(),
+        start=1,
     ):
-        domain = (
-            match.group(1).lower()
-        )
 
-        object_id = (
-            match.group(2).lower()
-        )
-
-        if domain == "states":
-            continue
-
-        candidates.add(
-            f"{domain}.{object_id}"
-        )
-
-
-    # states.sensor.foo style.
-    for match in (
-        STATES_ENTITY_PATTERN.finditer(
-            text
-        )
-    ):
-        domain = (
-            match.group(1).lower()
-        )
-
-        object_id = (
-            match.group(2).lower()
-        )
-
-        candidates.add(
-            f"{domain}.{object_id}"
-        )
-
-
-    for candidate in candidates:
-
-        if candidate in known_services:
-            continue
-
-        domain = candidate.split(
-            ".",
-            1,
-        )[0]
-
-        if (
-            domain
-            not in allowed_entity_domains
+        if line.lstrip().startswith(
+            "#"
         ):
             continue
 
-        entity_reference_locations[
-            candidate
-        ].add(
-            relative_path
-        )
 
+        candidates = set()
+
+
+        for match in (
+            DIRECT_ENTITY_PATTERN.finditer(
+                line
+            )
+        ):
+            domain = (
+                match.group(1).lower()
+            )
+
+            object_id = (
+                match.group(2).lower()
+            )
+
+            if domain == "states":
+                continue
+
+            candidates.add(
+                f"{domain}.{object_id}"
+            )
+
+
+        for match in (
+            STATES_ENTITY_PATTERN.finditer(
+                line
+            )
+        ):
+            domain = (
+                match.group(1).lower()
+            )
+
+            object_id = (
+                match.group(2).lower()
+            )
+
+            candidates.add(
+                f"{domain}.{object_id}"
+            )
+
+
+        for candidate in candidates:
+
+            if candidate in known_services:
+                continue
+
+            domain = candidate.split(
+                ".",
+                1,
+            )[0]
+
+            if (
+                domain
+                not in allowed_entity_domains
+            ):
+                continue
+
+            entity_reference_locations[
+                candidate
+            ][
+                relative_path
+            ].add(
+                line_number
+            )
+
+
+# ------------------------------------------------------------
+# Missing entity candidates
+# ------------------------------------------------------------
 
 missing_entity_references = []
 
@@ -808,26 +920,48 @@ if existing_entities:
     for entity_id, locations in (
         entity_reference_locations.items()
     ):
+
         if (
             entity_id
-            not in existing_entities
+            in existing_entities
         ):
-            missing_entity_references.append(
-                {
-                    "entity_id":
-                        entity_id,
+            continue
 
-                    "files":
-                        sorted(
-                            locations
-                        ),
+
+        formatted_locations = []
+
+
+        for file_path in sorted(
+            locations
+        ):
+            formatted_locations.append(
+                {
+                    "file": file_path,
+                    "lines": sorted(
+                        locations[
+                            file_path
+                        ]
+                    ),
                 }
             )
 
 
+        missing_entity_references.append(
+            {
+                "entity_id":
+                    entity_id,
+
+                "locations":
+                    formatted_locations,
+            }
+        )
+
+
 missing_entity_references.sort(
     key=lambda item:
-        item["entity_id"]
+        item[
+            "entity_id"
+        ]
 )
 
 
@@ -851,6 +985,7 @@ for path in sorted(
     if not lines:
         continue
 
+
     comment_lines = sum(
         1
         for line in lines
@@ -859,22 +994,31 @@ for path in sorted(
         )
     )
 
+
     ratio = (
         comment_lines
-        / len(lines)
+        / len(
+            lines
+        )
     )
+
 
     if (
         comment_lines >= 50
         and ratio >= 0.20
     ):
+
         comment_stats.append(
             {
                 "file":
-                    relative(path),
+                    relative(
+                        path
+                    ),
 
                 "lines":
-                    len(lines),
+                    len(
+                        lines
+                    ),
 
                 "comment_lines":
                     comment_lines,
@@ -890,7 +1034,9 @@ for path in sorted(
 
 comment_stats.sort(
     key=lambda item:
-        item["comment_lines"],
+        item[
+            "comment_lines"
+        ],
     reverse=True,
 )
 
@@ -924,16 +1070,21 @@ quality = {
 
         "active_yaml":
             sorted(
-                relative(path)
+                relative(
+                    path
+                )
                 for path
                 in active_files
             ),
 
-        "inactive_yaml":
-            sorted(
-                relative(path)
-                for path
-                in inactive_files
+        "inactive_classification":
+            inactive_by_type,
+
+        "orphan_candidate_count":
+            len(
+                inactive_by_type[
+                    "orphan_candidate"
+                ]
             ),
 
         "include_count":
@@ -952,7 +1103,9 @@ quality = {
 
     "automations": {
         "count":
-            len(automations),
+            len(
+                automations
+            ),
 
         "duplicate_ids":
             duplicate_automation_ids,
@@ -964,14 +1117,18 @@ quality = {
             sorted(
                 large_automations,
                 key=lambda item:
-                    item["lines"],
+                    item[
+                        "lines"
+                    ],
                 reverse=True,
             ),
     },
 
     "scripts": {
         "count":
-            len(scripts),
+            len(
+                scripts
+            ),
 
         "duplicate_aliases":
             duplicate_script_aliases,
@@ -980,7 +1137,9 @@ quality = {
             sorted(
                 large_scripts,
                 key=lambda item:
-                    item["lines"],
+                    item[
+                        "lines"
+                    ],
                 reverse=True,
             ),
     },
@@ -1020,6 +1179,15 @@ quality = {
                 "not treated as active."
             ),
 
+        "blueprints_classified_separately":
+            True,
+
+        "zigbee2mqtt_classified_separately":
+            True,
+
+        "backup_yaml_classified_separately":
+            True,
+
         "themes_and_blueprints_excluded_from_entity_check":
             True,
 
@@ -1040,6 +1208,7 @@ with open(
     "w",
     encoding="utf-8",
 ) as handle:
+
     json.dump(
         quality,
         handle,
@@ -1055,6 +1224,7 @@ print("")
 print(
     "Configuration quality audit"
 )
+
 print(
     "------------------------------------------"
 )
@@ -1065,8 +1235,23 @@ print(
 )
 
 print(
-    f"Unreferenced YAML files:     "
-    f"{len(inactive_files)}"
+    f"Blueprint YAML files:        "
+    f"{len(inactive_by_type['blueprint'])}"
+)
+
+print(
+    f"Zigbee2MQTT YAML files:      "
+    f"{len(inactive_by_type['zigbee2mqtt'])}"
+)
+
+print(
+    f"Backup/archive YAML files:   "
+    f"{len(inactive_by_type['backup_or_archive'])}"
+)
+
+print(
+    f"Orphan YAML candidates:      "
+    f"{len(inactive_by_type['orphan_candidate'])}"
 )
 
 print(
@@ -1126,36 +1311,73 @@ print(
 
 
 if missing_include_targets:
+
     print("")
+
     print(
         "Missing ACTIVE include targets:"
     )
 
     for item in (
-        missing_include_targets[:20]
+        missing_include_targets[
+            :20
+        ]
     ):
         print(
-            f"  {item['source']} -> "
+            f"  {item['source']}:"
+            f"{item['line']} -> "
             f"{item['target']}"
         )
 
 
-if inactive_files:
+if inactive_by_type[
+    "orphan_candidate"
+]:
+
     print("")
+
     print(
-        "First unreferenced YAML files:"
+        "Orphan YAML candidates:"
     )
 
-    for path in sorted(
-        inactive_files
-    )[:20]:
+    for path in (
+        inactive_by_type[
+            "orphan_candidate"
+        ][
+            :20
+        ]
+    ):
         print(
-            f"  {relative(path)}"
+            f"  {path}"
+        )
+
+
+if inactive_by_type[
+    "backup_or_archive"
+]:
+
+    print("")
+
+    print(
+        "Backup/archive YAML:"
+    )
+
+    for path in (
+        inactive_by_type[
+            "backup_or_archive"
+        ][
+            :20
+        ]
+    ):
+        print(
+            f"  {path}"
         )
 
 
 if duplicate_automation_ids:
+
     print("")
+
     print(
         "Duplicate automation IDs:"
     )
@@ -1170,7 +1392,9 @@ if duplicate_automation_ids:
 
 
 if duplicate_automation_aliases:
+
     print("")
+
     print(
         "Duplicate automation names:"
     )
@@ -1185,7 +1409,9 @@ if duplicate_automation_aliases:
 
 
 if duplicate_script_aliases:
+
     print("")
+
     print(
         "Duplicate script names:"
     )
@@ -1200,31 +1426,63 @@ if duplicate_script_aliases:
 
 
 if missing_entity_references:
+
     print("")
+
     print(
         "First missing entity candidates:"
     )
 
     for item in (
-        missing_entity_references[:25]
+        missing_entity_references[
+            :25
+        ]
     ):
+
         print(
-            f"  {item['entity_id']} "
-            f"({', '.join(item['files'])})"
+            f"  {item['entity_id']}"
         )
+
+        for location in (
+            item[
+                "locations"
+            ]
+        ):
+
+            line_text = ",".join(
+                str(
+                    line
+                )
+                for line in location[
+                    "lines"
+                ]
+            )
+
+            print(
+                f"    "
+                f"{location['file']}:"
+                f"{line_text}"
+            )
 
 
 if comment_stats:
+
     print("")
+
     print(
         "Comment-heavy active files:"
     )
 
     for item in (
-        comment_stats[:15]
+        comment_stats[
+            :15
+        ]
     ):
+
         percentage = (
-            item["comment_ratio"]
+            item[
+                "comment_ratio"
+            ]
             * 100
         )
 
@@ -1237,6 +1495,7 @@ if comment_stats:
 
 
 print("")
+
 print(
     f"Quality report saved: "
     f"{OUTPUT_FILE}"
