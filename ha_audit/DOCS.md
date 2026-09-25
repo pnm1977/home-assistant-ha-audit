@@ -2,7 +2,7 @@
 
 HA Audit is a read-only Home Assistant system and configuration auditor.
 
-HA Audit includes a Configuration Quality Audit that follows the active YAML include tree and separates active configuration from unreferenced YAML.
+It is designed to help understand, maintain, troubleshoot, and improve a Home Assistant installation over time.
 
 ## How to use
 
@@ -40,7 +40,7 @@ HA Audit also compares the current result with the previous run so newly unavail
 
 ## Configuration inventory
 
-HA Audit scans Home Assistant YAML configuration using read-only access.
+HA Audit scans the Home Assistant YAML configuration using read-only access.
 
 It records:
 
@@ -52,22 +52,28 @@ It records:
 - exact duplicate YAML files
 - use of `!secret`
 
-File contents are not copied into the audit inventory.
+File contents are not copied into the inventory report.
 
 ## Configuration Quality Audit
 
-Version 0.6.0 checks for:
+HA Audit follows the active YAML include tree starting from `configuration.yaml`.
 
+This allows it to distinguish between YAML that Home Assistant is actively loading and YAML files that merely exist in the configuration directory.
+
+It checks for:
+
+- active YAML files
+- unreferenced YAML files
+- missing active YAML include targets
 - duplicate automation IDs
 - duplicate automation aliases
 - duplicate script aliases
-- disabled automations
-- disabled scripts
 - unusually large automations
 - unusually large scripts
-- missing YAML include targets
 - references to entity IDs that are not currently present in Home Assistant
-- YAML files containing a high proportion of comments
+- active YAML files containing a high proportion of comments
+
+Missing entity references are reported as candidates for review rather than automatically being treated as faults.
 
 ### Commented backup configuration
 
@@ -121,14 +127,20 @@ These files are not written into the main Home Assistant configuration directory
 
 HA Audit is still under active development.
 
-Version 0.6.0 does not yet:
+HA Audit does not yet:
 
 - modify Home Assistant
 - automatically repair problems
 - analyse Home Assistant Repairs
-- provide complete Core log analysis
+- provide complete Home Assistant Core log analysis
 - send reports to OpenAI
 - perform scheduled automatic audits
-- assess release notes against the installation
+- assess Home Assistant release notes against the installed configuration
+- automatically identify deprecated YAML syntax
+- automatically assess third-party integration compatibility
 
 These are planned future capabilities.
+
+## Project goal
+
+The long-term goal of HA Audit is to provide a structured technical view of a Home Assistant installation so that maintenance, upgrades, troubleshooting, migration planning, and future-proofing can be based on the actual system rather than generic advice.
