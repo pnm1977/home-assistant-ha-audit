@@ -2,7 +2,7 @@
 
 HA Audit is a read-only Home Assistant system and configuration auditor.
 
-Version 0.6.0 introduces the first Configuration Quality Audit.
+HA Audit includes a Configuration Quality Audit that follows the active YAML include tree and separates active configuration from unreferenced YAML.
 
 ## How to use
 
@@ -132,7 +132,3 @@ Version 0.6.0 does not yet:
 - assess release notes against the installation
 
 These are planned future capabilities.
-
-## Version
-
-Current release: **0.6.0**
