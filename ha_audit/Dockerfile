@@ -3,6 +3,8 @@ FROM ghcr.io/home-assistant/base:latest
 ARG BUILD_VERSION
 ARG BUILD_ARCH
 
+ENV HA_AUDIT_VERSION=${BUILD_VERSION}
+
 RUN apk add --no-cache \
     python3 \
     py3-requests \
