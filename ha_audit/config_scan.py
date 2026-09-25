@@ -5,6 +5,10 @@ import re
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
+VERSION = os.environ.get(
+    "HA_AUDIT_VERSION",
+    "unknown",
+)
 
 CONFIG_ROOT = "/homeassistant"
 OUTPUT_FILE = "/config/config_inventory.json"
@@ -173,7 +177,7 @@ inventory = {
         timezone.utc
     ).isoformat(),
 
-    "scanner_version": "0.6.1",
+    "scanner_version": VERSION,
 
     "config_root": CONFIG_ROOT,
 
