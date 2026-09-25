@@ -6,7 +6,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 
-CONFIG_ROOT = "/homeassistant_config"
+CONFIG_ROOT = "/homeassistant"
 OUTPUT_FILE = "/config/config_inventory.json"
 
 # Deliberately excluded from scanning.
@@ -173,7 +173,7 @@ inventory = {
         timezone.utc
     ).isoformat(),
 
-    "scanner_version": "0.5.0",
+    "scanner_version": "0.5.1",
 
     "config_root": CONFIG_ROOT,
 
