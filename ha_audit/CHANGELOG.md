@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.1
+
+- Added active YAML include-tree discovery starting from `configuration.yaml`
+- Added separation of active and unreferenced YAML files
+- Missing include checks now apply only to active configuration
+- Improved entity reference detection to avoid false positives such as decimal values
+- Excluded themes and blueprints from normal entity reference checking
+- Continued to ignore fully commented rollback/reference blocks
+- Added shared app version handling so runtime modules use the version from `config.yaml`
+- Improved project and app documentation
+
 ## 0.6.0
 
 - Added Configuration Quality Audit
