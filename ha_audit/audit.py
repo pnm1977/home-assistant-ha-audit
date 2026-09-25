@@ -6,6 +6,10 @@ from datetime import datetime, timezone
 import requests
 import websocket
 
+VERSION = os.environ.get(
+    "HA_AUDIT_VERSION",
+    "unknown",
+)
 
 TOKEN = os.environ["SUPERVISOR_TOKEN"]
 
@@ -510,7 +514,7 @@ resolved_unknown = sorted(
 # ------------------------------------------------------------
 
 snapshot = {
-    "audit_version": "0.6.1",
+    "audit_version": VERSION,
 
     "generated_at": datetime.now(
         timezone.utc
@@ -691,7 +695,7 @@ with open(
 
 print("")
 print("==========================================")
-print(" HA AUDIT v0.6.1")
+print(f" HA AUDIT v{VERSION}")
 print("==========================================")
 
 print(f"Core:                {core.get('version')}")
