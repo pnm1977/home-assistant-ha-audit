@@ -1,6 +1,6 @@
 #!/usr/bin/with-contenv bashio
 
-bashio::log.info "Starting HA Audit v0.2.1"
+bashio::log.info "Starting HA Audit v0.3.0"
 
 python3 /audit.py
 
