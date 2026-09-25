@@ -510,7 +510,7 @@ resolved_unknown = sorted(
 # ------------------------------------------------------------
 
 snapshot = {
-    "audit_version": "0.6.0",
+    "audit_version": "0.6.1",
 
     "generated_at": datetime.now(
         timezone.utc
@@ -691,7 +691,7 @@ with open(
 
 print("")
 print("==========================================")
-print(" HA AUDIT v0.6.0")
+print(" HA AUDIT v0.6.1")
 print("==========================================")
 
 print(f"Core:                {core.get('version')}")
