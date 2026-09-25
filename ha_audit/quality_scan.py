@@ -8,7 +8,17 @@ import requests
 import yaml
 
 
+VERSION = os.environ.get(
+    "HA_AUDIT_VERSION",
+    "unknown",
+)
+
 CONFIG_ROOT = "/homeassistant"
+ROOT_CONFIG = os.path.join(
+    CONFIG_ROOT,
+    "configuration.yaml",
+)
+
 OUTPUT_FILE = "/config/quality_audit.json"
 
 TOKEN = os.environ["SUPERVISOR_TOKEN"]
@@ -20,7 +30,7 @@ HEADERS = {
 
 
 # ------------------------------------------------------------
-# Files/directories deliberately excluded
+# Exclusions
 # ------------------------------------------------------------
 
 EXCLUDED_DIRS = {
@@ -37,37 +47,122 @@ EXCLUDED_DIRS = {
     "www",
 }
 
-ENTITY_ID_PATTERN = re.compile(
-    r"\b[a-z0-9_]+\.[a-z0-9_]+\b",
-    re.IGNORECASE,
-)
+# These may contain perfectly valid strings that resemble
+# entity IDs but are not useful for this audit.
+ENTITY_SCAN_EXCLUDED_TOP_LEVEL = {
+    "themes",
+    "blueprints",
+}
 
 INCLUDE_PATTERN = re.compile(
     r"!(include(?:_dir_(?:list|named|merge_list|merge_named))?)"
     r"\s+([^\s#]+)"
 )
 
+# Requires a real alphabetic HA-style domain.
+# This deliberately does NOT match values such as 0.05.
+DIRECT_ENTITY_PATTERN = re.compile(
+    r"(?<![\w.])"
+    r"([a-z_][a-z0-9_]*)"
+    r"\."
+    r"([a-z0-9_]+)"
+    r"\b",
+    re.IGNORECASE,
+)
+
+# Handles Jinja such as:
+# states.sensor.outdoor_temperature
+STATES_ENTITY_PATTERN = re.compile(
+    r"\bstates\."
+    r"([a-z_][a-z0-9_]*)"
+    r"\."
+    r"([a-z0-9_]+)"
+    r"\b",
+    re.IGNORECASE,
+)
+
+
+COMMON_ENTITY_DOMAINS = {
+    "alarm_control_panel",
+    "automation",
+    "binary_sensor",
+    "button",
+    "calendar",
+    "camera",
+    "climate",
+    "cover",
+    "device_tracker",
+    "event",
+    "fan",
+    "humidifier",
+    "image",
+    "input_boolean",
+    "input_button",
+    "input_datetime",
+    "input_number",
+    "input_select",
+    "input_text",
+    "light",
+    "lock",
+    "media_player",
+    "number",
+    "person",
+    "remote",
+    "scene",
+    "script",
+    "select",
+    "sensor",
+    "siren",
+    "sun",
+    "switch",
+    "text",
+    "time",
+    "timer",
+    "update",
+    "vacuum",
+    "valve",
+    "water_heater",
+    "weather",
+    "zone",
+}
+
 
 # ------------------------------------------------------------
 # Home Assistant-friendly YAML loader
-#
-# Unknown HA tags such as !secret are accepted without
-# attempting to resolve their values.
 # ------------------------------------------------------------
 
 class HALoader(yaml.SafeLoader):
     pass
 
 
-def unknown_tag(loader, tag_suffix, node):
-    if isinstance(node, yaml.ScalarNode):
-        return loader.construct_scalar(node)
+def unknown_tag(
+    loader,
+    tag_suffix,
+    node,
+):
+    if isinstance(
+        node,
+        yaml.ScalarNode,
+    ):
+        return loader.construct_scalar(
+            node
+        )
 
-    if isinstance(node, yaml.SequenceNode):
-        return loader.construct_sequence(node)
+    if isinstance(
+        node,
+        yaml.SequenceNode,
+    ):
+        return loader.construct_sequence(
+            node
+        )
 
-    if isinstance(node, yaml.MappingNode):
-        return loader.construct_mapping(node)
+    if isinstance(
+        node,
+        yaml.MappingNode,
+    ):
+        return loader.construct_mapping(
+            node
+        )
 
     return None
 
@@ -118,8 +213,23 @@ def safe_load_yaml(path):
         return None
 
 
-def discover_yaml_files():
-    results = []
+def active_text(text):
+    """
+    Remove fully commented lines.
+
+    This deliberately ignores old YAML/template versions
+    retained as commented rollback/reference blocks.
+    """
+
+    return "\n".join(
+        line
+        for line in text.splitlines()
+        if not line.lstrip().startswith("#")
+    )
+
+
+def discover_all_yaml_files():
+    results = set()
 
     for root, dirs, filenames in os.walk(
         CONFIG_ROOT
@@ -134,7 +244,6 @@ def discover_yaml_files():
         for filename in filenames:
             lower = filename.lower()
 
-            # Never inspect secret-named files.
             if "secret" in lower:
                 continue
 
@@ -143,17 +252,63 @@ def discover_yaml_files():
             ):
                 continue
 
-            results.append(
-                os.path.join(
-                    root,
-                    filename,
+            results.add(
+                os.path.normpath(
+                    os.path.join(
+                        root,
+                        filename,
+                    )
                 )
             )
 
-    return sorted(results)
+    return results
 
 
-def get_ha_json(path, timeout=30):
+def yaml_files_in_directory(
+    directory,
+):
+    found = set()
+
+    if not os.path.isdir(
+        directory
+    ):
+        return found
+
+    for root, dirs, filenames in os.walk(
+        directory
+    ):
+        dirs[:] = [
+            item
+            for item in dirs
+            if item not in EXCLUDED_DIRS
+            and not item.startswith(".")
+        ]
+
+        for filename in filenames:
+            lower = filename.lower()
+
+            if "secret" in lower:
+                continue
+
+            if lower.endswith(
+                (".yaml", ".yml")
+            ):
+                found.add(
+                    os.path.normpath(
+                        os.path.join(
+                            root,
+                            filename,
+                        )
+                    )
+                )
+
+    return found
+
+
+def get_ha_json(
+    path,
+    timeout=30,
+):
     response = requests.get(
         f"http://supervisor/core/api/{path}",
         headers=HEADERS,
@@ -174,15 +329,121 @@ def get_ha_json(path, timeout=30):
 
 
 # ------------------------------------------------------------
-# Discover configuration
+# Discover active include tree
 # ------------------------------------------------------------
 
-files = discover_yaml_files()
+all_yaml_files = (
+    discover_all_yaml_files()
+)
 
-file_text = {
-    path: read_text(path)
-    for path in files
-}
+active_files = set()
+missing_include_targets = []
+include_references = []
+
+files_to_process = []
+
+if os.path.isfile(
+    ROOT_CONFIG
+):
+    files_to_process.append(
+        ROOT_CONFIG
+    )
+
+
+while files_to_process:
+
+    current_file = os.path.normpath(
+        files_to_process.pop()
+    )
+
+    if current_file in active_files:
+        continue
+
+    if not os.path.isfile(
+        current_file
+    ):
+        continue
+
+    active_files.add(
+        current_file
+    )
+
+    text = active_text(
+        read_text(
+            current_file
+        )
+    )
+
+    for match in INCLUDE_PATTERN.finditer(
+        text
+    ):
+        include_type = match.group(1)
+        target = match.group(2)
+
+        resolved = os.path.normpath(
+            os.path.join(
+                os.path.dirname(
+                    current_file
+                ),
+                target,
+            )
+        )
+
+        is_directory_include = (
+            include_type.startswith(
+                "include_dir_"
+            )
+        )
+
+        exists = (
+            os.path.isdir(resolved)
+            if is_directory_include
+            else os.path.isfile(resolved)
+        )
+
+        record = {
+            "source": relative(
+                current_file
+            ),
+            "type": include_type,
+            "target": target,
+            "resolved": (
+                relative(resolved)
+                if resolved.startswith(
+                    CONFIG_ROOT
+                )
+                else resolved
+            ),
+            "exists": exists,
+        }
+
+        include_references.append(
+            record
+        )
+
+        if not exists:
+            missing_include_targets.append(
+                record
+            )
+            continue
+
+        if is_directory_include:
+            files_to_process.extend(
+                yaml_files_in_directory(
+                    resolved
+                )
+            )
+
+        else:
+            files_to_process.append(
+                resolved
+            )
+
+
+inactive_files = (
+    all_yaml_files
+    - active_files
+)
 
 
 # ------------------------------------------------------------
@@ -194,19 +455,27 @@ automation_file = os.path.join(
     "automations.yaml",
 )
 
-automations = safe_load_yaml(
-    automation_file
+automations = []
+
+if automation_file in active_files:
+    loaded = safe_load_yaml(
+        automation_file
+    )
+
+    if isinstance(
+        loaded,
+        list,
+    ):
+        automations = loaded
+
+
+automation_ids = defaultdict(
+    list
 )
 
-if not isinstance(
-    automations,
-    list,
-):
-    automations = []
-
-
-automation_ids = defaultdict(list)
-automation_aliases = defaultdict(list)
+automation_aliases = defaultdict(
+    list
+)
 
 large_automations = []
 
@@ -221,18 +490,27 @@ for index, automation in enumerate(
     ):
         continue
 
-    automation_id = automation.get("id")
-    alias = automation.get("alias")
+    automation_id = automation.get(
+        "id"
+    )
+
+    alias = automation.get(
+        "alias"
+    )
 
     if automation_id:
         automation_ids[
             str(automation_id)
-        ].append(index)
+        ].append(
+            index
+        )
 
     if alias:
         automation_aliases[
             str(alias).strip()
-        ].append(index)
+        ].append(
+            index
+        )
 
     rendered = yaml.safe_dump(
         automation,
@@ -257,13 +535,17 @@ for index, automation in enumerate(
 
 duplicate_automation_ids = {
     key: indexes
-    for key, indexes in automation_ids.items()
+    for key, indexes in (
+        automation_ids.items()
+    )
     if len(indexes) > 1
 }
 
 duplicate_automation_aliases = {
     key: indexes
-    for key, indexes in automation_aliases.items()
+    for key, indexes in (
+        automation_aliases.items()
+    )
     if len(indexes) > 1
 }
 
@@ -277,34 +559,46 @@ script_file = os.path.join(
     "scripts.yaml",
 )
 
-scripts = safe_load_yaml(
-    script_file
+scripts = {}
+
+if script_file in active_files:
+    loaded = safe_load_yaml(
+        script_file
+    )
+
+    if isinstance(
+        loaded,
+        dict,
+    ):
+        scripts = loaded
+
+
+script_aliases = defaultdict(
+    list
 )
 
-if not isinstance(
-    scripts,
-    dict,
-):
-    scripts = {}
-
-
-script_aliases = defaultdict(list)
 large_scripts = []
 
 
-for script_key, script in scripts.items():
+for script_key, script in (
+    scripts.items()
+):
     if not isinstance(
         script,
         dict,
     ):
         continue
 
-    alias = script.get("alias")
+    alias = script.get(
+        "alias"
+    )
 
     if alias:
         script_aliases[
             str(alias).strip()
-        ].append(script_key)
+        ].append(
+            script_key
+        )
 
     rendered = yaml.safe_dump(
         script,
@@ -328,76 +622,20 @@ for script_key, script in scripts.items():
 
 duplicate_script_aliases = {
     key: values
-    for key, values in script_aliases.items()
+    for key, values in (
+        script_aliases.items()
+    )
     if len(values) > 1
 }
 
 
 # ------------------------------------------------------------
-# Include audit
-#
-# Fully commented lines are ignored.
-# ------------------------------------------------------------
-
-include_references = []
-missing_include_targets = []
-
-
-for path, text in file_text.items():
-
-    active_lines = [
-        line
-        for line in text.splitlines()
-        if not line.lstrip().startswith("#")
-    ]
-
-    active_text = "\n".join(
-        active_lines
-    )
-
-    for match in INCLUDE_PATTERN.finditer(
-        active_text
-    ):
-        include_type = match.group(1)
-        target = match.group(2)
-
-        resolved = os.path.normpath(
-            os.path.join(
-                os.path.dirname(path),
-                target,
-            )
-        )
-
-        exists = os.path.exists(
-            resolved
-        )
-
-        record = {
-            "source": relative(path),
-            "type": include_type,
-            "target": target,
-            "exists": exists,
-        }
-
-        include_references.append(
-            record
-        )
-
-        if not exists:
-            missing_include_targets.append(
-                record
-            )
-
-
-# ------------------------------------------------------------
-# Current entities and services
-#
-# Services are collected so calls such as light.turn_on
-# are not falsely reported as missing entities.
+# Current Home Assistant entities/services
 # ------------------------------------------------------------
 
 existing_entities = set()
 known_services = set()
+live_entity_domains = set()
 
 
 try:
@@ -408,8 +646,22 @@ try:
     existing_entities = {
         item.get("entity_id")
         for item in states
-        if isinstance(item, dict)
-        and item.get("entity_id")
+        if isinstance(
+            item,
+            dict,
+        )
+        and item.get(
+            "entity_id"
+        )
+    }
+
+    live_entity_domains = {
+        entity_id.split(
+            ".",
+            1,
+        )[0]
+        for entity_id in existing_entities
+        if "." in entity_id
     }
 
 except Exception:
@@ -431,64 +683,120 @@ try:
             {}
         ):
             known_services.add(
-                f"{domain_name}.{service_name}"
+                (
+                    f"{domain_name}."
+                    f"{service_name}"
+                ).lower()
             )
 
 except Exception:
     known_services = set()
 
 
-# ------------------------------------------------------------
-# Active entity references
-#
-# Fully commented backup blocks are ignored.
-# ------------------------------------------------------------
-
-entity_reference_locations = defaultdict(
-    set
+allowed_entity_domains = (
+    COMMON_ENTITY_DOMAINS
+    | live_entity_domains
 )
 
 
-for path, text in file_text.items():
+# ------------------------------------------------------------
+# Active entity-reference audit
+# ------------------------------------------------------------
 
-    active_lines = [
-        line
-        for line in text.splitlines()
-        if not line.lstrip().startswith("#")
-    ]
+entity_reference_locations = (
+    defaultdict(set)
+)
 
-    active_text = "\n".join(
-        active_lines
+
+for path in sorted(
+    active_files
+):
+
+    relative_path = relative(
+        path
     )
 
-    for candidate in ENTITY_ID_PATTERN.findall(
-        active_text
+    top_level = relative_path.split(
+        os.sep,
+        1,
+    )[0]
+
+    if (
+        top_level
+        in ENTITY_SCAN_EXCLUDED_TOP_LEVEL
     ):
+        continue
 
-        candidate = candidate.lower()
+    text = active_text(
+        read_text(
+            path
+        )
+    )
 
-        # Service calls are not entity IDs.
+    candidates = set()
+
+
+    # Standard domain.object references.
+    for match in (
+        DIRECT_ENTITY_PATTERN.finditer(
+            text
+        )
+    ):
+        domain = (
+            match.group(1).lower()
+        )
+
+        object_id = (
+            match.group(2).lower()
+        )
+
+        if domain == "states":
+            continue
+
+        candidates.add(
+            f"{domain}.{object_id}"
+        )
+
+
+    # states.sensor.foo style.
+    for match in (
+        STATES_ENTITY_PATTERN.finditer(
+            text
+        )
+    ):
+        domain = (
+            match.group(1).lower()
+        )
+
+        object_id = (
+            match.group(2).lower()
+        )
+
+        candidates.add(
+            f"{domain}.{object_id}"
+        )
+
+
+    for candidate in candidates:
+
         if candidate in known_services:
             continue
 
-        # Obvious filenames / non-entity strings.
-        if candidate.endswith(
-            (
-                ".yaml",
-                ".yml",
-                ".json",
-                ".local",
-                ".com",
-                ".co",
-                ".uk",
-            )
+        domain = candidate.split(
+            ".",
+            1,
+        )[0]
+
+        if (
+            domain
+            not in allowed_entity_domains
         ):
             continue
 
         entity_reference_locations[
             candidate
         ].add(
-            relative(path)
+            relative_path
         )
 
 
@@ -500,13 +808,19 @@ if existing_entities:
     for entity_id, locations in (
         entity_reference_locations.items()
     ):
-        if entity_id not in existing_entities:
+        if (
+            entity_id
+            not in existing_entities
+        ):
             missing_entity_references.append(
                 {
-                    "entity_id": entity_id,
-                    "files": sorted(
-                        locations
-                    ),
+                    "entity_id":
+                        entity_id,
+
+                    "files":
+                        sorted(
+                            locations
+                        ),
                 }
             )
 
@@ -518,16 +832,19 @@ missing_entity_references.sort(
 
 
 # ------------------------------------------------------------
-# Comment-heavy files
-#
-# Informational only. This is useful because old versions are
-# intentionally sometimes retained as commented rollback code.
+# Comment-heavy ACTIVE files
 # ------------------------------------------------------------
 
 comment_stats = []
 
 
-for path, text in file_text.items():
+for path in sorted(
+    active_files
+):
+
+    text = read_text(
+        path
+    )
 
     lines = text.splitlines()
 
@@ -537,11 +854,14 @@ for path, text in file_text.items():
     comment_lines = sum(
         1
         for line in lines
-        if line.lstrip().startswith("#")
+        if line.lstrip().startswith(
+            "#"
+        )
     )
 
     ratio = (
-        comment_lines / len(lines)
+        comment_lines
+        / len(lines)
     )
 
     if (
@@ -550,12 +870,20 @@ for path, text in file_text.items():
     ):
         comment_stats.append(
             {
-                "file": relative(path),
-                "lines": len(lines),
+                "file":
+                    relative(path),
+
+                "lines":
+                    len(lines),
+
                 "comment_lines":
                     comment_lines,
+
                 "comment_ratio":
-                    round(ratio, 3),
+                    round(
+                        ratio,
+                        3,
+                    ),
             }
         )
 
@@ -572,11 +900,55 @@ comment_stats.sort(
 # ------------------------------------------------------------
 
 quality = {
-    "audit_version": "0.6.0",
+    "audit_version":
+        VERSION,
 
-    "generated_at": datetime.now(
-        timezone.utc
-    ).isoformat(),
+    "generated_at":
+        datetime.now(
+            timezone.utc
+        ).isoformat(),
+
+    "configuration_tree": {
+        "root":
+            "configuration.yaml",
+
+        "active_yaml_count":
+            len(
+                active_files
+            ),
+
+        "inactive_yaml_count":
+            len(
+                inactive_files
+            ),
+
+        "active_yaml":
+            sorted(
+                relative(path)
+                for path
+                in active_files
+            ),
+
+        "inactive_yaml":
+            sorted(
+                relative(path)
+                for path
+                in inactive_files
+            ),
+
+        "include_count":
+            len(
+                include_references
+            ),
+
+        "missing_include_count":
+            len(
+                missing_include_targets
+            ),
+
+        "missing_includes":
+            missing_include_targets,
+    },
 
     "automations": {
         "count":
@@ -613,21 +985,8 @@ quality = {
             ),
     },
 
-    "includes": {
-        "count":
-            len(include_references),
-
-        "missing_count":
-            len(
-                missing_include_targets
-            ),
-
-        "missing":
-            missing_include_targets,
-    },
-
     "entity_references": {
-        "unique_candidates":
+        "unique_active_references":
             len(
                 entity_reference_locations
             ),
@@ -642,12 +1001,13 @@ quality = {
 
         "note":
             (
-                "Missing entity references are candidates "
-                "for review, not automatically faults."
+                "Candidates are for review. "
+                "A missing reference is not "
+                "automatically a fault."
             ),
     },
 
-    "comment_heavy_files":
+    "comment_heavy_active_files":
         comment_stats,
 
     "notes": {
@@ -656,9 +1016,12 @@ quality = {
 
         "commented_backup_blocks":
             (
-                "Commented backup YAML is not treated "
-                "as active configuration."
+                "Commented backup YAML is "
+                "not treated as active."
             ),
+
+        "themes_and_blueprints_excluded_from_entity_check":
+            True,
 
         "secret_named_files_excluded":
             True,
@@ -689,8 +1052,27 @@ with open(
 # ------------------------------------------------------------
 
 print("")
-print("Configuration quality audit")
-print("------------------------------------------")
+print(
+    "Configuration quality audit"
+)
+print(
+    "------------------------------------------"
+)
+
+print(
+    f"Active YAML files:           "
+    f"{len(active_files)}"
+)
+
+print(
+    f"Unreferenced YAML files:     "
+    f"{len(inactive_files)}"
+)
+
+print(
+    f"Missing active includes:     "
+    f"{len(missing_include_targets)}"
+)
 
 print(
     f"Automations:                 "
@@ -728,12 +1110,7 @@ print(
 )
 
 print(
-    f"Missing include targets:     "
-    f"{len(missing_include_targets)}"
-)
-
-print(
-    f"Entity reference candidates: "
+    f"Active entity references:    "
     f"{len(entity_reference_locations)}"
 )
 
@@ -743,14 +1120,45 @@ print(
 )
 
 print(
-    f"Comment-heavy YAML files:    "
+    f"Comment-heavy active files:  "
     f"{len(comment_stats)}"
 )
 
 
+if missing_include_targets:
+    print("")
+    print(
+        "Missing ACTIVE include targets:"
+    )
+
+    for item in (
+        missing_include_targets[:20]
+    ):
+        print(
+            f"  {item['source']} -> "
+            f"{item['target']}"
+        )
+
+
+if inactive_files:
+    print("")
+    print(
+        "First unreferenced YAML files:"
+    )
+
+    for path in sorted(
+        inactive_files
+    )[:20]:
+        print(
+            f"  {relative(path)}"
+        )
+
+
 if duplicate_automation_ids:
     print("")
-    print("Duplicate automation IDs:")
+    print(
+        "Duplicate automation IDs:"
+    )
 
     for automation_id, indexes in (
         duplicate_automation_ids.items()
@@ -763,7 +1171,9 @@ if duplicate_automation_ids:
 
 if duplicate_automation_aliases:
     print("")
-    print("Duplicate automation names:")
+    print(
+        "Duplicate automation names:"
+    )
 
     for alias, indexes in (
         duplicate_automation_aliases.items()
@@ -776,7 +1186,9 @@ if duplicate_automation_aliases:
 
 if duplicate_script_aliases:
     print("")
-    print("Duplicate script names:")
+    print(
+        "Duplicate script names:"
+    )
 
     for alias, keys in (
         duplicate_script_aliases.items()
@@ -787,22 +1199,11 @@ if duplicate_script_aliases:
         )
 
 
-if missing_include_targets:
-    print("")
-    print("Missing include targets:")
-
-    for item in (
-        missing_include_targets[:20]
-    ):
-        print(
-            f"  {item['source']} -> "
-            f"{item['target']}"
-        )
-
-
 if missing_entity_references:
     print("")
-    print("First missing entity candidates:")
+    print(
+        "First missing entity candidates:"
+    )
 
     for item in (
         missing_entity_references[:25]
@@ -815,7 +1216,9 @@ if missing_entity_references:
 
 if comment_stats:
     print("")
-    print("Comment-heavy files:")
+    print(
+        "Comment-heavy active files:"
+    )
 
     for item in (
         comment_stats[:15]
