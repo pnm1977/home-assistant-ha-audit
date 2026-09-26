@@ -12,6 +12,7 @@ VERSION = os.environ.get(
 AUDIT_FILE = "/config/audit_snapshot.json"
 QUALITY_FILE = "/config/quality_audit.json"
 REFERENCE_FILE = "/config/not_provided_reference_audit.json"
+HISTORY_FILE = "/config/not_provided_history_audit.json"
 
 OUTPUT_FILE = "/config/ha_audit_latest.txt"
 
@@ -23,6 +24,15 @@ def load_json(path):
         encoding="utf-8",
     ) as handle:
         return json.load(handle)
+
+
+def load_json_optional(path):
+    try:
+        return load_json(
+            path
+        )
+    except Exception:
+        return {}
 
 
 def count_mapping(value):
@@ -75,6 +85,35 @@ def format_generated_time(audit):
         return generated_at
 
 
+def format_history_time(
+    value,
+    timezone_name,
+):
+    if not value:
+        return "unknown"
+
+    try:
+        stamp = datetime.fromisoformat(
+            value.replace(
+                "Z",
+                "+00:00",
+            )
+        )
+
+        local_stamp = stamp.astimezone(
+            ZoneInfo(
+                timezone_name
+            )
+        )
+
+        return local_stamp.strftime(
+            "%d %b %Y %H:%M"
+        )
+
+    except Exception:
+        return value
+
+
 audit = load_json(
     AUDIT_FILE
 )
@@ -85,6 +124,10 @@ quality = load_json(
 
 reference = load_json(
     REFERENCE_FILE
+)
+
+history = load_json_optional(
+    HISTORY_FILE
 )
 
 
@@ -143,6 +186,29 @@ entity_references = quality.get(
 reference_summary = reference.get(
     "summary",
     {},
+)
+
+history_summary = history.get(
+    "summary",
+    {},
+)
+
+history_policy = history.get(
+    "history_policy",
+    {},
+)
+
+recent_history_entities = history.get(
+    "recent_activity_entities",
+    [],
+)
+
+
+timezone_name = (
+    system.get(
+        "timezone"
+    )
+    or "UTC"
 )
 
 
@@ -265,6 +331,53 @@ referenced_not_provided = (
 template_cleanup = (
     reference_summary.get(
         "template_no_active_yaml_reference",
+        0,
+    )
+)
+
+
+history_available = bool(
+    history
+)
+
+history_lookback_days = (
+    history_policy.get(
+        "lookback_days",
+        0,
+    )
+)
+
+recent_activity_days = (
+    history_policy.get(
+        "recent_activity_days",
+        0,
+    )
+)
+
+history_recent = (
+    history_summary.get(
+        "recent_activity",
+        0,
+    )
+)
+
+history_older = (
+    history_summary.get(
+        "older_activity",
+        0,
+    )
+)
+
+history_none = (
+    history_summary.get(
+        "no_usable_history_found",
+        0,
+    )
+)
+
+history_failed = (
+    history_summary.get(
+        "history_query_failed",
         0,
     )
 )
@@ -424,6 +537,61 @@ add(
 
 
 add("")
+add("HISTORY SAFETY")
+add("-" * 58)
+
+if history_available:
+
+    add(
+        f"History lookback:           "
+        f"{history_lookback_days} days"
+    )
+
+    add(
+        f"Recent activity "
+        f"(<= {recent_activity_days}d):"
+        f" {history_recent}"
+    )
+
+    add(
+        f"Older activity found:       "
+        f"{history_older}"
+    )
+
+    add(
+        f"No usable history found:    "
+        f"{history_none}"
+    )
+
+    add(
+        f"History query failures:     "
+        f"{history_failed}"
+    )
+
+    add("")
+
+    add(
+        "History is protective context only."
+    )
+
+    add(
+        "No history does NOT mean an entity "
+        "is safe to delete."
+    )
+
+else:
+
+    add(
+        "History report unavailable."
+    )
+
+    add(
+        "Do not use absence of history as "
+        "cleanup evidence."
+    )
+
+
+add("")
 add("NEXT ACTIONS")
 add("-" * 58)
 
@@ -488,7 +656,8 @@ if missing_includes:
     add(
         "    Then open the listed "
         "source file and line in "
-        "Studio Code Server."
+        "your Home Assistant "
+        "configuration editor."
     )
 
 
@@ -512,8 +681,9 @@ if missing_entities:
 
     add(
         "    Use the listed file "
-        "and line number in "
-        "Studio Code Server."
+        "and line number in your "
+        "Home Assistant "
+        "configuration editor."
     )
 
 
@@ -545,6 +715,128 @@ if referenced_not_provided:
     )
 
 
+if history_failed:
+
+    actions += 1
+
+    add(
+        f"[!] History could not be "
+        f"checked for "
+        f"{history_failed} "
+        "entity/entities."
+    )
+
+    add(
+        "    Do not use history as "
+        "cleanup evidence for "
+        "those entities."
+    )
+
+    add(
+        "    Check "
+        "not_provided_history_"
+        "audit.json."
+    )
+
+
+if history_recent:
+
+    actions += 1
+
+    add(
+        f"[i] {history_recent} "
+        "not-currently-provided "
+        "entity/entities had usable "
+        f"activity within the last "
+        f"{recent_activity_days} days."
+    )
+
+    add(
+        "    Treat these as KEEP / "
+        "REVIEW rather than cleanup "
+        "candidates."
+    )
+
+    if len(
+        recent_history_entities
+    ) <= 10:
+
+        for item in recent_history_entities:
+            entity_id = item.get(
+                "entity_id",
+                "unknown",
+            )
+
+            last_at = format_history_time(
+                item.get(
+                    "last_usable_state_at"
+                ),
+                timezone_name,
+            )
+
+            add(
+                f"    - {entity_id} "
+                f"(last usable: "
+                f"{last_at})"
+            )
+
+    else:
+
+        add(
+            "    See "
+            "not_provided_history_"
+            "audit.json > "
+            "recent_activity_entities "
+            "for the full list."
+        )
+
+
+if history_older:
+
+    actions += 1
+
+    add(
+        f"[i] {history_older} "
+        "not-currently-provided "
+        "entity/entities have older "
+        "usable history within the "
+        f"{history_lookback_days}-day "
+        "lookback."
+    )
+
+    add(
+        "    Review before deleting; "
+        "older activity is still "
+        "evidence that the entity "
+        "was genuinely used."
+    )
+
+
+if history_none:
+
+    actions += 1
+
+    add(
+        f"[i] {history_none} "
+        "not-currently-provided "
+        "entity/entities have no "
+        "usable history in the "
+        f"{history_lookback_days}-day "
+        "lookback."
+    )
+
+    add(
+        "    This is UNKNOWN, not "
+        "approval to delete."
+    )
+
+    add(
+        "    Recorder retention or "
+        "exclusions may mean older "
+        "history is unavailable."
+    )
+
+
 if template_cleanup:
 
     actions += 1
@@ -552,7 +844,7 @@ if template_cleanup:
     add(
         f"[i] {template_cleanup} "
         "Template entity/entities "
-        "are cleanup candidates."
+        "are review candidates."
     )
 
     add(
@@ -573,8 +865,12 @@ if template_cleanup:
         "    Open an entity and "
         "confirm Home Assistant "
         "says it is no longer "
-        "provided before deleting "
-        "it."
+        "provided."
+    )
+
+    add(
+        "    Check history context "
+        "before deleting anything."
     )
 
 
@@ -619,8 +915,24 @@ add(
 add("")
 
 add(
-    "To open them in "
-    "Studio Code Server:"
+    "If your Home Assistant "
+    "file-access tool can browse "
+    "/addon_configs:"
+)
+
+add(
+    "  Open /addon_configs"
+)
+
+add(
+    "  Then open the folder whose "
+    "name ends in _ha_audit"
+)
+
+add("")
+
+add(
+    "Studio Code Server example:"
 )
 
 add(
@@ -632,8 +944,8 @@ add(
 )
 
 add(
-    "  Open the folder whose "
-    "name ends in _ha_audit"
+    "  Open the folder ending "
+    "in _ha_audit"
 )
 
 add("")
@@ -661,6 +973,10 @@ add(
 )
 
 add(
+    "  not_provided_history_audit.json"
+)
+
+add(
     "  ha_audit_latest.txt"
 )
 
@@ -679,13 +995,19 @@ add(
 )
 
 add(
-    "  Use File > Open Recent "
-    "and reopen your previous "
-    "folder/workspace."
+    "  Reopen your previous "
+    "folder/workspace using your "
+    "file-access tool."
 )
 
 add(
-    "  If it is not listed, use "
+    "  In Studio Code Server, "
+    "File > Open Recent is usually "
+    "the quickest option."
+)
+
+add(
+    "  Otherwise use "
     "File > Open Folder... and "
     "select the folder you were "
     "using before."
