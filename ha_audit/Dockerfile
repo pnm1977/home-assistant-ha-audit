@@ -15,6 +15,7 @@ COPY run.sh /
 COPY audit.py /
 COPY config_scan.py /
 COPY quality_scan.py /
+COPY not_provided_reference_scan.py /
 
 RUN chmod a+x /run.sh
 
