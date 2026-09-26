@@ -265,6 +265,18 @@ entity_registry_by_id = {
     if entry.get("ei")
 }
 
+# ------------------------------------------------------------
+# Entities currently provided by integrations
+# ------------------------------------------------------------
+
+entity_sources = registry_data.get(
+    "entity/source",
+    {},
+)
+
+provided_entity_ids = set(
+    entity_sources.keys()
+)
 
 devices = registry_data.get(
     "config/device_registry/list",
