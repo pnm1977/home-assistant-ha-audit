@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.3
+
+- Added comparison between the Home Assistant entity registry and live entity source data
+- Added detection of enabled registry entities that are no longer currently provided by an integration
+- Added not-currently-provided entity counts grouped by platform
+- Added detailed not-currently-provided entity reporting
+- Added not-currently-provided results to `audit_snapshot.json`
+- Kept not-currently-provided entities separate from confirmed stale entities to avoid treating temporary integration failures as safe to delete
+
 ## 0.6.2
 
 - Added source line numbers for missing active include targets
