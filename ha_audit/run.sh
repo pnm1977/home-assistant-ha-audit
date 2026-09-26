@@ -1,17 +1,41 @@
 #!/usr/bin/with-contenv bashio
 
-bashio::log.info "Starting HA Audit v${HA_AUDIT_VERSION}"
+set -u
 
-if ! python3 /audit.py; then
-    bashio::log.error "System audit module failed"
-fi
+VERSION="${HA_AUDIT_VERSION:-unknown}"
 
-if ! python3 /config_scan.py; then
-    bashio::log.error "Configuration inventory module failed"
-fi
+bashio::log.info "Starting HA Audit v${VERSION}"
 
-if ! python3 /quality_scan.py; then
-    bashio::log.error "Configuration quality module failed"
-fi
+echo ""
+
+run_python() {
+    local script="$1"
+    local label="$2"
+
+    if ! python3 "/${script}"; then
+        bashio::log.error "${label} failed"
+        return 1
+    fi
+
+    return 0
+}
+
+
+run_python \
+    "audit.py" \
+    "Core HA audit"
+
+run_python \
+    "config_scan.py" \
+    "Configuration inventory"
+
+run_python \
+    "quality_scan.py" \
+    "Configuration quality audit"
+
+run_python \
+    "not_provided_reference_scan.py" \
+    "Not-provided entity reference audit"
+
 
 bashio::log.info "HA Audit finished"
