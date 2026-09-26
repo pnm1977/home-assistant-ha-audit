@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.7
+
+- Added history checks for entities that are no longer currently provided by integrations
+- Added a 90-day history lookback using Home Assistant's history API
+- Added conservative history classification:
+  - recent activity within 45 days
+  - older activity within the 90-day lookback
+  - no usable history found
+  - history query failed
+- Ignored `unavailable` and `unknown` states when identifying the last genuinely usable state
+- Added `not_provided_history_audit.json`
+- Added a HISTORY SAFETY section to the current-run summary
+- Added recent-activity details directly to NEXT ACTIONS when the list is small
+- Treated missing history as unknown rather than cleanup evidence
+- Added warnings that Recorder retention or exclusions can limit available history
+- Updated detailed-report guidance so Studio Code Server is an example rather than a requirement
+- Added generic guidance for returning to the user's previous folder/workspace
+
 ## 0.6.6
 
 - Improved detailed-report location guidance in the current-run summary
