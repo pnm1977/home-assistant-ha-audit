@@ -19,6 +19,10 @@ SUPERVISOR = "http://supervisor"
 
 AUDIT_FILE = "/config/audit_snapshot.json"
 
+RECORDER_FILE = (
+    "/config/recorder_health_audit.json"
+)
+
 OUTPUT_FILE = (
     "/config/not_provided_history_audit.json"
 )
@@ -28,17 +32,13 @@ OUTPUT_FILE = (
 # Conservative history policy
 # ------------------------------------------------------------
 
-LOOKBACK_DAYS = 90
+REQUESTED_LOOKBACK_DAYS = 90
 
-# Anything used within this period is explicitly protected
-# as recently active.
+# Activity within this period is a strong protective signal.
 RECENT_DAYS = 45
 
-# Query several entities together rather than making one
-# history request per entity.
 BATCH_SIZE = 20
 
-# These states do not prove that the entity was usable.
 IGNORED_STATES = {
     "unavailable",
     "unknown",
@@ -65,19 +65,35 @@ def load_json(path):
         return json.load(handle)
 
 
+def load_json_optional(path):
+    try:
+        return load_json(
+            path
+        )
+    except Exception:
+        return {}
+
+
 def parse_timestamp(value):
     if not value:
         return None
 
     try:
-        return datetime.fromisoformat(
-            value.replace(
+        stamp = datetime.fromisoformat(
+            str(value).replace(
                 "Z",
                 "+00:00",
             )
         )
     except Exception:
         return None
+
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(
+            tzinfo=timezone.utc
+        )
+
+    return stamp
 
 
 def chunks(items, size):
@@ -154,12 +170,17 @@ def fetch_history(
 
 
 # ------------------------------------------------------------
-# Load current not-provided entities
+# Load audit data
 # ------------------------------------------------------------
 
 audit = load_json(
     AUDIT_FILE
 )
+
+recorder = load_json_optional(
+    RECORDER_FILE
+)
+
 
 not_provided_entities = (
     audit.get(
@@ -190,19 +211,66 @@ entity_ids = sorted(
 
 
 # ------------------------------------------------------------
-# History period
+# Determine real history window
 # ------------------------------------------------------------
 
 end_time = datetime.now(
     timezone.utc
 )
 
-start_time = (
+requested_start = (
     end_time
     - timedelta(
-        days=LOOKBACK_DAYS
+        days=REQUESTED_LOOKBACK_DAYS
     )
 )
+
+
+recorder_oldest = parse_timestamp(
+    recorder.get(
+        "recorder",
+        {},
+    ).get(
+        "oldest_recorder_run"
+    )
+)
+
+
+recorder_status = recorder.get(
+    "status"
+)
+
+
+if (
+    recorder_status == "ok"
+    and recorder_oldest
+):
+    start_time = max(
+        requested_start,
+        recorder_oldest,
+    )
+
+    history_window_source = (
+        "recorder_oldest_run"
+    )
+
+else:
+    start_time = requested_start
+
+    history_window_source = (
+        "requested_lookback_fallback"
+    )
+
+
+effective_lookback_days = max(
+    0.0,
+    (
+        end_time
+        - start_time
+    ).total_seconds()
+    / 86400.0,
+)
+
 
 recent_cutoff = (
     end_time
@@ -247,10 +315,6 @@ for batch in chunks(
 
             series_entity_id = None
 
-            # With minimal_response the middle records may
-            # omit entity_id, but the first/last records
-            # normally retain it. Search the whole series
-            # defensively.
             for state_entry in series:
                 if not isinstance(
                     state_entry,
@@ -283,15 +347,13 @@ for batch in chunks(
             error
         )
 
-        # A failed query is kept separate from "no history".
-        # Failure must never make an entity look stale.
+        # Query failure must never be interpreted as
+        # evidence that an entity is stale.
         for entity_id in batch:
             query_failures[
                 entity_id
             ] = message
 
-    # Small pause between batches to avoid hammering the
-    # recorder database.
     time.sleep(
         0.2
     )
@@ -364,11 +426,6 @@ for entity_id in entity_ids:
         if not changed:
             continue
 
-        if changed.tzinfo is None:
-            changed = changed.replace(
-                tzinfo=timezone.utc
-            )
-
         if (
             last_usable is None
             or changed
@@ -388,8 +445,15 @@ for entity_id in entity_ids:
     result = source
 
     result[
-        "history_lookback_days"
-    ] = LOOKBACK_DAYS
+        "requested_history_lookback_days"
+    ] = REQUESTED_LOOKBACK_DAYS
+
+    result[
+        "effective_history_lookback_days"
+    ] = round(
+        effective_lookback_days,
+        2,
+    )
 
     result[
         "history_records_returned"
@@ -574,8 +638,30 @@ report = {
         end_time.isoformat(),
 
     "history_policy": {
-        "lookback_days":
-            LOOKBACK_DAYS,
+        "requested_lookback_days":
+            REQUESTED_LOOKBACK_DAYS,
+
+        "effective_lookback_days":
+            round(
+                effective_lookback_days,
+                2,
+            ),
+
+        "history_window_source":
+            history_window_source,
+
+        "history_start":
+            start_time.isoformat(),
+
+        "history_end":
+            end_time.isoformat(),
+
+        "recorder_oldest_run":
+            (
+                recorder_oldest.isoformat()
+                if recorder_oldest
+                else None
+            ),
 
         "recent_activity_days":
             RECENT_DAYS,
@@ -589,9 +675,9 @@ report = {
             (
                 "History is protective context only. "
                 "Lack of usable history does not mean "
-                "an entity is safe to delete because "
-                "Recorder retention or exclusions may "
-                "limit available history."
+                "an entity is safe to delete. Recorder "
+                "retention, exclusions, or entity-specific "
+                "history gaps may limit available evidence."
             ),
     },
 
@@ -683,15 +769,29 @@ print(
 )
 
 print(
+    f"Requested lookback:          "
+    f"{REQUESTED_LOOKBACK_DAYS} days"
+)
+
+print(
+    f"Effective lookback:          "
+    f"{effective_lookback_days:.1f} days"
+)
+
+if recorder_oldest:
+    print(
+        f"Recorder history starts:     "
+        f"{recorder_oldest.isoformat()}"
+    )
+
+print(
     f"Recent activity "
     f"(<= {RECENT_DAYS} days):    "
     f"{len(recent_entities)}"
 )
 
 print(
-    f"Older activity "
-    f"({RECENT_DAYS + 1}-"
-    f"{LOOKBACK_DAYS} days): "
+    f"Older activity found:        "
     f"{len(older_entities)}"
 )
 
@@ -713,8 +813,9 @@ print(
 )
 
 print(
-    "Recorder retention or exclusions "
-    "may limit available history."
+    "Recorder retention, exclusions, "
+    "or entity-specific history gaps "
+    "may limit available evidence."
 )
 
 print("")
