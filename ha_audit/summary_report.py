@@ -612,31 +612,83 @@ add("DETAILED REPORTS")
 add("-" * 58)
 
 add(
-    "/config/audit_snapshot.json"
-)
-
-add(
-    "/config/config_inventory.json"
-)
-
-add(
-    "/config/quality_audit.json"
-)
-
-add(
-    "/config/"
-    "not_provided_reference_audit.json"
+    "Stored in HA Audit's "
+    "app-config folder."
 )
 
 add("")
 
 add(
-    "Latest-run summary "
-    "overwritten each run:"
+    "To open them in "
+    "Studio Code Server:"
 )
 
 add(
-    OUTPUT_FILE
+    "  File > Open Folder..."
+)
+
+add(
+    "  Enter: /addon_configs"
+)
+
+add(
+    "  Open the folder whose "
+    "name ends in _ha_audit"
+)
+
+add("")
+
+add("Files:")
+
+add(
+    "  audit_snapshot.json"
+)
+
+add(
+    "  audit_snapshot_previous.json"
+)
+
+add(
+    "  config_inventory.json"
+)
+
+add(
+    "  quality_audit.json"
+)
+
+add(
+    "  not_provided_reference_audit.json"
+)
+
+add(
+    "  ha_audit_latest.txt"
+)
+
+add("")
+
+add(
+    "ha_audit_latest.txt is "
+    "overwritten on every run."
+)
+
+add("")
+
+add(
+    "To return to what you "
+    "were previously working on:"
+)
+
+add(
+    "  Use File > Open Recent "
+    "and reopen your previous "
+    "folder/workspace."
+)
+
+add(
+    "  If it is not listed, use "
+    "File > Open Folder... and "
+    "select the folder you were "
+    "using before."
 )
 
 add(
