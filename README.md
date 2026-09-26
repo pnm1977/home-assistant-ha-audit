@@ -22,6 +22,8 @@ HA Audit currently provides:
 - missing entity reference candidates
 - large automation and script detection
 - comparison with previous audit results
+- Detection of registry entities no longer currently provided by integrations
+- Active-YAML reference checks for not-currently-provided entities
 
 ## Safety
 
