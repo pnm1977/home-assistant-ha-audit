@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import requests
 import websocket
 
+
 VERSION = os.environ.get(
     "HA_AUDIT_VERSION",
     "unknown",
@@ -265,6 +266,29 @@ entity_registry_by_id = {
     if entry.get("ei")
 }
 
+devices = registry_data.get(
+    "config/device_registry/list",
+    [],
+)
+
+device_by_id = {
+    device["id"]: device
+    for device in devices
+    if device.get("id")
+}
+
+areas = registry_data.get(
+    "config/area_registry/list",
+    [],
+)
+
+area_by_id = {
+    area["area_id"]: area.get("name")
+    for area in areas
+    if area.get("area_id")
+}
+
+
 # ------------------------------------------------------------
 # Entities currently provided by integrations
 # ------------------------------------------------------------
@@ -278,6 +302,7 @@ provided_entity_ids = set(
     entity_sources.keys()
 )
 
+
 # ------------------------------------------------------------
 # Enabled registry entities no longer currently provided
 # ------------------------------------------------------------
@@ -285,9 +310,7 @@ provided_entity_ids = set(
 not_provided_entities = []
 not_provided_by_platform = Counter()
 
-
 for entry in entity_registry:
-
     entity_id = entry.get("ei")
 
     if not entity_id:
@@ -301,6 +324,19 @@ for entry in entity_registry:
         "unknown",
     )
 
+    device_id = entry.get("di")
+    device = device_by_id.get(device_id, {})
+
+    area_id = (
+        entry.get("ai")
+        or device.get("area_id")
+    )
+
+    device_name = (
+        device.get("name_by_user")
+        or device.get("name")
+    )
+
     not_provided_by_platform[
         platform
     ] += 1
@@ -310,10 +346,11 @@ for entry in entity_registry:
             "entity_id": entity_id,
             "platform": platform,
             "name": entry.get("en"),
-            "device_id": entry.get("di"),
+            "device": device_name,
+            "device_id": device_id,
+            "area": area_by_id.get(area_id),
         }
     )
-
 
 not_provided_entities.sort(
     key=lambda item: (
@@ -321,29 +358,6 @@ not_provided_entities.sort(
         item["entity_id"],
     )
 )
-
-devices = registry_data.get(
-    "config/device_registry/list",
-    [],
-)
-
-device_by_id = {
-    device["id"]: device
-    for device in devices
-    if device.get("id")
-}
-
-
-areas = registry_data.get(
-    "config/area_registry/list",
-    [],
-)
-
-area_by_id = {
-    area["area_id"]: area.get("name")
-    for area in areas
-    if area.get("area_id")
-}
 
 
 # ------------------------------------------------------------
@@ -504,12 +518,10 @@ current_unknown_ids = {
     for item in unknown_entities
 }
 
-
 previous_unavailable_ids = set()
 previous_unknown_ids = set()
 
 previous_generated_at = None
-
 
 if previous_snapshot:
     previous_generated_at = previous_snapshot.get(
@@ -610,15 +622,12 @@ snapshot = {
             "count": len(
                 unavailable_entities
             ),
-
             "by_platform": dict(
                 unavailable_by_platform.most_common()
             ),
-
             "by_device": dict(
                 unavailable_by_device.most_common()
             ),
-
             "entities": sorted(
                 unavailable_entities,
                 key=lambda item: (
@@ -632,15 +641,12 @@ snapshot = {
             "count": len(
                 unknown_entities
             ),
-
             "by_platform": dict(
                 unknown_by_platform.most_common()
             ),
-
             "by_device": dict(
                 unknown_by_device.most_common()
             ),
-
             "entities": sorted(
                 unknown_entities,
                 key=lambda item: (
@@ -648,6 +654,16 @@ snapshot = {
                     item["entity_id"],
                 ),
             ),
+        },
+
+        "not_currently_provided": {
+            "count": len(
+                not_provided_entities
+            ),
+            "by_platform": dict(
+                not_provided_by_platform.most_common()
+            ),
+            "entities": not_provided_entities,
         },
     },
 
@@ -758,7 +774,6 @@ print("==========================================")
 print(f"Core:                {core.get('version')}")
 print(f"Supervisor:          {supervisor.get('version')}")
 print(f"OS:                  {os_info.get('version')}")
-
 print(f"Entities:            {len(states)}")
 print(f"Devices:             {len(regular_devices)}")
 
@@ -770,6 +785,11 @@ print(
 print(
     f"Unknown:             "
     f"{len(unknown_entities)}"
+)
+
+print(
+    f"Not provided:        "
+    f"{len(not_provided_entities)}"
 )
 
 print(
@@ -802,6 +822,31 @@ print("------------------------------------------")
 
 for platform, count in unavailable_by_platform.most_common(15):
     print(f"{platform:<28} {count:>5}")
+
+
+print("")
+print("Not currently provided by platform:")
+print("------------------------------------------")
+
+if not_provided_by_platform:
+    for platform, count in not_provided_by_platform.most_common():
+        print(f"{platform:<28} {count:>5}")
+else:
+    print("None")
+
+
+print("")
+print("Not currently provided entities:")
+print("------------------------------------------")
+
+if not_provided_entities:
+    for item in not_provided_entities:
+        print(
+            f"{item['platform']:<20} "
+            f"{item['entity_id']}"
+        )
+else:
+    print("None")
 
 
 print("")
@@ -856,7 +901,6 @@ for collector, status in snapshot[
     "collector_status"
 ].items():
     print(f"{collector:<28} {status}")
-
 
 print("==========================================")
 print("")
