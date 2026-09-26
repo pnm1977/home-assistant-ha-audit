@@ -113,6 +113,7 @@ def collect_registries():
             "config/entity_registry/list_for_display",
             "config/device_registry/list",
             "config/area_registry/list",
+            "entity/source",
         ]
 
         results = {}
