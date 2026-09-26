@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.5
+
+- Added a concise current-run summary designed for repeated audit and cleanup cycles
+- Added `summary_report.py` to turn detailed audit data into an actionable user-facing report
+- Added `/config/ha_audit_latest.txt`, overwritten on every run so the latest audit can be read without scrolling through accumulated app logs
+- Suppressed normal verbose scanner output from the Home Assistant app log
+- Detailed JSON reports continue to be generated unchanged
+- Scanner output is still shown automatically if a stage fails
+- Added next-action guidance to the summary, including where to investigate findings in Home Assistant or Studio Code Server
+- Added direct guidance for Template cleanup candidates
+- 
 ## 0.6.4
 
 - Added active-YAML reference checks for entities that are no longer currently provided by Home Assistant integrations
