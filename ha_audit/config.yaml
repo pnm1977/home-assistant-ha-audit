@@ -1,5 +1,5 @@
 name: "HA Audit"
-version: "0.6.6"
+version: "0.6.7"
 slug: "ha_audit"
 description: "Read-only Home Assistant health and configuration auditor"
 
