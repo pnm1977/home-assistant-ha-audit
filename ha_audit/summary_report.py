@@ -4,31 +4,49 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 
-VERSION = os.environ.get("HA_AUDIT_VERSION", "unknown")
+VERSION = os.environ.get(
+    "HA_AUDIT_VERSION",
+    "unknown",
+)
 
 AUDIT_FILE = "/config/audit_snapshot.json"
 QUALITY_FILE = "/config/quality_audit.json"
 REFERENCE_FILE = "/config/not_provided_reference_audit.json"
 RECORDER_FILE = "/config/recorder_health_audit.json"
 HISTORY_FILE = "/config/not_provided_history_audit.json"
+AVAILABILITY_FILE = "/config/availability_audit.json"
 
 OUTPUT_FILE = "/config/ha_audit_latest.txt"
 
 
 def load_json(path):
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(
+        path,
+        "r",
+        encoding="utf-8",
+    ) as handle:
         return json.load(handle)
 
 
 def load_json_optional(path):
     try:
-        return load_json(path)
+        return load_json(
+            path
+        )
     except Exception:
         return {}
 
 
 def count_mapping(value):
-    return len(value) if isinstance(value, dict) else 0
+    if isinstance(
+        value,
+        dict,
+    ):
+        return len(
+            value
+        )
+
+    return 0
 
 
 def parse_iso(value):
@@ -37,8 +55,14 @@ def parse_iso(value):
 
     try:
         return datetime.fromisoformat(
-            str(value).replace("Z", "+00:00")
+            str(
+                value
+            ).replace(
+                "Z",
+                "+00:00",
+            )
         )
+
     except Exception:
         return None
 
@@ -48,15 +72,25 @@ def format_local_time(
     timezone_name,
     include_seconds=False,
 ):
-    stamp = parse_iso(value)
+    stamp = parse_iso(
+        value
+    )
 
     if not stamp:
-        return "unknown" if not value else str(value)
+        if value:
+            return str(
+                value
+            )
+
+        return "unknown"
 
     try:
         local_stamp = stamp.astimezone(
-            ZoneInfo(timezone_name)
+            ZoneInfo(
+                timezone_name
+            )
         )
+
     except Exception:
         local_stamp = stamp
 
@@ -109,6 +143,7 @@ def format_days(value):
         number = float(
             value
         )
+
     except (
         TypeError,
         ValueError,
@@ -126,6 +161,10 @@ def format_days(value):
         f"{number:.0f} days"
     )
 
+
+# ------------------------------------------------------------
+# Load reports
+# ------------------------------------------------------------
 
 audit = load_json(
     AUDIT_FILE
@@ -147,6 +186,14 @@ history = load_json_optional(
     HISTORY_FILE
 )
 
+availability = load_json_optional(
+    AVAILABILITY_FILE
+)
+
+
+# ------------------------------------------------------------
+# Main audit data
+# ------------------------------------------------------------
 
 system = audit.get(
     "system",
@@ -179,6 +226,10 @@ collectors = audit.get(
 )
 
 
+# ------------------------------------------------------------
+# Quality report data
+# ------------------------------------------------------------
+
 configuration_tree = quality.get(
     "configuration_tree",
     {},
@@ -200,10 +251,19 @@ entity_references = quality.get(
 )
 
 
+# ------------------------------------------------------------
+# Reference report data
+# ------------------------------------------------------------
+
 reference_summary = reference.get(
     "summary",
     {},
 )
+
+
+# ------------------------------------------------------------
+# History report data
+# ------------------------------------------------------------
 
 history_summary = history.get(
     "summary",
@@ -221,6 +281,10 @@ recent_history_entities = history.get(
 )
 
 
+# ------------------------------------------------------------
+# Recorder report data
+# ------------------------------------------------------------
+
 recorder_status = recorder.get(
     "status"
 )
@@ -235,6 +299,176 @@ recorder_availability = recorder.get(
     {},
 )
 
+
+# ------------------------------------------------------------
+# Availability classification data
+# ------------------------------------------------------------
+
+availability_summary = availability.get(
+    "summary",
+    {},
+)
+
+availability_labels = availability.get(
+    "labels",
+    {},
+)
+
+availability_entity_counts = (
+    availability_summary.get(
+        "entity_classification_counts",
+        {},
+    )
+)
+
+availability_device_counts = (
+    availability_summary.get(
+        "device_classification_counts",
+        {},
+    )
+)
+
+
+availability_available = bool(
+    availability
+)
+
+
+expected_label = (
+    availability_labels.get(
+        "expected_offline",
+        {},
+    )
+)
+
+maintenance_label = (
+    availability_labels.get(
+        "maintenance",
+        {},
+    )
+)
+
+
+expected_label_name = (
+    expected_label.get(
+        "name"
+    )
+    or "HA Audit - Expected Offline"
+)
+
+maintenance_label_name = (
+    maintenance_label.get(
+        "name"
+    )
+    or "HA Audit - Maintenance"
+)
+
+
+expected_label_exists = bool(
+    expected_label.get(
+        "exists",
+        False,
+    )
+)
+
+maintenance_label_exists = bool(
+    maintenance_label.get(
+        "exists",
+        False,
+    )
+)
+
+
+availability_classified = (
+    availability_summary.get(
+        "unavailable_entities_classified",
+        0,
+    )
+)
+
+availability_excluded = (
+    availability_summary.get(
+        "excluded_not_currently_provided",
+        0,
+    )
+)
+
+
+expected_offline_entities = (
+    availability_entity_counts.get(
+        "expected_offline",
+        0,
+    )
+)
+
+maintenance_entities = (
+    availability_entity_counts.get(
+        "maintenance",
+        0,
+    )
+)
+
+partial_entities = (
+    availability_entity_counts.get(
+        "partial_availability",
+        0,
+    )
+)
+
+whole_device_entities = (
+    availability_entity_counts.get(
+        "whole_device_unavailable_unlabelled",
+        0,
+    )
+)
+
+ungrouped_entities = (
+    availability_entity_counts.get(
+        "ungrouped_unavailable",
+        0,
+    )
+)
+
+
+expected_offline_devices = (
+    availability_device_counts.get(
+        "expected_offline",
+        0,
+    )
+)
+
+maintenance_devices = (
+    availability_device_counts.get(
+        "maintenance",
+        0,
+    )
+)
+
+partial_devices = (
+    availability_device_counts.get(
+        "partial_availability",
+        0,
+    )
+)
+
+whole_device_devices = (
+    availability_device_counts.get(
+        "whole_device_unavailable_unlabelled",
+        0,
+    )
+)
+
+ungrouped_devices = (
+    availability_device_counts.get(
+        "ungrouped_unavailable",
+        0,
+    )
+)
+
+
+# ------------------------------------------------------------
+# General values
+# ------------------------------------------------------------
 
 timezone_name = (
     system.get(
@@ -372,6 +606,7 @@ history_available = bool(
     history
 )
 
+
 requested_lookback_days = (
     history_policy.get(
         "requested_lookback_days",
@@ -450,6 +685,10 @@ history_failed = (
 )
 
 
+# ------------------------------------------------------------
+# Build summary
+# ------------------------------------------------------------
+
 lines = []
 
 
@@ -477,6 +716,10 @@ add(
     "=" * 58
 )
 
+
+# ------------------------------------------------------------
+# System
+# ------------------------------------------------------------
 
 add("")
 add("SYSTEM")
@@ -512,6 +755,10 @@ add(
     f"{len(collector_errors)}"
 )
 
+
+# ------------------------------------------------------------
+# Configuration
+# ------------------------------------------------------------
 
 add("")
 add("CONFIGURATION")
@@ -553,6 +800,10 @@ add(
 )
 
 
+# ------------------------------------------------------------
+# Entity health
+# ------------------------------------------------------------
+
 add("")
 add("ENTITY HEALTH")
 add("-" * 58)
@@ -588,6 +839,89 @@ add(
 )
 
 
+# ------------------------------------------------------------
+# Availability context
+# ------------------------------------------------------------
+
+add("")
+add("AVAILABILITY CONTEXT")
+add("-" * 58)
+
+if availability_available:
+
+    add(
+        f"Unavailable classified:     "
+        f"{availability_classified}"
+    )
+
+    add(
+        f"Not-provided excluded:      "
+        f"{availability_excluded}"
+    )
+
+    add("")
+
+    add(
+        f"Expected offline:           "
+        f"{expected_offline_entities} entities / "
+        f"{expected_offline_devices} devices"
+    )
+
+    add(
+        f"Maintenance:                "
+        f"{maintenance_entities} entities / "
+        f"{maintenance_devices} devices"
+    )
+
+    add(
+        f"Partial availability:       "
+        f"{partial_entities} entities / "
+        f"{partial_devices} devices"
+    )
+
+    add(
+        f"Whole device unavailable:   "
+        f"{whole_device_entities} entities / "
+        f"{whole_device_devices} devices"
+    )
+
+    add(
+        f"Ungrouped unavailable:      "
+        f"{ungrouped_entities} entities / "
+        f"{ungrouped_devices} items"
+    )
+
+    add("")
+
+    add(
+        f"Expected-offline label:     "
+        f"{'FOUND' if expected_label_exists else 'NOT FOUND'}"
+    )
+
+    add(
+        f"Maintenance label:          "
+        f"{'FOUND' if maintenance_label_exists else 'NOT FOUND'}"
+    )
+
+    add("")
+
+    add(
+        "Unavailable does not automatically "
+        "mean faulty."
+    )
+
+else:
+
+    add(
+        "Availability classification "
+        "report unavailable."
+    )
+
+
+# ------------------------------------------------------------
+# Review
+# ------------------------------------------------------------
+
 add("")
 add("REVIEW")
 add("-" * 58)
@@ -602,6 +936,10 @@ add(
     f"{template_review}"
 )
 
+
+# ------------------------------------------------------------
+# History safety
+# ------------------------------------------------------------
 
 add("")
 add("HISTORY SAFETY")
@@ -704,6 +1042,10 @@ else:
     )
 
 
+# ------------------------------------------------------------
+# Next actions
+# ------------------------------------------------------------
+
 add("")
 add("NEXT ACTIONS")
 add("-" * 58)
@@ -765,13 +1107,6 @@ if missing_includes:
         "missing_includes."
     )
 
-    add(
-        "    Then open the listed "
-        "source file and line in "
-        "your Home Assistant "
-        "configuration editor."
-    )
-
 
 if missing_entities:
 
@@ -789,13 +1124,6 @@ if missing_entities:
         "quality_audit.json > "
         "entity_references > "
         "missing_candidates."
-    )
-
-    add(
-        "    Use the listed file "
-        "and line number in your "
-        "Home Assistant "
-        "configuration editor."
     )
 
 
@@ -819,11 +1147,127 @@ if referenced_not_provided:
         "referenced_entities."
     )
 
+
+if availability_available:
+
+    if (
+        not expected_label_exists
+        or not maintenance_label_exists
+    ):
+
+        actions += 1
+
+        add(
+            "[i] HA Audit availability "
+            "labels are not fully configured."
+        )
+
+        add(
+            "    In Home Assistant go to "
+            "Settings > Areas, labels & zones "
+            "> Labels."
+        )
+
+        if not expected_label_exists:
+
+            add(
+                "    Create label: "
+                f"{expected_label_name}"
+            )
+
+        if not maintenance_label_exists:
+
+            add(
+                "    Create label: "
+                f"{maintenance_label_name}"
+            )
+
+        add(
+            "    Apply labels only to devices "
+            "whose normal behaviour you know."
+        )
+
+
+    if whole_device_devices:
+
+        actions += 1
+
+        add(
+            f"[i] {whole_device_devices} "
+            "unlabelled device(s) currently "
+            "have no healthy state entities."
+        )
+
+        add(
+            "    This does NOT automatically "
+            "mean they are faulty."
+        )
+
+        add(
+            "    Review "
+            "availability_audit.json > devices."
+        )
+
+        add(
+            "    If deliberately power-managed, "
+            f"apply '{expected_label_name}'."
+        )
+
+        add(
+            "    If temporarily offline for work "
+            "or repairs, apply "
+            f"'{maintenance_label_name}'."
+        )
+
+
+    if partial_devices:
+
+        actions += 1
+
+        add(
+            f"[i] {partial_devices} device(s) "
+            "have partial availability."
+        )
+
+        add(
+            "    At least one entity is healthy "
+            "while other entities are unavailable."
+        )
+
+        add(
+            "    Treat these as feature-level "
+            "review items rather than whole-device "
+            "failures."
+        )
+
+
+    if ungrouped_entities:
+
+        actions += 1
+
+        add(
+            f"[i] {ungrouped_entities} "
+            "unavailable entity/entities are "
+            "not attached to a device."
+        )
+
+        add(
+            "    Review "
+            "availability_audit.json > entities."
+        )
+
+else:
+
+    actions += 1
+
     add(
-        "    Review the listed YAML "
-        "file and line before "
-        "removing or renaming "
-        "anything."
+        "[!] Availability classification "
+        "was not available for this run."
+    )
+
+    add(
+        "    Check the HA Audit log for an "
+        "availability scanner failure."
     )
 
 
@@ -849,12 +1293,6 @@ if (
         "cleanup evidence."
     )
 
-    add(
-        "    Check "
-        "recorder_health_audit.json "
-        "for details."
-    )
-
 
 if history_failed:
 
@@ -865,18 +1303,6 @@ if history_failed:
         f"checked for "
         f"{history_failed} "
         "entity/entities."
-    )
-
-    add(
-        "    Do not use history as "
-        "cleanup evidence for "
-        "those entities."
-    )
-
-    add(
-        "    Check "
-        "not_provided_history_"
-        "audit.json."
     )
 
 
@@ -941,15 +1367,11 @@ if history_older:
         f"[i] {history_older} "
         "not-currently-provided "
         "entity/entities have older "
-        "usable history within the "
-        "available Recorder window."
+        "usable history."
     )
 
     add(
-        "    Review before deleting; "
-        "older activity is still "
-        "evidence that the entity "
-        "was used."
+        "    Review before deleting."
     )
 
 
@@ -968,13 +1390,6 @@ if history_none:
     add(
         "    This is UNKNOWN, not "
         "approval to delete."
-    )
-
-    add(
-        "    Recorder retention, "
-        "exclusions, or "
-        "entity-specific gaps may "
-        "limit evidence."
     )
 
 
@@ -1002,18 +1417,6 @@ if template_review:
         "Integration = Template."
     )
 
-    add(
-        "    Open an entity and "
-        "confirm Home Assistant "
-        "says it is no longer "
-        "provided."
-    )
-
-    add(
-        "    Check history context "
-        "before deleting anything."
-    )
-
 
 if orphan_yaml:
 
@@ -1025,24 +1428,20 @@ if orphan_yaml:
         "active include tree."
     )
 
-    add(
-        "    Check "
-        "quality_audit.json > "
-        "configuration_tree > "
-        "inactive_classification > "
-        "orphan_candidate."
-    )
-
 
 if actions == 0:
 
     add(
         "No immediate "
-        "configuration cleanup "
+        "configuration or availability "
         "actions were identified "
         "by this audit."
     )
 
+
+# ------------------------------------------------------------
+# Detailed reports
+# ------------------------------------------------------------
 
 add("")
 add("DETAILED REPORTS")
@@ -1119,6 +1518,10 @@ add(
 
 add(
     "  not_provided_history_audit.json"
+)
+
+add(
+    "  availability_audit.json"
 )
 
 add(
