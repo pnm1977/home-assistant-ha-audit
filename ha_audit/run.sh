@@ -49,6 +49,10 @@ run_quiet_python \
     "Not-provided entity reference audit"
 
 run_quiet_python \
+    "recorder_health_scan.py" \
+    "Recorder history availability audit"
+
+run_quiet_python \
     "not_provided_history_scan.py" \
     "Not-provided entity history audit"
 
