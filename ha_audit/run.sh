@@ -48,6 +48,10 @@ run_quiet_python \
     "not_provided_reference_scan.py" \
     "Not-provided entity reference audit"
 
+run_quiet_python \
+    "not_provided_history_scan.py" \
+    "Not-provided entity history audit"
+
 
 if ! python3 /summary_report.py; then
     bashio::log.error "Latest-run summary generation failed"
