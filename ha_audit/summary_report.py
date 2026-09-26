@@ -4,49 +4,74 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 
-VERSION = os.environ.get(
-    "HA_AUDIT_VERSION",
-    "unknown",
-)
+VERSION = os.environ.get("HA_AUDIT_VERSION", "unknown")
 
 AUDIT_FILE = "/config/audit_snapshot.json"
 QUALITY_FILE = "/config/quality_audit.json"
 REFERENCE_FILE = "/config/not_provided_reference_audit.json"
+RECORDER_FILE = "/config/recorder_health_audit.json"
 HISTORY_FILE = "/config/not_provided_history_audit.json"
 
 OUTPUT_FILE = "/config/ha_audit_latest.txt"
 
 
 def load_json(path):
-    with open(
-        path,
-        "r",
-        encoding="utf-8",
-    ) as handle:
+    with open(path, "r", encoding="utf-8") as handle:
         return json.load(handle)
 
 
 def load_json_optional(path):
     try:
-        return load_json(
-            path
-        )
+        return load_json(path)
     except Exception:
         return {}
 
 
 def count_mapping(value):
-    if isinstance(value, dict):
-        return len(value)
+    return len(value) if isinstance(value, dict) else 0
 
-    return 0
+
+def parse_iso(value):
+    if not value:
+        return None
+
+    try:
+        return datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")
+        )
+    except Exception:
+        return None
+
+
+def format_local_time(
+    value,
+    timezone_name,
+    include_seconds=False,
+):
+    stamp = parse_iso(value)
+
+    if not stamp:
+        return "unknown" if not value else str(value)
+
+    try:
+        local_stamp = stamp.astimezone(
+            ZoneInfo(timezone_name)
+        )
+    except Exception:
+        local_stamp = stamp
+
+    pattern = (
+        "%d %b %Y %H:%M:%S"
+        if include_seconds
+        else "%d %b %Y %H:%M"
+    )
+
+    return local_stamp.strftime(
+        pattern
+    )
 
 
 def format_generated_time(audit):
-    generated_at = audit.get(
-        "generated_at"
-    )
-
     timezone_name = (
         audit.get(
             "system",
@@ -57,61 +82,49 @@ def format_generated_time(audit):
         or "UTC"
     )
 
+    generated_at = audit.get(
+        "generated_at"
+    )
+
     if not generated_at:
         return "unknown"
 
-    try:
-        stamp = datetime.fromisoformat(
-            generated_at.replace(
-                "Z",
-                "+00:00",
-            )
-        )
+    formatted = format_local_time(
+        generated_at,
+        timezone_name,
+        include_seconds=True,
+    )
 
-        local_stamp = stamp.astimezone(
-            ZoneInfo(
-                timezone_name
-            )
-        )
-
-        return (
-            local_stamp.strftime(
-                "%d %b %Y %H:%M:%S"
-            )
-            + f" ({timezone_name})"
-        )
-
-    except Exception:
-        return generated_at
+    return (
+        f"{formatted} "
+        f"({timezone_name})"
+    )
 
 
-def format_history_time(
-    value,
-    timezone_name,
-):
-    if not value:
+def format_days(value):
+    if value is None:
         return "unknown"
 
     try:
-        stamp = datetime.fromisoformat(
-            value.replace(
-                "Z",
-                "+00:00",
-            )
+        number = float(
+            value
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return str(
+            value
         )
 
-        local_stamp = stamp.astimezone(
-            ZoneInfo(
-                timezone_name
-            )
+    if number < 10:
+        return (
+            f"{number:.1f} days"
         )
 
-        return local_stamp.strftime(
-            "%d %b %Y %H:%M"
-        )
-
-    except Exception:
-        return value
+    return (
+        f"{number:.0f} days"
+    )
 
 
 audit = load_json(
@@ -124,6 +137,10 @@ quality = load_json(
 
 reference = load_json(
     REFERENCE_FILE
+)
+
+recorder = load_json_optional(
+    RECORDER_FILE
 )
 
 history = load_json_optional(
@@ -201,6 +218,21 @@ history_policy = history.get(
 recent_history_entities = history.get(
     "recent_activity_entities",
     [],
+)
+
+
+recorder_status = recorder.get(
+    "status"
+)
+
+recorder_info = recorder.get(
+    "recorder",
+    {},
+)
+
+recorder_availability = recorder.get(
+    "history_availability",
+    {},
 )
 
 
@@ -328,7 +360,7 @@ referenced_not_provided = (
     )
 )
 
-template_cleanup = (
+template_review = (
     reference_summary.get(
         "template_no_active_yaml_reference",
         0,
@@ -340,19 +372,54 @@ history_available = bool(
     history
 )
 
-history_lookback_days = (
+requested_lookback_days = (
     history_policy.get(
-        "lookback_days",
-        0,
+        "requested_lookback_days",
+        recorder.get(
+            "requested_history_lookback_days",
+            90,
+        ),
+    )
+)
+
+effective_lookback_days = (
+    history_policy.get(
+        "effective_lookback_days",
+        recorder_availability.get(
+            "effective_lookback_days"
+        ),
     )
 )
 
 recent_activity_days = (
     history_policy.get(
         "recent_activity_days",
-        0,
+        45,
     )
 )
+
+history_window_source = (
+    history_policy.get(
+        "history_window_source"
+    )
+)
+
+
+recorder_oldest_run = (
+    history_policy.get(
+        "recorder_oldest_run"
+    )
+    or recorder_info.get(
+        "oldest_recorder_run"
+    )
+)
+
+available_history_days = (
+    recorder_availability.get(
+        "available_history_days"
+    )
+)
+
 
 history_recent = (
     history_summary.get(
@@ -531,8 +598,8 @@ add(
 )
 
 add(
-    f"Template cleanup candidates:"
-    f" {template_cleanup}"
+    f"Template review candidates: "
+    f"{template_review}"
 )
 
 
@@ -543,41 +610,87 @@ add("-" * 58)
 if history_available:
 
     add(
-        f"History lookback:           "
-        f"{history_lookback_days} days"
+        f"Requested lookback:          "
+        f"{requested_lookback_days} days"
+    )
+
+    if (
+        recorder_status == "ok"
+        and recorder_oldest_run
+    ):
+
+        add(
+            "Recorder history starts:     "
+            + format_local_time(
+                recorder_oldest_run,
+                timezone_name,
+            )
+        )
+
+        add(
+            "Recorder history available:  "
+            + format_days(
+                available_history_days
+            )
+        )
+
+    else:
+
+        add(
+            "Recorder history available:  "
+            "unknown"
+        )
+
+    add(
+        "Effective history checked:   "
+        + format_days(
+            effective_lookback_days
+        )
     )
 
     add(
         f"Recent activity "
-        f"(<= {recent_activity_days}d):"
-        f" {history_recent}"
+        f"(<= {recent_activity_days}d): "
+        f"{history_recent}"
     )
 
     add(
-        f"Older activity found:       "
+        f"Older activity found:        "
         f"{history_older}"
     )
 
     add(
-        f"No usable history found:    "
+        f"No usable history found:     "
         f"{history_none}"
     )
 
     add(
-        f"History query failures:     "
+        f"History query failures:      "
         f"{history_failed}"
     )
 
     add("")
 
     add(
-        "History is protective context only."
+        "History is protective "
+        "context only."
     )
 
     add(
-        "No history does NOT mean an entity "
-        "is safe to delete."
+        "No history does NOT mean "
+        "an entity is safe to delete."
     )
+
+    if (
+        history_window_source
+        == "requested_lookback_fallback"
+    ):
+
+        add(
+            "Recorder availability "
+            "could not be confirmed "
+            "for this run."
+        )
 
 else:
 
@@ -586,15 +699,14 @@ else:
     )
 
     add(
-        "Do not use absence of history as "
-        "cleanup evidence."
+        "Do not use absence of "
+        "history as cleanup evidence."
     )
 
 
 add("")
 add("NEXT ACTIONS")
 add("-" * 58)
-
 
 actions = 0
 
@@ -708,10 +820,39 @@ if referenced_not_provided:
     )
 
     add(
-        "    Review the listed "
-        "YAML file and line before "
+        "    Review the listed YAML "
+        "file and line before "
         "removing or renaming "
         "anything."
+    )
+
+
+if (
+    recorder_status
+    not in (
+        None,
+        "ok",
+    )
+):
+
+    actions += 1
+
+    add(
+        "[!] Recorder history "
+        "availability could not "
+        "be determined."
+    )
+
+    add(
+        "    Do not treat absence "
+        "of entity history as "
+        "cleanup evidence."
+    )
+
+    add(
+        "    Check "
+        "recorder_health_audit.json "
+        "for details."
     )
 
 
@@ -762,12 +903,13 @@ if history_recent:
     ) <= 10:
 
         for item in recent_history_entities:
+
             entity_id = item.get(
                 "entity_id",
                 "unknown",
             )
 
-            last_at = format_history_time(
+            last_at = format_local_time(
                 item.get(
                     "last_usable_state_at"
                 ),
@@ -800,15 +942,14 @@ if history_older:
         "not-currently-provided "
         "entity/entities have older "
         "usable history within the "
-        f"{history_lookback_days}-day "
-        "lookback."
+        "available Recorder window."
     )
 
     add(
         "    Review before deleting; "
         "older activity is still "
         "evidence that the entity "
-        "was genuinely used."
+        "was used."
     )
 
 
@@ -821,8 +962,7 @@ if history_none:
         "not-currently-provided "
         "entity/entities have no "
         "usable history in the "
-        f"{history_lookback_days}-day "
-        "lookback."
+        "effective Recorder window."
     )
 
     add(
@@ -831,18 +971,19 @@ if history_none:
     )
 
     add(
-        "    Recorder retention or "
-        "exclusions may mean older "
-        "history is unavailable."
+        "    Recorder retention, "
+        "exclusions, or "
+        "entity-specific gaps may "
+        "limit evidence."
     )
 
 
-if template_cleanup:
+if template_review:
 
     actions += 1
 
     add(
-        f"[i] {template_cleanup} "
+        f"[i] {template_review} "
         "Template entity/entities "
         "are review candidates."
     )
@@ -888,8 +1029,8 @@ if orphan_yaml:
         "    Check "
         "quality_audit.json > "
         "configuration_tree > "
-        "inactive_classification "
-        "> orphan_candidate."
+        "inactive_classification > "
+        "orphan_candidate."
     )
 
 
@@ -970,6 +1111,10 @@ add(
 
 add(
     "  not_provided_reference_audit.json"
+)
+
+add(
+    "  recorder_health_audit.json"
 )
 
 add(
