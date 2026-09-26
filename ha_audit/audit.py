@@ -278,6 +278,50 @@ provided_entity_ids = set(
     entity_sources.keys()
 )
 
+# ------------------------------------------------------------
+# Enabled registry entities no longer currently provided
+# ------------------------------------------------------------
+
+not_provided_entities = []
+not_provided_by_platform = Counter()
+
+
+for entry in entity_registry:
+
+    entity_id = entry.get("ei")
+
+    if not entity_id:
+        continue
+
+    if entity_id in provided_entity_ids:
+        continue
+
+    platform = entry.get(
+        "pl",
+        "unknown",
+    )
+
+    not_provided_by_platform[
+        platform
+    ] += 1
+
+    not_provided_entities.append(
+        {
+            "entity_id": entity_id,
+            "platform": platform,
+            "name": entry.get("en"),
+            "device_id": entry.get("di"),
+        }
+    )
+
+
+not_provided_entities.sort(
+    key=lambda item: (
+        item["platform"],
+        item["entity_id"],
+    )
+)
+
 devices = registry_data.get(
     "config/device_registry/list",
     [],
