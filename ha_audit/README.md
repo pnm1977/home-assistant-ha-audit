@@ -18,6 +18,8 @@ It is designed to help you understand, maintain, and improve a Home Assistant in
 - Missing entity references
 - Large automations and scripts
 - Comment-heavy YAML files
+- Detection of registry entities no longer currently provided by integrations
+- Active-YAML reference checks for not-currently-provided entities
 
 HA Audit does not make changes to Home Assistant.
 
