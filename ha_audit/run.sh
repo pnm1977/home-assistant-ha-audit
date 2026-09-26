@@ -56,6 +56,10 @@ run_quiet_python \
     "not_provided_history_scan.py" \
     "Not-provided entity history audit"
 
+run_quiet_python \
+    "availability_scan.py" \
+    "Unavailable entity availability audit"
+
 
 if ! python3 /summary_report.py; then
     bashio::log.error "Latest-run summary generation failed"
