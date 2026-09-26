@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.4
+
+- Added active-YAML reference checks for entities that are no longer currently provided by Home Assistant integrations
+- Added a dedicated `not_provided_reference_scan.py` scanner
+- Cross-references not-currently-provided entities against the active YAML tree identified by the quality audit
+- Ignores fully commented-out YAML lines when checking references
+- Reports not-currently-provided entities that are still referenced by active YAML
+- Reports unreferenced Template entities as cleanup candidates rather than automatically treating them as safe to delete
+- Saves detailed results to `not_provided_reference_audit.json`
+
 ## 0.6.3
 
 - Added comparison between the Home Assistant entity registry and live entity source data
