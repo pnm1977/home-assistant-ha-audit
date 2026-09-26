@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.6
+
+- Improved detailed-report location guidance in the current-run summary
+- Added Studio Code Server instructions for opening HA Audit's `/addon_configs` folder
+- Added guidance for finding the folder ending in `_ha_audit`
+- Added instructions for returning to the user's previous Studio Code folder/workspace without assuming where they started
+- Removed misleading container-only `/config/...` paths from the user-facing report section
+
 ## 0.6.5
 
 - Added a concise current-run summary designed for repeated audit and cleanup cycles
