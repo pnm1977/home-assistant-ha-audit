@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.8
+
+- Added Recorder health collection using Home Assistant system health data
+- Added `recorder_health_audit.json`
+- Added detection of the oldest available Recorder run
+- Added estimated available Recorder history duration
+- Changed history scanning to use the effective Recorder window rather than blindly requesting the full 90-day policy window
+- Added clear separation between requested history lookback and actually available Recorder history
+- Updated HISTORY SAFETY output to show:
+  - requested lookback
+  - Recorder history start time
+  - available Recorder history
+  - effective history checked
+- Kept history as protective context only
+- Continued treating missing history as unknown rather than cleanup evidence
+
 ## 0.6.7
 
 - Added history checks for entities that are no longer currently provided by integrations
