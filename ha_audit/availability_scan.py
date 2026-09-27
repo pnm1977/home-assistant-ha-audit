@@ -1,6 +1,7 @@
 import json
 import os
 from collections import Counter, defaultdict
+from datetime import datetime, timezone
 
 import requests
 import websocket
@@ -17,9 +18,7 @@ SUPERVISOR = "http://supervisor"
 WS_URL = "ws://supervisor/core/websocket"
 
 AUDIT_FILE = "/config/audit_snapshot.json"
-
 OUTPUT_FILE = "/config/availability_audit.json"
-
 
 EXPECTED_OFFLINE_LABEL = (
     "HA Audit - Expected Offline"
@@ -28,7 +27,6 @@ EXPECTED_OFFLINE_LABEL = (
 MAINTENANCE_LABEL = (
     "HA Audit - Maintenance"
 )
-
 
 HEADERS = {
     "Authorization": f"Bearer {TOKEN}",
@@ -39,6 +37,7 @@ HEADERS = {
 # ------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------
+
 
 def load_json(path):
     with open(
@@ -94,7 +93,6 @@ def get_registry_payload():
 
         def command(command_type):
             nonlocal next_id
-
             message_id = next_id
             next_id += 1
 
@@ -159,7 +157,6 @@ def get_states():
     )
 
     response.raise_for_status()
-
     payload = response.json()
 
     if not isinstance(
@@ -219,6 +216,7 @@ def entity_ids_from_snapshot_section(
 # Collect data
 # ------------------------------------------------------------
 
+
 audit = load_json(
     AUDIT_FILE
 )
@@ -226,6 +224,13 @@ audit = load_json(
 registry = get_registry_payload()
 
 states = get_states()
+
+# This timestamp represents when the live state collection completed.
+# Downstream history analysis can use it as the end of the same
+# availability observation window instead of querying beyond it.
+states_observed_at = datetime.now(
+    timezone.utc
+).isoformat()
 
 
 label_entries = registry.get(
@@ -280,14 +285,12 @@ maintenance_label_key = (
     )
 )
 
-
 available_label_keys = {
     normalise_label_name(
         name
     )
     for name in label_name_by_id.values()
 }
-
 
 expected_label_found = (
     expected_label_key
@@ -310,7 +313,6 @@ devices_by_id = {
     and item.get("id")
 }
 
-
 entities_by_id = {
     item.get("entity_id"): item
     for item in entity_entries
@@ -321,7 +323,6 @@ entities_by_id = {
     and item.get("entity_id")
 }
 
-
 states_by_id = {
     item.get("entity_id"): item
     for item in states
@@ -331,7 +332,6 @@ states_by_id = {
     )
     and item.get("entity_id")
 }
-
 
 not_provided_ids = (
     entity_ids_from_snapshot_section(
@@ -349,6 +349,7 @@ not_provided_ids = (
 # ------------------------------------------------------------
 # Build device state picture
 # ------------------------------------------------------------
+
 
 device_state_entity_ids = defaultdict(
     list
@@ -439,6 +440,7 @@ for device_id, entity_ids in (
 # Label helpers
 # ------------------------------------------------------------
 
+
 def label_names(label_ids):
     result = []
 
@@ -505,6 +507,7 @@ def has_label(
 # Classify unavailable entities
 # ------------------------------------------------------------
 
+
 classification_counts = Counter()
 
 classified_entities = []
@@ -535,8 +538,8 @@ for entity_id, state_entry in (
         continue
 
     # Not-currently-provided entities already have their own
-    # cleanup and history-safety audit. Do not mix them into
-    # normal availability classification.
+    # reference and Recorder-history analysis. Do not mix them
+    # into ordinary availability classification.
     if entity_id in not_provided_ids:
         continue
 
@@ -577,7 +580,6 @@ for entity_id, state_entry in (
         0,
     )
 
-
     if has_label(
         assigned_labels,
         maintenance_label_key,
@@ -612,7 +614,6 @@ for entity_id, state_entry in (
             "ungrouped_unavailable"
         )
 
-
     device = devices_by_id.get(
         device_id,
         {},
@@ -626,7 +627,6 @@ for entity_id, state_entry in (
             "name"
         )
     )
-
 
     item = {
         "entity_id":
@@ -675,7 +675,6 @@ for entity_id, state_entry in (
             else None,
     }
 
-
     classified_entities.append(
         item
     )
@@ -689,7 +688,6 @@ for entity_id, state_entry in (
     ][
         classification
     ] += 1
-
 
     device_key = (
         device_id
@@ -732,7 +730,7 @@ for entity_id, state_entry in (
         set(
             device_group.get(
                 "platforms",
-                []
+                [],
             )
             + [
                 platform
@@ -771,6 +769,7 @@ classified_entities.sort(
 # ------------------------------------------------------------
 # Device-level summary
 # ------------------------------------------------------------
+
 
 device_results = []
 
@@ -819,11 +818,9 @@ for device_key, group in (
             "ungrouped_unavailable"
         )
 
-
     device_classification_counts[
         device_classification
     ] += 1
-
 
     device_results.append(
         {
@@ -902,9 +899,13 @@ device_results.sort(
 # Report
 # ------------------------------------------------------------
 
+
 report = {
     "audit_version":
         VERSION,
+
+    "states_observed_at":
+        states_observed_at,
 
     "labels": {
         "expected_offline": {
@@ -927,21 +928,21 @@ report = {
     "policy": {
         "important":
             (
-                "Unavailable does not automatically mean "
-                "faulty. Explicit HA Audit labels take "
-                "priority. Unlabelled devices with some "
+                "Unavailable is an observed state, not a fault "
+                "verdict. Explicit HA Audit labels provide "
+                "optional context. Unlabelled devices with some "
                 "healthy entities are classified as partial "
-                "availability. Unlabelled devices with no "
-                "healthy state entities are review items, "
-                "not automatic faults."
+                "availability. Unlabelled devices with no healthy "
+                "state entities are classified as whole-device "
+                "unavailable so their context can be interpreted."
             ),
 
         "not_currently_provided":
             (
-                "Entities already classified as not "
-                "currently provided are excluded here "
-                "because they have a separate cleanup "
-                "and history-safety audit."
+                "Entities already classified as not currently "
+                "provided are excluded here because they have "
+                "separate not-currently-provided reference and "
+                "Recorder-history analysis."
             ),
     },
 
@@ -1002,6 +1003,7 @@ with open(
 # Console output
 # ------------------------------------------------------------
 
+
 print("")
 
 print(
@@ -1058,14 +1060,13 @@ print(
 print("")
 
 print(
-    "Unavailable does not automatically "
-    "mean faulty."
+    "Unavailable is observational context and does "
+    "not automatically indicate a fault."
 )
 
 print(
-    "Unlabelled whole-device outages are "
-    "review items until their expected "
-    "behaviour is known."
+    "Whole-device unavailability may be intentional, "
+    "temporary, or integration-related."
 )
 
 print("")
