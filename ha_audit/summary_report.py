@@ -769,6 +769,13 @@ history_recent = (
     )
 )
 
+history_recent_end_unknown = (
+    history_summary.get(
+        "recent_activity_end_unknown",
+        0,
+    )
+)
+
 history_older = (
     history_summary.get(
         "older_activity",
@@ -1176,10 +1183,21 @@ if history_available:
     )
 
     add(
-        f"Recent activity "
-        f"(<= {recent_activity_days}d): "
+        f"Recent/protective activity:  "
         f"{history_recent}"
     )
+
+    add(
+        f"Recent window:               "
+        f"{recent_activity_days} days"
+    )
+
+    if history_recent_end_unknown:
+
+        add(
+            f"Usable interval end unknown: "
+            f"{history_recent_end_unknown}"
+        )
 
     add(
         f"Older activity found:        "
@@ -1201,6 +1219,11 @@ if history_available:
     add(
         "History is protective "
         "context only."
+    )
+
+    add(
+        "A usable interval with no recorded end "
+        "is kept protective rather than assumed old."
     )
 
     add(
@@ -1539,9 +1562,9 @@ if history_recent:
     add(
         f"[i] {history_recent} "
         "not-currently-provided "
-        "entity/entities had usable "
-        f"activity within the last "
-        f"{recent_activity_days} days."
+        "entity/entities have recent "
+        "or conservatively protective "
+        "usable history."
     )
 
     add(
@@ -1561,18 +1584,44 @@ if history_recent:
                 "unknown",
             )
 
-            last_at = format_local_time(
-                item.get(
-                    "last_usable_state_at"
-                ),
-                timezone_name,
+            ended_at = item.get(
+                "last_usable_state_ended_at"
             )
 
-            add(
-                f"    - {entity_id} "
-                f"(last usable: "
-                f"{last_at})"
+            started_at = (
+                item.get(
+                    "last_usable_state_started_at"
+                )
+                or item.get(
+                    "last_usable_state_at"
+                )
             )
+
+            if ended_at:
+
+                last_at = format_local_time(
+                    ended_at,
+                    timezone_name,
+                )
+
+                add(
+                    f"    - {entity_id} "
+                    f"(last usable until: "
+                    f"{last_at})"
+                )
+
+            else:
+
+                started = format_local_time(
+                    started_at,
+                    timezone_name,
+                )
+
+                add(
+                    f"    - {entity_id} "
+                    f"(usable state recorded from: "
+                    f"{started}; end not recorded)"
+                )
 
     else:
 
@@ -1592,8 +1641,9 @@ if history_older:
     add(
         f"[i] {history_older} "
         "not-currently-provided "
-        "entity/entities have older "
-        "usable history."
+        "entity/entities have a final "
+        "usable interval that Recorder "
+        "shows ended before the recent window."
     )
 
     add(
