@@ -19,7 +19,6 @@ run_quiet_python() {
     fi
 
     bashio::log.error "${label} failed"
-
     if [ -s "${temp_log}" ]; then
         echo ""
         echo "Output from failed stage:"
@@ -34,6 +33,42 @@ run_quiet_python() {
 
 run_quiet_python \
     "audit.py" \
+    "Core HA audit"
+
+run_quiet_python \
+    "config_scan.py" \
+    "Configuration inventory"
+
+run_quiet_python \
+    "quality_scan.py" \
+    "Configuration quality audit"
+
+run_quiet_python \
+    "not_provided_reference_scan.py" \
+    "Not-provided entity reference audit"
+
+run_quiet_python \
+    "recorder_health_scan.py" \
+    "Recorder history availability audit"
+
+run_quiet_python \
+    "not_provided_history_scan.py" \
+    "Not-provided entity history audit"
+
+run_quiet_python \
+    "availability_scan.py" \
+    "Unavailable entity availability audit"
+
+run_quiet_python \
+    "unavailable_history_scan.py" \
+    "Unavailable entity history audit"
+
+
+if ! python3 /summary_report.py; then
+    bashio::log.error "Latest-run summary generation failed"
+fi
+
+bashio::log.info "HA Audit finished"
     "Core HA audit"
 
 run_quiet_python \
