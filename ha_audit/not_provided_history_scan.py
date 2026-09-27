@@ -17,7 +17,9 @@ TOKEN = os.environ["SUPERVISOR_TOKEN"]
 
 SUPERVISOR = "http://supervisor"
 
-AUDIT_FILE = "/config/audit_snapshot.json"
+AUDIT_FILE = (
+    "/config/audit_snapshot.json"
+)
 
 RECORDER_FILE = (
     "/config/recorder_health_audit.json"
@@ -34,7 +36,11 @@ OUTPUT_FILE = (
 
 REQUESTED_LOOKBACK_DAYS = 90
 
-# Activity within this period is a strong protective signal.
+# When the end of the final usable interval is known, activity
+# ending within this period is treated as a strong protective
+# signal. If Recorder does not contain a following non-usable
+# transition, the interval end is unknown and is also treated
+# conservatively as protective rather than being called old.
 RECENT_DAYS = 45
 
 BATCH_SIZE = 20
@@ -94,6 +100,52 @@ def parse_timestamp(value):
         )
 
     return stamp
+
+
+def state_timestamp(state_entry):
+    if not isinstance(
+        state_entry,
+        dict,
+    ):
+        return None
+
+    return parse_timestamp(
+        state_entry.get(
+            "last_changed"
+        )
+        or state_entry.get(
+            "last_updated"
+        )
+    )
+
+
+def normalised_state(state_entry):
+    if not isinstance(
+        state_entry,
+        dict,
+    ):
+        return None
+
+    state = state_entry.get(
+        "state"
+    )
+
+    if state is None:
+        return None
+
+    return str(
+        state
+    ).strip()
+
+
+def is_usable_state(state_text):
+    if state_text is None:
+        return False
+
+    return (
+        state_text.lower()
+        not in IGNORED_STATES
+    )
 
 
 def chunks(items, size):
@@ -169,6 +221,241 @@ def fetch_history(
     return payload
 
 
+def merge_history_payload(
+    payload,
+    requested_entity_ids,
+    history_by_entity,
+):
+    requested = set(
+        requested_entity_ids
+    )
+
+    for series in payload:
+        if not isinstance(
+            series,
+            list,
+        ):
+            continue
+
+        if not series:
+            continue
+
+        series_entity_id = None
+
+        for state_entry in series:
+            if not isinstance(
+                state_entry,
+                dict,
+            ):
+                continue
+
+            candidate = (
+                state_entry.get(
+                    "entity_id"
+                )
+            )
+
+            if candidate:
+                series_entity_id = candidate
+                break
+
+        if (
+            series_entity_id
+            and series_entity_id in requested
+            and series_entity_id in history_by_entity
+        ):
+            history_by_entity[
+                series_entity_id
+            ].extend(
+                series
+            )
+
+
+def analyse_history_series(series):
+    entries = []
+
+    for state_entry in series:
+        state_text = normalised_state(
+            state_entry
+        )
+
+        changed = state_timestamp(
+            state_entry
+        )
+
+        if (
+            state_text is None
+            or changed is None
+        ):
+            continue
+
+        entries.append(
+            {
+                "state":
+                    state_text,
+
+                "timestamp":
+                    changed,
+
+                "usable":
+                    is_usable_state(
+                        state_text
+                    ),
+            }
+        )
+
+    entries.sort(
+        key=lambda item:
+            item["timestamp"]
+    )
+
+    if not entries:
+        return {
+            "last_recorded_state":
+                None,
+
+            "last_recorded_state_at":
+                None,
+
+            "last_usable_state":
+                None,
+
+            "last_usable_state_started_at":
+                None,
+
+            "last_usable_state_ended_at":
+                None,
+
+            "last_usable_state_end_known":
+                False,
+
+            "last_usable_state_at":
+                None,
+
+            "last_usable_state_at_basis":
+                None,
+        }
+
+    last_recorded = entries[
+        -1
+    ]
+
+    last_usable_index = None
+
+    for index, item in enumerate(
+        entries
+    ):
+        if item[
+            "usable"
+        ]:
+            last_usable_index = index
+
+    if last_usable_index is None:
+        return {
+            "last_recorded_state":
+                last_recorded[
+                    "state"
+                ],
+
+            "last_recorded_state_at":
+                last_recorded[
+                    "timestamp"
+                ].isoformat(),
+
+            "last_usable_state":
+                None,
+
+            "last_usable_state_started_at":
+                None,
+
+            "last_usable_state_ended_at":
+                None,
+
+            "last_usable_state_end_known":
+                False,
+
+            "last_usable_state_at":
+                None,
+
+            "last_usable_state_at_basis":
+                None,
+        }
+
+    last_usable = entries[
+        last_usable_index
+    ]
+
+    ended_at = None
+
+    for later in entries[
+        last_usable_index + 1:
+    ]:
+        if not later[
+            "usable"
+        ]:
+            ended_at = later[
+                "timestamp"
+            ]
+            break
+
+    reference_time = (
+        ended_at
+        or last_usable[
+            "timestamp"
+        ]
+    )
+
+    reference_basis = (
+        "interval_end"
+        if ended_at
+        else "interval_start_end_unknown"
+    )
+
+    return {
+        "last_recorded_state":
+            last_recorded[
+                "state"
+            ],
+
+        "last_recorded_state_at":
+            last_recorded[
+                "timestamp"
+            ].isoformat(),
+
+        "last_usable_state":
+            last_usable[
+                "state"
+            ],
+
+        "last_usable_state_started_at":
+            last_usable[
+                "timestamp"
+            ].isoformat(),
+
+        "last_usable_state_ended_at":
+            (
+                ended_at.isoformat()
+                if ended_at
+                else None
+            ),
+
+        "last_usable_state_end_known":
+            bool(
+                ended_at
+            ),
+
+        # Compatibility field for the current summary/report
+        # consumer. When the interval end is known this is the
+        # true end; otherwise it is only the recorded start of
+        # the final usable state and the basis field says so.
+        "last_usable_state_at":
+            reference_time.isoformat(),
+
+        "last_usable_state_at_basis":
+            reference_basis,
+    }
+
+
 # ------------------------------------------------------------
 # Load audit data
 # ------------------------------------------------------------
@@ -199,9 +486,19 @@ not_provided_entities = (
 
 
 entities_by_id = {
-    item.get("entity_id"): item
+    item.get(
+        "entity_id"
+    ): item
+
     for item in not_provided_entities
-    if item.get("entity_id")
+
+    if isinstance(
+        item,
+        dict,
+    )
+    and item.get(
+        "entity_id"
+    )
 }
 
 
@@ -211,12 +508,31 @@ entity_ids = sorted(
 
 
 # ------------------------------------------------------------
-# Determine real history window
+# Determine history end and real Recorder window
 # ------------------------------------------------------------
 
-end_time = datetime.now(
-    timezone.utc
+audit_generated_at = parse_timestamp(
+    audit.get(
+        "generated_at"
+    )
 )
+
+if audit_generated_at:
+    end_time = audit_generated_at
+
+    history_end_source = (
+        "audit_snapshot_generated_at"
+    )
+
+else:
+    end_time = datetime.now(
+        timezone.utc
+    )
+
+    history_end_source = (
+        "scanner_generated_at_fallback"
+    )
+
 
 requested_start = (
     end_time
@@ -262,6 +578,14 @@ else:
     )
 
 
+history_window_clamped = False
+
+if start_time > end_time:
+    start_time = end_time
+
+    history_window_clamped = True
+
+
 effective_lookback_days = max(
     0.0,
     (
@@ -291,6 +615,10 @@ history_by_entity = {
 
 query_failures = {}
 
+batch_query_failures = 0
+individual_retry_attempts = 0
+individual_retry_failures = 0
+
 
 for batch in chunks(
     entity_ids,
@@ -303,56 +631,52 @@ for batch in chunks(
             end_time,
         )
 
-        for series in payload:
-            if not isinstance(
-                series,
-                list,
-            ):
-                continue
-
-            if not series:
-                continue
-
-            series_entity_id = None
-
-            for state_entry in series:
-                if not isinstance(
-                    state_entry,
-                    dict,
-                ):
-                    continue
-
-                candidate = (
-                    state_entry.get(
-                        "entity_id"
-                    )
-                )
-
-                if candidate:
-                    series_entity_id = candidate
-                    break
-
-            if (
-                series_entity_id
-                in history_by_entity
-            ):
-                history_by_entity[
-                    series_entity_id
-                ].extend(
-                    series
-                )
-
-    except Exception as error:
-        message = str(
-            error
+        merge_history_payload(
+            payload,
+            batch,
+            history_by_entity,
         )
 
-        # Query failure must never be interpreted as
-        # evidence that an entity is stale.
+    except Exception as batch_error:
+        batch_query_failures += 1
+
+        batch_message = str(
+            batch_error
+        )
+
+        # Retry individually so one failed batch does not turn
+        # every entity in it into a failed history result.
         for entity_id in batch:
-            query_failures[
-                entity_id
-            ] = message
+            individual_retry_attempts += 1
+
+            try:
+                payload = fetch_history(
+                    [entity_id],
+                    start_time,
+                    end_time,
+                )
+
+                merge_history_payload(
+                    payload,
+                    [entity_id],
+                    history_by_entity,
+                )
+
+            except Exception as retry_error:
+                individual_retry_failures += 1
+
+                query_failures[
+                    entity_id
+                ] = (
+                    "Batch query failed: "
+                    f"{batch_message}; "
+                    "individual retry failed: "
+                    f"{retry_error}"
+                )
+
+            time.sleep(
+                0.05
+            )
 
     time.sleep(
         0.2
@@ -360,7 +684,7 @@ for batch in chunks(
 
 
 # ------------------------------------------------------------
-# Analyse last usable state
+# Analyse usable history
 # ------------------------------------------------------------
 
 results = []
@@ -387,60 +711,9 @@ for entity_id in entity_ids:
         [],
     )
 
-    last_usable = None
-
-
-    for state_entry in series:
-        if not isinstance(
-            state_entry,
-            dict,
-        ):
-            continue
-
-        state = state_entry.get(
-            "state"
-        )
-
-        if state is None:
-            continue
-
-        state_text = str(
-            state
-        )
-
-        if (
-            state_text.strip().lower()
-            in IGNORED_STATES
-        ):
-            continue
-
-        changed = parse_timestamp(
-            state_entry.get(
-                "last_changed"
-            )
-            or state_entry.get(
-                "last_updated"
-            )
-        )
-
-        if not changed:
-            continue
-
-        if (
-            last_usable is None
-            or changed
-            > last_usable[
-                "timestamp"
-            ]
-        ):
-            last_usable = {
-                "timestamp":
-                    changed,
-
-                "state":
-                    state_text,
-            }
-
+    analysis = analyse_history_series(
+        series
+    )
 
     result = source
 
@@ -461,6 +734,10 @@ for entity_id in entity_ids:
         series
     )
 
+    result.update(
+        analysis
+    )
+
 
     # --------------------------------------------------------
     # Classification
@@ -476,12 +753,11 @@ for entity_id in entity_ids:
         ] = status
 
         result[
-            "last_usable_state"
-        ] = None
-
-        result[
-            "last_usable_state_at"
-        ] = None
+            "history_status_reason"
+        ] = (
+            "Recorder history could not "
+            "be checked for this entity."
+        )
 
         result[
             "history_error"
@@ -490,14 +766,51 @@ for entity_id in entity_ids:
         ]
 
 
-    elif last_usable:
-        last_time = last_usable[
-            "timestamp"
-        ]
+    elif result.get(
+        "last_usable_state"
+    ) is not None:
 
-        if last_time >= recent_cutoff:
+        ended_at = parse_timestamp(
+            result.get(
+                "last_usable_state_ended_at"
+            )
+        )
+
+        started_at = parse_timestamp(
+            result.get(
+                "last_usable_state_started_at"
+            )
+        )
+
+        if ended_at is None:
+            # The final usable state has no following non-usable
+            # transition in Recorder. We cannot prove that it
+            # ended before the recent cutoff, so preserve it as
+            # protective context rather than calling it old.
             status = (
                 "recent_activity"
+            )
+
+            result[
+                "history_status_reason"
+            ] = (
+                "The final usable state has no "
+                "recorded end transition. Its end "
+                "is unknown, so it remains "
+                "protective context."
+            )
+
+        elif ended_at >= recent_cutoff:
+            status = (
+                "recent_activity"
+            )
+
+            result[
+                "history_status_reason"
+            ] = (
+                "The final usable interval ended "
+                f"within {RECENT_DAYS} days of "
+                "the audit snapshot."
             )
 
         else:
@@ -505,23 +818,32 @@ for entity_id in entity_ids:
                 "older_activity"
             )
 
+            result[
+                "history_status_reason"
+            ] = (
+                "Recorder shows the final usable "
+                "interval ended before the recent "
+                f"{RECENT_DAYS}-day window."
+            )
+
         result[
             "history_status"
         ] = status
 
         result[
-            "last_usable_state"
-        ] = last_usable[
-            "state"
-        ]
-
-        result[
-            "last_usable_state_at"
-        ] = last_time.isoformat()
-
-        result[
             "history_error"
         ] = None
+
+        # Defensive fallback: a usable state should always have
+        # a parsed start time, but keep the output explicit if a
+        # malformed history response ever reaches this point.
+        if started_at is None:
+            result[
+                "history_status_reason"
+            ] += (
+                " The usable-state start timestamp "
+                "could not be parsed."
+            )
 
 
     else:
@@ -534,12 +856,13 @@ for entity_id in entity_ids:
         ] = status
 
         result[
-            "last_usable_state"
-        ] = None
-
-        result[
-            "last_usable_state_at"
-        ] = None
+            "history_status_reason"
+        ] = (
+            "No usable state was returned within "
+            "the effective Recorder window. This "
+            "does not establish that the entity "
+            "is obsolete or safe to remove."
+        )
 
         result[
             "history_error"
@@ -626,6 +949,21 @@ failed_entities = [
 ]
 
 
+unknown_end_entities = [
+    item
+    for item in recent_entities
+    if (
+        item.get(
+            "last_usable_state"
+        ) is not None
+        and not item.get(
+            "last_usable_state_end_known",
+            False,
+        )
+    )
+]
+
+
 # ------------------------------------------------------------
 # Report
 # ------------------------------------------------------------
@@ -635,7 +973,16 @@ report = {
         VERSION,
 
     "generated_at":
-        end_time.isoformat(),
+        datetime.now(
+            timezone.utc
+        ).isoformat(),
+
+    "source_audit_generated_at":
+        (
+            audit_generated_at.isoformat()
+            if audit_generated_at
+            else None
+        ),
 
     "history_policy": {
         "requested_lookback_days":
@@ -650,11 +997,20 @@ report = {
         "history_window_source":
             history_window_source,
 
+        "history_window_clamped":
+            history_window_clamped,
+
+        "history_end_source":
+            history_end_source,
+
         "history_start":
             start_time.isoformat(),
 
         "history_end":
             end_time.isoformat(),
+
+        "recorder_status":
+            recorder_status,
 
         "recorder_oldest_run":
             (
@@ -666,19 +1022,44 @@ report = {
         "recent_activity_days":
             RECENT_DAYS,
 
+        "batch_size":
+            BATCH_SIZE,
+
         "ignored_states":
             sorted(
                 IGNORED_STATES
+            ),
+
+        "recent_activity_rule":
+            (
+                "Recent activity includes a final usable "
+                "interval that ended within the recent "
+                "window, or a final usable interval whose "
+                "end is not recorded. Unknown interval "
+                "ends are treated conservatively as "
+                "protective context."
             ),
 
         "important":
             (
                 "History is protective context only. "
                 "Lack of usable history does not mean "
-                "an entity is safe to delete. Recorder "
-                "retention, exclusions, or entity-specific "
-                "history gaps may limit available evidence."
+                "an entity is obsolete or safe to remove. "
+                "Recorder retention, exclusions, or "
+                "entity-specific history gaps may limit "
+                "available evidence."
             ),
+    },
+
+    "query_diagnostics": {
+        "batch_query_failures":
+            batch_query_failures,
+
+        "individual_retry_attempts":
+            individual_retry_attempts,
+
+        "individual_retry_failures":
+            individual_retry_failures,
     },
 
     "summary": {
@@ -690,6 +1071,11 @@ report = {
         "recent_activity":
             len(
                 recent_entities
+            ),
+
+        "recent_activity_end_unknown":
+            len(
+                unknown_end_entities
             ),
 
         "older_activity":
@@ -785,9 +1171,13 @@ if recorder_oldest:
     )
 
 print(
-    f"Recent activity "
-    f"(<= {RECENT_DAYS} days):    "
+    f"Recent/protective activity:  "
     f"{len(recent_entities)}"
+)
+
+print(
+    f"  End time unknown:          "
+    f"{len(unknown_end_entities)}"
 )
 
 print(
@@ -808,14 +1198,13 @@ print(
 print("")
 
 print(
-    "Important: no usable history "
-    "does NOT mean safe to delete."
+    "Important: history is protective "
+    "context only."
 )
 
 print(
-    "Recorder retention, exclusions, "
-    "or entity-specific history gaps "
-    "may limit available evidence."
+    "An unknown usable-state end is kept "
+    "protective rather than assumed old."
 )
 
 print("")
