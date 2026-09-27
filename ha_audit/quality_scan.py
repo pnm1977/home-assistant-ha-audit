@@ -533,6 +533,9 @@ automation_file = os.path.join(
 automations = []
 
 
+automation_start_lines = []
+
+
 if automation_file in active_files:
 
     loaded = safe_load_yaml(
@@ -545,6 +548,17 @@ if automation_file in active_files:
     ):
         automations = loaded
 
+        automation_start_lines = [
+            line_number
+            for line_number, line in enumerate(
+                read_text(
+                    automation_file
+                ).splitlines(),
+                start=1,
+            )
+            if line.startswith("- ")
+        ]
+
 
 automation_ids = defaultdict(
     list
@@ -553,6 +567,8 @@ automation_ids = defaultdict(
 automation_aliases = defaultdict(
     list
 )
+
+automation_records = []
 
 large_automations = []
 
@@ -573,6 +589,33 @@ for index, automation in enumerate(
 
     alias = automation.get(
         "alias"
+    )
+
+    source_line = (
+        automation_start_lines[
+            index - 1
+        ]
+        if index - 1 < len(
+            automation_start_lines
+        )
+        else None
+    )
+
+    automation_records.append(
+        {
+            "index": index,
+            "id": (
+                str(automation_id)
+                if automation_id is not None
+                else None
+            ),
+            "alias": (
+                str(alias).strip()
+                if alias is not None
+                else None
+            ),
+            "line": source_line,
+        }
     )
 
     if automation_id:
@@ -609,6 +652,7 @@ for index, automation in enumerate(
                 "index": index,
                 "id": automation_id,
                 "alias": alias,
+                "source_line": source_line,
                 "lines": line_count,
             }
         )
@@ -731,11 +775,17 @@ known_services = set()
 
 live_entity_domains = set()
 
+automation_state_by_id = {}
+
+state_collection_ok = False
+
 
 try:
     states = get_ha_json(
         "states"
     )
+
+    state_collection_ok = True
 
     existing_entities = {
         item.get(
@@ -759,6 +809,58 @@ try:
         for entity_id in existing_entities
         if "." in entity_id
     }
+
+    for item in states:
+        if not isinstance(
+            item,
+            dict,
+        ):
+            continue
+
+        entity_id = item.get(
+            "entity_id"
+        )
+
+        if not (
+            isinstance(
+                entity_id,
+                str,
+            )
+            and entity_id.startswith(
+                "automation."
+            )
+        ):
+            continue
+
+        attributes = item.get(
+            "attributes",
+            {},
+        )
+
+        if not isinstance(
+            attributes,
+            dict,
+        ):
+            attributes = {}
+
+        automation_id = attributes.get(
+            "id"
+        )
+
+        if automation_id is None:
+            continue
+
+        automation_state_by_id[
+            str(automation_id)
+        ] = {
+            "entity_id": entity_id,
+            "state": item.get(
+                "state"
+            ),
+            "friendly_name": attributes.get(
+                "friendly_name"
+            ),
+        }
 
 except Exception:
     states = []
@@ -787,6 +889,167 @@ try:
 
 except Exception:
     known_services = set()
+
+
+# ------------------------------------------------------------
+# Duplicate automation alias live-state context
+# ------------------------------------------------------------
+
+
+def automation_record_with_state(record):
+    live = automation_state_by_id.get(
+        record.get(
+            "id"
+        )
+    )
+
+    live_state = (
+        str(
+            live.get(
+                "state"
+            )
+        ).lower()
+        if live
+        and live.get(
+            "state"
+        ) is not None
+        else None
+    )
+
+    if live_state == "on":
+        currently_on = True
+
+    elif live_state == "off":
+        currently_on = False
+
+    else:
+        currently_on = None
+
+    return {
+        "index": record.get(
+            "index"
+        ),
+        "id": record.get(
+            "id"
+        ),
+        "alias": record.get(
+            "alias"
+        ),
+        "source": (
+            relative(
+                automation_file
+            )
+            if automation_file in active_files
+            else None
+        ),
+        "line": record.get(
+            "line"
+        ),
+        "entity_id": (
+            live.get(
+                "entity_id"
+            )
+            if live
+            else None
+        ),
+        "live_state": live_state,
+        "currently_on": currently_on,
+    }
+
+
+duplicate_automation_id_details = {}
+
+for automation_id, indexes in (
+    duplicate_automation_ids.items()
+):
+    duplicate_automation_id_details[
+        automation_id
+    ] = [
+        automation_record_with_state(
+            automation_records[
+                index - 1
+            ]
+        )
+        for index in indexes
+        if index - 1 < len(
+            automation_records
+        )
+    ]
+
+
+duplicate_automation_alias_details = {}
+
+active_duplicate_automation_aliases = {}
+
+inactive_or_mixed_duplicate_automation_aliases = {}
+
+unresolved_duplicate_automation_aliases = {}
+
+
+for alias, indexes in (
+    duplicate_automation_aliases.items()
+):
+    entries = [
+        automation_record_with_state(
+            automation_records[
+                index - 1
+            ]
+        )
+        for index in indexes
+        if index - 1 < len(
+            automation_records
+        )
+    ]
+
+    on_count = sum(
+        1
+        for item in entries
+        if item.get(
+            "currently_on"
+        ) is True
+    )
+
+    off_count = sum(
+        1
+        for item in entries
+        if item.get(
+            "currently_on"
+        ) is False
+    )
+
+    unresolved_count = sum(
+        1
+        for item in entries
+        if item.get(
+            "currently_on"
+        ) is None
+    )
+
+    detail = {
+        "entries": entries,
+        "on_count": on_count,
+        "off_count": off_count,
+        "unresolved_count": unresolved_count,
+    }
+
+    duplicate_automation_alias_details[
+        alias
+    ] = detail
+
+    if on_count >= 2:
+        active_duplicate_automation_aliases[
+            alias
+        ] = detail
+
+    elif unresolved_count > 0:
+        unresolved_duplicate_automation_aliases[
+            alias
+        ] = detail
+
+    else:
+        inactive_or_mixed_duplicate_automation_aliases[
+            alias
+        ] = detail
 
 
 allowed_entity_domains = (
