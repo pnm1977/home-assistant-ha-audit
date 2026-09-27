@@ -532,7 +532,6 @@ automation_file = os.path.join(
 
 automations = []
 
-
 automation_start_lines = []
 
 
@@ -557,6 +556,7 @@ if automation_file in active_files:
                 start=1,
             )
             if line.startswith("- ")
+            or line == "-"
         ]
 
 
@@ -568,7 +568,7 @@ automation_aliases = defaultdict(
     list
 )
 
-automation_records = []
+automation_records_by_index = {}
 
 large_automations = []
 
@@ -601,22 +601,28 @@ for index, automation in enumerate(
         else None
     )
 
-    automation_records.append(
-        {
-            "index": index,
-            "id": (
-                str(automation_id)
-                if automation_id is not None
-                else None
-            ),
-            "alias": (
-                str(alias).strip()
-                if alias is not None
-                else None
-            ),
-            "line": source_line,
-        }
-    )
+    automation_record = {
+        "index": index,
+        "id": (
+            str(
+                automation_id
+            )
+            if automation_id is not None
+            else None
+        ),
+        "alias": (
+            str(
+                alias
+            ).strip()
+            if alias is not None
+            else None
+        ),
+        "line": source_line,
+    }
+
+    automation_records_by_index[
+        index
+    ] = automation_record
 
     if automation_id:
         automation_ids[
@@ -785,6 +791,14 @@ try:
         "states"
     )
 
+    if not isinstance(
+        states,
+        list,
+    ):
+        raise ValueError(
+            "Home Assistant states response was not a list"
+        )
+
     state_collection_ok = True
 
     existing_entities = {
@@ -851,7 +865,9 @@ try:
             continue
 
         automation_state_by_id[
-            str(automation_id)
+            str(
+                automation_id
+            )
         ] = {
             "entity_id": entity_id,
             "state": item.get(
@@ -895,8 +911,9 @@ except Exception:
 # Duplicate automation alias live-state context
 # ------------------------------------------------------------
 
-
-def automation_record_with_state(record):
+def automation_record_with_state(
+    record,
+):
     live = automation_state_by_id.get(
         record.get(
             "id"
@@ -966,14 +983,12 @@ for automation_id, indexes in (
         automation_id
     ] = [
         automation_record_with_state(
-            automation_records[
-                index - 1
+            automation_records_by_index[
+                index
             ]
         )
         for index in indexes
-        if index - 1 < len(
-            automation_records
-        )
+        if index in automation_records_by_index
     ]
 
 
@@ -991,14 +1006,12 @@ for alias, indexes in (
 ):
     entries = [
         automation_record_with_state(
-            automation_records[
-                index - 1
+            automation_records_by_index[
+                index
             ]
         )
         for index in indexes
-        if index - 1 < len(
-            automation_records
-        )
+        if index in automation_records_by_index
     ]
 
     on_count = sum(
@@ -1370,11 +1383,42 @@ quality = {
                 automations
             ),
 
+        "live_state_lookup_ok":
+            state_collection_ok,
+
         "duplicate_ids":
             duplicate_automation_ids,
 
+        "duplicate_id_details":
+            duplicate_automation_id_details,
+
         "duplicate_aliases":
             duplicate_automation_aliases,
+
+        "duplicate_alias_details":
+            duplicate_automation_alias_details,
+
+        "active_duplicate_aliases":
+            active_duplicate_automation_aliases,
+
+        "inactive_or_mixed_duplicate_aliases":
+            inactive_or_mixed_duplicate_automation_aliases,
+
+        "unresolved_duplicate_aliases":
+            unresolved_duplicate_automation_aliases,
+
+        "duplicate_alias_note":
+            (
+                "Duplicate aliases are a maintainability "
+                "finding, not an automation ID collision. "
+                "Only aliases shared by two or more "
+                "currently-on automations are treated as "
+                "active duplicate aliases. Disabled or "
+                "mixed-state duplicates remain detailed "
+                "information. Unresolved entries mean "
+                "live automation state could not be "
+                "confirmed."
+            ),
 
         "large":
             sorted(
@@ -1462,6 +1506,13 @@ quality = {
 
         "configuration_is_read_only":
             True,
+
+        "automation_alias_state_context":
+            (
+                "Automation alias duplication is "
+                "cross-checked against live Home Assistant "
+                "automation states when available."
+            ),
     },
 }
 
@@ -1533,8 +1584,18 @@ print(
 )
 
 print(
-    f"Duplicate automation names:  "
+    f"All duplicate auto names:    "
     f"{len(duplicate_automation_aliases)}"
+)
+
+print(
+    f"Active duplicate auto names: "
+    f"{len(active_duplicate_automation_aliases)}"
+)
+
+print(
+    f"Unresolved duplicate names:  "
+    f"{len(unresolved_duplicate_automation_aliases)}"
 )
 
 print(
@@ -1654,20 +1715,68 @@ if duplicate_automation_ids:
         )
 
 
-if duplicate_automation_aliases:
+if active_duplicate_automation_aliases:
 
     print("")
 
     print(
-        "Duplicate automation names:"
+        "Active duplicate automation names:"
     )
 
-    for alias, indexes in (
-        duplicate_automation_aliases.items()
+    for alias, detail in (
+        active_duplicate_automation_aliases.items()
+    ):
+        print(
+            f"  {alias}:"
+        )
+
+        for entry in detail.get(
+            "entries",
+            [],
+        ):
+            print(
+                f"    id={entry.get('id')} "
+                f"entity={entry.get('entity_id')} "
+                f"state={entry.get('live_state')} "
+                f"line={entry.get('line')}"
+            )
+
+
+if inactive_or_mixed_duplicate_automation_aliases:
+
+    print("")
+
+    print(
+        "Inactive/mixed duplicate automation names "
+        "(informational):"
+    )
+
+    for alias, detail in (
+        inactive_or_mixed_duplicate_automation_aliases.items()
     ):
         print(
             f"  {alias}: "
-            f"{indexes}"
+            f"{detail.get('on_count', 0)} on / "
+            f"{detail.get('off_count', 0)} off"
+        )
+
+
+if unresolved_duplicate_automation_aliases:
+
+    print("")
+
+    print(
+        "Duplicate automation names with "
+        "unresolved live state:"
+    )
+
+    for alias, detail in (
+        unresolved_duplicate_automation_aliases.items()
+    ):
+        print(
+            f"  {alias}: "
+            f"{detail.get('unresolved_count', 0)} "
+            f"unresolved"
         )
 
 
