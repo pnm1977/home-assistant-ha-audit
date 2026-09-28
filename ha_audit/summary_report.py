@@ -21,6 +21,7 @@ UPGRADE_IMPACT_FILE = "/config/upgrade_impact_audit.json"
 UPGRADE_COMPATIBILITY_FILE = "/config/upgrade_compatibility_audit.json"
 RELEASE_EVIDENCE_FILE = "/config/release_evidence_audit.json"
 COMPATIBILITY_COVERAGE_FILE = "/config/compatibility_coverage_audit.json"
+UPGRADE_CORRELATION_FILE = "/config/upgrade_correlation_audit.json"
 
 OUTPUT_FILE = "/config/ha_audit_latest.txt"
 
@@ -36,9 +37,7 @@ def load_json(path):
 
 def load_json_optional(path):
     try:
-        return load_json(
-            path
-        )
+        return load_json(path)
     except Exception:
         return {}
 
@@ -48,9 +47,7 @@ def count_mapping(value):
         value,
         dict,
     ):
-        return len(
-            value
-        )
+        return len(value)
 
     return 0
 
@@ -61,9 +58,7 @@ def parse_iso(value):
 
     try:
         return datetime.fromisoformat(
-            str(
-                value
-            ).replace(
+            str(value).replace(
                 "Z",
                 "+00:00",
             )
@@ -78,23 +73,17 @@ def format_local_time(
     timezone_name,
     include_seconds=False,
 ):
-    stamp = parse_iso(
-        value
-    )
+    stamp = parse_iso(value)
 
     if not stamp:
         if value:
-            return str(
-                value
-            )
+            return str(value)
 
         return "unknown"
 
     try:
         local_stamp = stamp.astimezone(
-            ZoneInfo(
-                timezone_name
-            )
+            ZoneInfo(timezone_name)
         )
 
     except Exception:
@@ -106,9 +95,7 @@ def format_local_time(
         else "%d %b %Y %H:%M"
     )
 
-    return local_stamp.strftime(
-        pattern
-    )
+    return local_stamp.strftime(pattern)
 
 
 def format_generated_time(audit):
@@ -116,9 +103,7 @@ def format_generated_time(audit):
         audit.get(
             "system",
             {},
-        ).get(
-            "timezone"
-        )
+        ).get("timezone")
         or "UTC"
     )
 
@@ -146,26 +131,18 @@ def format_days(value):
         return "unknown"
 
     try:
-        number = float(
-            value
-        )
+        number = float(value)
 
     except (
         TypeError,
         ValueError,
     ):
-        return str(
-            value
-        )
+        return str(value)
 
     if number < 10:
-        return (
-            f"{number:.1f} days"
-        )
+        return f"{number:.1f} days"
 
-    return (
-        f"{number:.0f} days"
-    )
+    return f"{number:.0f} days"
 
 
 def format_update_category(category):
@@ -193,15 +170,9 @@ def format_update_category(category):
 
 def format_update_name(item):
     return (
-        item.get(
-            "title"
-        )
-        or item.get(
-            "name"
-        )
-        or item.get(
-            "entity_id"
-        )
+        item.get("title")
+        or item.get("name")
+        or item.get("entity_id")
         or "Unknown update"
     )
 
@@ -214,9 +185,7 @@ def format_rule_pack(rule_pack):
 
     prefix = "home_assistant_core_"
 
-    if value.startswith(
-        prefix
-    ):
+    if value.startswith(prefix):
         return value[
             len(prefix):
         ].replace(
@@ -227,11 +196,14 @@ def format_rule_pack(rule_pack):
     return value
 
 
-def pluralise(count, singular, plural=None):
+def pluralise(
+    count,
+    singular,
+    plural=None,
+):
     try:
-        value = int(
-            count
-        )
+        value = int(count)
+
     except (
         TypeError,
         ValueError,
@@ -298,6 +270,10 @@ release_evidence = load_json_optional(
 
 compatibility_coverage_report = load_json_optional(
     COMPATIBILITY_COVERAGE_FILE
+)
+
+upgrade_correlation_report = load_json_optional(
+    UPGRADE_CORRELATION_FILE
 )
 
 
@@ -416,11 +392,6 @@ recorder_availability = recorder.get(
 
 availability_summary = availability.get(
     "summary",
-    {},
-)
-
-availability_labels = availability.get(
-    "labels",
     {},
 )
 
@@ -706,20 +677,6 @@ readiness_beyond_target_count = readiness_repairs.get(
     0,
 )
 
-readiness_compatibility_assessed = bool(
-    readiness_scope.get(
-        "compatibility_assessed",
-        False,
-    )
-)
-
-readiness_external_release_notes = bool(
-    readiness_scope.get(
-        "external_release_notes_fetched",
-        False,
-    )
-)
-
 readiness_verdict_produced = bool(
     readiness_scope.get(
         "readiness_verdict_produced",
@@ -731,10 +688,6 @@ readiness_verdict_produced = bool(
 # ------------------------------------------------------------
 # Upgrade compatibility data
 # ------------------------------------------------------------
-
-upgrade_impact_available = bool(
-    upgrade_impact
-)
 
 upgrade_compatibility_available = bool(
     upgrade_compatibility
@@ -930,27 +883,35 @@ release_items = release_evidence.get(
     [],
 )
 
-for name, value in (
-    ("release_scope", release_scope),
-    ("release_applicability", release_applicability),
-    ("release_range", release_range),
-    ("release_aggregate", release_aggregate),
-    ("release_collector_status", release_collector_status),
+if not isinstance(
+    release_scope,
+    dict,
 ):
-    if not isinstance(
-        value,
-        dict,
-    ):
-        if name == "release_scope":
-            release_scope = {}
-        elif name == "release_applicability":
-            release_applicability = {}
-        elif name == "release_range":
-            release_range = {}
-        elif name == "release_aggregate":
-            release_aggregate = {}
-        elif name == "release_collector_status":
-            release_collector_status = {}
+    release_scope = {}
+
+if not isinstance(
+    release_applicability,
+    dict,
+):
+    release_applicability = {}
+
+if not isinstance(
+    release_range,
+    dict,
+):
+    release_range = {}
+
+if not isinstance(
+    release_aggregate,
+    dict,
+):
+    release_aggregate = {}
+
+if not isinstance(
+    release_collector_status,
+    dict,
+):
+    release_collector_status = {}
 
 if not isinstance(
     release_items,
@@ -1089,12 +1050,14 @@ for release_item in release_items:
     ) == "ok":
         release_fetch_success_count += 1
 
-    item_backward = release_item.get(
-        "release_notes",
-        {},
-    ).get(
-        "backward_incompatible_changes",
-        {},
+    item_backward = (
+        release_item.get(
+            "release_notes",
+            {},
+        ).get(
+            "backward_incompatible_changes",
+            {},
+        )
     )
 
     if not isinstance(
@@ -1155,11 +1118,6 @@ coverage_report_available = bool(
     compatibility_coverage_report
 )
 
-coverage_scope = compatibility_coverage_report.get(
-    "scope",
-    {},
-)
-
 coverage_inputs = compatibility_coverage_report.get(
     "inputs",
     {},
@@ -1180,30 +1138,29 @@ coverage_collector_status = compatibility_coverage_report.get(
     {},
 )
 
-for name, value in (
-    ("coverage_scope", coverage_scope),
-    ("coverage_inputs", coverage_inputs),
-    ("coverage_summary", coverage_summary),
-    ("coverage_collector_status", coverage_collector_status),
+if not isinstance(
+    coverage_inputs,
+    dict,
 ):
-    if not isinstance(
-        value,
-        dict,
-    ):
-        if name == "coverage_scope":
-            coverage_scope = {}
-        elif name == "coverage_inputs":
-            coverage_inputs = {}
-        elif name == "coverage_summary":
-            coverage_summary = {}
-        elif name == "coverage_collector_status":
-            coverage_collector_status = {}
+    coverage_inputs = {}
+
+if not isinstance(
+    coverage_summary,
+    dict,
+):
+    coverage_summary = {}
 
 if not isinstance(
     coverage_release_rows,
     list,
 ):
     coverage_release_rows = []
+
+if not isinstance(
+    coverage_collector_status,
+    dict,
+):
+    coverage_collector_status = {}
 
 coverage_status = str(
     coverage_summary.get(
@@ -1293,6 +1250,179 @@ coverage_complete = bool(
 
 
 # ------------------------------------------------------------
+# Dynamic upgrade correlation data
+# ------------------------------------------------------------
+
+correlation_report_available = bool(
+    upgrade_correlation_report
+)
+
+correlation_scope = upgrade_correlation_report.get(
+    "scope",
+    {},
+)
+
+correlation_summary = upgrade_correlation_report.get(
+    "summary",
+    {},
+)
+
+correlation_rows = upgrade_correlation_report.get(
+    "correlations",
+    [],
+)
+
+correlation_collector_status = upgrade_correlation_report.get(
+    "collector_status",
+    {},
+)
+
+if not isinstance(
+    correlation_scope,
+    dict,
+):
+    correlation_scope = {}
+
+if not isinstance(
+    correlation_summary,
+    dict,
+):
+    correlation_summary = {}
+
+if not isinstance(
+    correlation_rows,
+    list,
+):
+    correlation_rows = []
+
+if not isinstance(
+    correlation_collector_status,
+    dict,
+):
+    correlation_collector_status = {}
+
+correlation_model_version = correlation_scope.get(
+    "evidence_model_version"
+)
+
+correlation_official_count = correlation_summary.get(
+    "official_crossed_group_count",
+    0,
+)
+
+correlation_strong_count = correlation_summary.get(
+    "strong_local_evidence_count",
+    0,
+)
+
+correlation_surface_count = correlation_summary.get(
+    "local_surface_evidence_count",
+    0,
+)
+
+correlation_partial_count = correlation_summary.get(
+    "partial_local_evidence_count",
+    0,
+)
+
+correlation_no_local_count = correlation_summary.get(
+    "no_local_evidence_count",
+    0,
+)
+
+correlation_insufficient_count = correlation_summary.get(
+    "insufficient_evidence_count",
+    0,
+)
+
+correlation_any_count = correlation_summary.get(
+    "groups_with_any_local_evidence_count",
+    0,
+)
+
+correlation_overall_status = str(
+    correlation_collector_status.get(
+        "overall",
+        "unknown",
+    )
+)
+
+correlation_compatibility_assessed = bool(
+    correlation_scope.get(
+        "compatibility_assessed",
+        False,
+    )
+)
+
+correlation_verdict_produced = bool(
+    correlation_scope.get(
+        "readiness_verdict_produced",
+        False,
+    )
+)
+
+correlation_deterministic_influence = bool(
+    correlation_scope.get(
+        "deterministic_rule_outcomes_used_for_classification",
+        False,
+    )
+)
+
+if not correlation_report_available:
+    correlation_status_label = "UNAVAILABLE"
+
+elif correlation_overall_status == "ok":
+    correlation_status_label = "COMPLETE"
+
+elif correlation_overall_status == "partial":
+    correlation_status_label = "PARTIAL"
+
+elif correlation_overall_status == "error":
+    correlation_status_label = "ERROR"
+
+else:
+    correlation_status_label = "UNKNOWN"
+
+
+correlation_strong_groups = []
+correlation_surface_groups = []
+correlation_partial_groups = []
+
+for item in correlation_rows:
+    if not isinstance(
+        item,
+        dict,
+    ):
+        continue
+
+    heading = item.get(
+        "heading"
+    )
+
+    if not heading:
+        continue
+
+    status = item.get(
+        "correlation_status"
+    )
+
+    if status == "strong_local_evidence":
+        correlation_strong_groups.append(
+            heading
+        )
+
+    elif status == "local_surface_evidence":
+        correlation_surface_groups.append(
+            heading
+        )
+
+    elif status == "partial_local_evidence":
+        correlation_partial_groups.append(
+            heading
+        )
+
+
+# ------------------------------------------------------------
 # General values
 # ------------------------------------------------------------
 
@@ -1311,7 +1441,6 @@ config_check = audit.get(
 if config_check.get(
     "status"
 ) == "ok":
-
     config_result = (
         config_check.get(
             "data",
@@ -1332,56 +1461,42 @@ collector_errors = [
     if status != "ok"
 ]
 
-missing_includes = (
-    configuration_tree.get(
-        "missing_include_count",
-        0,
+missing_includes = configuration_tree.get(
+    "missing_include_count",
+    0,
+)
+
+orphan_yaml = configuration_tree.get(
+    "orphan_candidate_count",
+    0,
+)
+
+missing_entities = entity_references.get(
+    "missing_count",
+    0,
+)
+
+duplicate_automation_ids = count_mapping(
+    automations.get(
+        "duplicate_ids"
     )
 )
 
-orphan_yaml = (
-    configuration_tree.get(
-        "orphan_candidate_count",
-        0,
+active_duplicate_automation_names = count_mapping(
+    automations.get(
+        "active_duplicate_aliases"
     )
 )
 
-missing_entities = (
-    entity_references.get(
-        "missing_count",
-        0,
+unresolved_duplicate_automation_names = count_mapping(
+    automations.get(
+        "unresolved_duplicate_aliases"
     )
 )
 
-duplicate_automation_ids = (
-    count_mapping(
-        automations.get(
-            "duplicate_ids"
-        )
-    )
-)
-
-active_duplicate_automation_names = (
-    count_mapping(
-        automations.get(
-            "active_duplicate_aliases"
-        )
-    )
-)
-
-unresolved_duplicate_automation_names = (
-    count_mapping(
-        automations.get(
-            "unresolved_duplicate_aliases"
-        )
-    )
-)
-
-duplicate_script_names = (
-    count_mapping(
-        scripts.get(
-            "duplicate_aliases"
-        )
+duplicate_script_names = count_mapping(
+    scripts.get(
+        "duplicate_aliases"
     )
 )
 
@@ -1415,54 +1530,42 @@ not_provided = (
     )
 )
 
-referenced_not_provided = (
-    reference_summary.get(
-        "referenced_in_active_yaml",
-        0,
-    )
+referenced_not_provided = reference_summary.get(
+    "referenced_in_active_yaml",
+    0,
 )
 
-template_review = (
-    reference_summary.get(
-        "template_no_active_yaml_reference",
-        0,
-    )
+template_review = reference_summary.get(
+    "template_no_active_yaml_reference",
+    0,
 )
 
 history_available = bool(
     history
 )
 
-requested_lookback_days = (
-    history_policy.get(
-        "requested_lookback_days",
-        recorder.get(
-            "requested_history_lookback_days",
-            90,
-        ),
-    )
+requested_lookback_days = history_policy.get(
+    "requested_lookback_days",
+    recorder.get(
+        "requested_history_lookback_days",
+        90,
+    ),
 )
 
-effective_lookback_days = (
-    history_policy.get(
-        "effective_lookback_days",
-        recorder_availability.get(
-            "effective_lookback_days"
-        ),
-    )
+effective_lookback_days = history_policy.get(
+    "effective_lookback_days",
+    recorder_availability.get(
+        "effective_lookback_days"
+    ),
 )
 
-recent_activity_days = (
-    history_policy.get(
-        "recent_activity_days",
-        45,
-    )
+recent_activity_days = history_policy.get(
+    "recent_activity_days",
+    45,
 )
 
-history_window_source = (
-    history_policy.get(
-        "history_window_source"
-    )
+history_window_source = history_policy.get(
+    "history_window_source"
 )
 
 recorder_oldest_run = (
@@ -1474,45 +1577,33 @@ recorder_oldest_run = (
     )
 )
 
-available_history_days = (
-    recorder_availability.get(
-        "available_history_days"
-    )
+available_history_days = recorder_availability.get(
+    "available_history_days"
 )
 
-history_recent = (
-    history_summary.get(
-        "recent_activity",
-        0,
-    )
+history_recent = history_summary.get(
+    "recent_activity",
+    0,
 )
 
-history_recent_end_unknown = (
-    history_summary.get(
-        "recent_activity_end_unknown",
-        0,
-    )
+history_recent_end_unknown = history_summary.get(
+    "recent_activity_end_unknown",
+    0,
 )
 
-history_older = (
-    history_summary.get(
-        "older_activity",
-        0,
-    )
+history_older = history_summary.get(
+    "older_activity",
+    0,
 )
 
-history_none = (
-    history_summary.get(
-        "no_usable_history_found",
-        0,
-    )
+history_none = history_summary.get(
+    "no_usable_history_found",
+    0,
 )
 
-history_failed = (
-    history_summary.get(
-        "history_query_failed",
-        0,
-    )
+history_failed = history_summary.get(
+    "history_query_failed",
+    0,
 )
 
 
@@ -1524,14 +1615,10 @@ lines = []
 
 
 def add(text=""):
-    lines.append(
-        text
-    )
+    lines.append(text)
 
 
-add(
-    "=" * 58
-)
+add("=" * 58)
 
 add(
     f"HA AUDIT v{VERSION} - "
@@ -1543,9 +1630,7 @@ add(
     f"{format_generated_time(audit)}"
 )
 
-add(
-    "=" * 58
-)
+add("=" * 58)
 
 
 # ------------------------------------------------------------
@@ -1639,6 +1724,7 @@ if update_readiness_available:
                     f"{category}: "
                     f"{installed} -> {latest}"
                 )
+
             else:
                 add(
                     f"{category}: "
@@ -1650,6 +1736,7 @@ if update_readiness_available:
         "pending"
     ):
         add("")
+
         add(
             "Core upgrade window:         "
             f"{core_upgrade_window.get('installed_version')}"
@@ -1730,6 +1817,12 @@ if update_readiness_available:
             "Compatibility coverage:      "
             f"{coverage_status_label}"
         )
+
+        add(
+            "Dynamic correlation:         "
+            f"{correlation_status_label}"
+        )
+
     else:
         add(
             "Compatibility rule pack:     "
@@ -1738,6 +1831,11 @@ if update_readiness_available:
 
         add(
             "Compatibility coverage:      "
+            "NOT APPLICABLE"
+        )
+
+        add(
+            "Dynamic correlation:         "
             "NOT APPLICABLE"
         )
 
@@ -1760,11 +1858,11 @@ if update_readiness_available:
     add(
         "Update and Repair evidence is local. "
         "Official release evidence, compatibility coverage, "
-        "and compatibility results are shown separately below."
+        "dynamic correlation, and deterministic compatibility "
+        "results are shown separately below."
     )
 
 else:
-
     add(
         "Update readiness report unavailable."
     )
@@ -1793,6 +1891,7 @@ if release_evidence_available:
                 "Core releases crossed:       "
                 "0 (same-family update)"
             )
+
         else:
             add(
                 f"Core releases crossed:       "
@@ -1803,9 +1902,7 @@ if release_evidence_available:
             add(
                 "Release families:            "
                 + ", ".join(
-                    str(
-                        item
-                    )
+                    str(item)
                     for item
                     in release_requested_families
                 )
@@ -2041,6 +2138,144 @@ if coverage_report_available:
 else:
     add(
         "Compatibility coverage report unavailable."
+    )
+
+
+# ------------------------------------------------------------
+# Dynamic upgrade correlation
+# ------------------------------------------------------------
+
+add("")
+add("DYNAMIC UPGRADE CORRELATION")
+add("-" * 58)
+
+if correlation_report_available:
+
+    add(
+        f"Official change groups:       "
+        f"{correlation_official_count}"
+    )
+
+    add(
+        f"Specific code evidence:       "
+        f"{correlation_strong_count}"
+    )
+
+    add(
+        f"Local surface evidence:       "
+        f"{correlation_surface_count}"
+    )
+
+    add(
+        f"Partial evidence:             "
+        f"{correlation_partial_count}"
+    )
+
+    add(
+        f"No local evidence:            "
+        f"{correlation_no_local_count}"
+    )
+
+    add(
+        f"Insufficient evidence:        "
+        f"{correlation_insufficient_count}"
+    )
+
+    add("")
+
+    add(
+        f"Groups with local evidence:   "
+        f"{correlation_any_count} / "
+        f"{correlation_official_count}"
+    )
+
+    add(
+        "Evidence model:               "
+        + (
+            f"v{correlation_model_version}"
+            if correlation_model_version is not None
+            else "unknown"
+        )
+    )
+
+    add(
+        f"Correlation collection:       "
+        f"{correlation_status_label}"
+    )
+
+    add(
+        "Compatibility assessed:       "
+        + (
+            "YES"
+            if correlation_compatibility_assessed
+            else "NO"
+        )
+    )
+
+    add(
+        "Readiness verdict:            "
+        + (
+            "PRODUCED"
+            if correlation_verdict_produced
+            else "NOT PRODUCED"
+        )
+    )
+
+    add(
+        "Deterministic outcomes used:  "
+        + (
+            "YES"
+            if correlation_deterministic_influence
+            else "NO"
+        )
+    )
+
+    if (
+        correlation_strong_groups
+        or correlation_surface_groups
+        or correlation_partial_groups
+    ):
+        add("")
+
+    if correlation_strong_groups:
+        add("Specific:")
+
+        for heading in correlation_strong_groups:
+            add(
+                f"  {heading}"
+            )
+
+    if correlation_surface_groups:
+        add("Local surface:")
+
+        for heading in correlation_surface_groups:
+            add(
+                f"  {heading}"
+            )
+
+    if correlation_partial_groups:
+        add("Partial:")
+
+        for heading in correlation_partial_groups:
+            add(
+                f"  {heading}"
+            )
+
+    add("")
+
+    add(
+        "Dynamic correlation identifies local evidence related "
+        "to official change groups."
+    )
+
+    add(
+        "It does not decide whether the installation is affected, "
+        "compatible, incompatible, or safe to update."
+    )
+
+else:
+    add(
+        "Dynamic upgrade correlation report unavailable."
     )
 
 
@@ -2319,7 +2554,6 @@ if availability_available:
     )
 
 else:
-
     add(
         "Availability classification "
         "report unavailable."
@@ -2378,7 +2612,6 @@ if unavailable_history_available:
     )
 
     if unavailable_history_batch_failures:
-
         add(
             f"Batch queries retried:       "
             f"{unavailable_history_batch_failures}"
@@ -2403,7 +2636,6 @@ if unavailable_history_available:
     )
 
 else:
-
     add(
         "Unavailable history context "
         "report unavailable."
@@ -2448,7 +2680,6 @@ if history_available:
         recorder_status == "ok"
         and recorder_oldest_run
     ):
-
         add(
             "Recorder history starts:     "
             + format_local_time(
@@ -2465,7 +2696,6 @@ if history_available:
         )
 
     else:
-
         add(
             "Recorder history available:  "
             "unknown"
@@ -2489,7 +2719,6 @@ if history_available:
     )
 
     if history_recent_end_unknown:
-
         add(
             f"Usable interval end unknown: "
             f"{history_recent_end_unknown}"
@@ -2531,7 +2760,6 @@ if history_available:
         history_window_source
         == "requested_lookback_fallback"
     ):
-
         add(
             "Recorder availability "
             "could not be confirmed "
@@ -2539,7 +2767,6 @@ if history_available:
         )
 
 else:
-
     add(
         "History report unavailable."
     )
@@ -2772,6 +2999,23 @@ if update_readiness_available:
                 "before treating the upgrade window as fully covered."
             )
 
+        if correlation_status_label not in (
+            "COMPLETE",
+            "NOT APPLICABLE",
+        ):
+
+            actions += 1
+
+            add(
+                f"[!] Dynamic upgrade correlation is "
+                f"{correlation_status_label.lower()}."
+            )
+
+            add(
+                "    Review upgrade_correlation_audit.json "
+                "for missing or incomplete evidence collection."
+            )
+
         if compatibility_assessed:
 
             actions += 1
@@ -2830,6 +3074,21 @@ if update_readiness_available:
                         "crossed change groups to deterministic rules."
                     )
 
+                if correlation_status_label == "COMPLETE":
+                    add(
+                        f"    Dynamic correlation found local evidence "
+                        f"for {correlation_any_count}/"
+                        f"{correlation_official_count} official "
+                        "change groups."
+                    )
+
+                    add(
+                        f"    Evidence split: "
+                        f"{correlation_strong_count} specific, "
+                        f"{correlation_surface_count} local surface, "
+                        f"{correlation_partial_count} partial."
+                    )
+
                 add(
                     "    No affected local usage requiring "
                     "review was detected by this rule pack."
@@ -2843,7 +3102,8 @@ if update_readiness_available:
                     )
 
                 add(
-                    "    Coverage has limitations; this is not "
+                    "    Dynamic correlation and deterministic "
+                    "rule results are evidence only; this is not "
                     "a safe-to-update verdict."
                 )
 
@@ -2863,7 +3123,7 @@ if update_readiness_available:
             )
 
             add(
-                "    Do not interpret this local-only result "
+                "    Do not interpret this result "
                 "as a safe-to-update verdict."
             )
 
@@ -3190,8 +3450,10 @@ if actions == 0:
 
     add(
         "No immediate configuration, availability, "
-        "update-readiness, release-evidence, compatibility-coverage, "
-        "or compatibility-review actions were identified by this audit."
+        "update-readiness, release-evidence, "
+        "compatibility-coverage, dynamic-correlation, "
+        "or compatibility-review actions were identified "
+        "by this audit."
     )
 
 
@@ -3263,6 +3525,7 @@ for report_file in (
     "upgrade_compatibility_audit.json",
     "release_evidence_audit.json",
     "compatibility_coverage_audit.json",
+    "upgrade_correlation_audit.json",
     "ha_audit_latest.txt",
 ):
 
@@ -3303,15 +3566,11 @@ add(
     "using before."
 )
 
-add(
-    "=" * 58
-)
+add("=" * 58)
 
 
 summary = (
-    "\n".join(
-        lines
-    )
+    "\n".join(lines)
     + "\n"
 )
 
@@ -3322,9 +3581,7 @@ with open(
     encoding="utf-8",
 ) as handle:
 
-    handle.write(
-        summary
-    )
+    handle.write(summary)
 
 
 print(
