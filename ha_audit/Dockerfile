@@ -26,6 +26,7 @@ COPY upgrade_compatibility_scan.py /
 COPY release_evidence_scan.py /
 COPY compatibility_coverage_scan.py /
 COPY upgrade_correlation_scan.py /
+COPY correlation_validation_scan.py /
 COPY summary_report.py /
 
 RUN chmod a+x /run.sh
