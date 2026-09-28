@@ -8,7 +8,6 @@ bashio::log.info "Starting HA Audit v${VERSION}"
 
 echo ""
 
-
 run_quiet_python() {
     local script="$1"
     local label="$2"
@@ -30,7 +29,6 @@ run_quiet_python() {
 
     return 1
 }
-
 
 run_quiet_python \
     "audit.py" \
@@ -64,6 +62,9 @@ run_quiet_python \
     "unavailable_history_scan.py" \
     "Unavailable entity history audit"
 
+run_quiet_python \
+    "update_readiness_scan.py" \
+    "Update readiness foundation audit"
 
 if ! python3 /summary_report.py; then
     bashio::log.error "Latest-run summary generation failed"
