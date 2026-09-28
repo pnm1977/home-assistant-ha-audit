@@ -74,6 +74,10 @@ run_quiet_python \
     "upgrade_compatibility_scan.py" \
     "Upgrade compatibility audit"
 
+run_quiet_python \
+    "release_evidence_scan.py" \
+    "Official release evidence audit"
+
 if ! python3 /summary_report.py; then
     bashio::log.error "Latest-run summary generation failed"
 fi
