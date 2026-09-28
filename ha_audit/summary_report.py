@@ -19,6 +19,7 @@ UNAVAILABLE_HISTORY_FILE = "/config/unavailable_history_audit.json"
 UPDATE_READINESS_FILE = "/config/update_readiness_audit.json"
 UPGRADE_IMPACT_FILE = "/config/upgrade_impact_audit.json"
 UPGRADE_COMPATIBILITY_FILE = "/config/upgrade_compatibility_audit.json"
+RELEASE_EVIDENCE_FILE = "/config/release_evidence_audit.json"
 
 OUTPUT_FILE = "/config/ha_audit_latest.txt"
 
@@ -267,6 +268,10 @@ upgrade_impact = load_json_optional(
 
 upgrade_compatibility = load_json_optional(
     UPGRADE_COMPATIBILITY_FILE
+)
+
+release_evidence = load_json_optional(
+    RELEASE_EVIDENCE_FILE
 )
 
 
@@ -862,6 +867,261 @@ compatibility_ui_prompts_inspected = bool(
 
 
 # ------------------------------------------------------------
+# Official release evidence data
+# ------------------------------------------------------------
+
+release_evidence_available = bool(
+    release_evidence
+)
+
+release_scope = release_evidence.get(
+    "scope",
+    {},
+)
+
+release_applicability = release_evidence.get(
+    "applicability",
+    {},
+)
+
+release_range = release_evidence.get(
+    "release_range",
+    {},
+)
+
+release_aggregate = release_evidence.get(
+    "aggregate",
+    {},
+)
+
+release_collector_status = release_evidence.get(
+    "collector_status",
+    {},
+)
+
+release_items = release_evidence.get(
+    "releases",
+    [],
+)
+
+for name, value in (
+    ("release_scope", release_scope),
+    ("release_applicability", release_applicability),
+    ("release_range", release_range),
+    ("release_aggregate", release_aggregate),
+    ("release_collector_status", release_collector_status),
+):
+    if not isinstance(
+        value,
+        dict,
+    ):
+        if name == "release_scope":
+            release_scope = {}
+        elif name == "release_applicability":
+            release_applicability = {}
+        elif name == "release_range":
+            release_range = {}
+        elif name == "release_aggregate":
+            release_aggregate = {}
+        elif name == "release_collector_status":
+            release_collector_status = {}
+
+if not isinstance(
+    release_items,
+    list,
+):
+    release_items = []
+
+release_applicable = bool(
+    release_applicability.get(
+        "applicable",
+        False,
+    )
+)
+
+release_applicability_reason = release_applicability.get(
+    "reason"
+)
+
+release_external_fetch = bool(
+    release_scope.get(
+        "external_fetch_performed",
+        False,
+    )
+)
+
+release_official_sources_only = bool(
+    release_scope.get(
+        "official_sources_only",
+        False,
+    )
+)
+
+release_range_status = release_range.get(
+    "status",
+    "unknown",
+)
+
+release_range_complete = bool(
+    release_range.get(
+        "complete",
+        False,
+    )
+)
+
+release_same_family = bool(
+    release_range.get(
+        "same_release_family",
+        False,
+    )
+)
+
+release_requested_families = release_aggregate.get(
+    "release_families_requested",
+    [],
+)
+
+if not isinstance(
+    release_requested_families,
+    list,
+):
+    release_requested_families = []
+
+release_crossed_families = release_aggregate.get(
+    "crossed_release_families",
+    [],
+)
+
+if not isinstance(
+    release_crossed_families,
+    list,
+):
+    release_crossed_families = []
+
+release_family_count = release_aggregate.get(
+    "release_family_count",
+    len(
+        release_requested_families
+    ),
+)
+
+release_crossed_count = release_aggregate.get(
+    "crossed_release_family_count",
+    len(
+        release_crossed_families
+    ),
+)
+
+release_success_count = release_aggregate.get(
+    "release_family_success_count",
+    0,
+)
+
+release_partial_count = release_aggregate.get(
+    "release_family_partial_count",
+    0,
+)
+
+release_failure_count = release_aggregate.get(
+    "release_family_failure_count",
+    0,
+)
+
+release_breaking_group_count = release_aggregate.get(
+    "breaking_change_group_count",
+    0,
+)
+
+release_crossed_group_count = release_aggregate.get(
+    "breaking_change_group_count_crossed_only",
+    0,
+)
+
+release_fetch_success_count = 0
+release_structured_parse_count = 0
+
+for release_item in release_items:
+    if not isinstance(
+        release_item,
+        dict,
+    ):
+        continue
+
+    item_status = release_item.get(
+        "collector_status",
+        {},
+    )
+
+    if not isinstance(
+        item_status,
+        dict,
+    ):
+        item_status = {}
+
+    if item_status.get(
+        "release_notes_fetch"
+    ) == "ok":
+        release_fetch_success_count += 1
+
+    item_backward = release_item.get(
+        "release_notes",
+        {},
+    ).get(
+        "backward_incompatible_changes",
+        {},
+    )
+
+    if not isinstance(
+        item_backward,
+        dict,
+    ):
+        item_backward = {}
+
+    if item_backward.get(
+        "segmentation_status"
+    ) == "structured":
+        release_structured_parse_count += 1
+
+release_overall_status = str(
+    release_collector_status.get(
+        "overall",
+        "unknown",
+    )
+)
+
+release_collection_complete = bool(
+    release_evidence_available
+    and release_applicable
+    and release_range_complete
+    and release_overall_status == "ok"
+    and release_partial_count == 0
+    and release_failure_count == 0
+    and release_family_count > 0
+    and release_fetch_success_count == release_family_count
+)
+
+if not release_evidence_available:
+    release_status_label = "UNAVAILABLE"
+
+elif release_collection_complete:
+    release_status_label = "COMPLETE"
+
+elif (
+    not core_upgrade_window.get(
+        "pending"
+    )
+    and release_overall_status == "not_applicable"
+):
+    release_status_label = "NOT APPLICABLE"
+
+elif release_overall_status == "error":
+    release_status_label = "ERROR"
+
+else:
+    release_status_label = "PARTIAL"
+
+
+# ------------------------------------------------------------
 # General values
 # ------------------------------------------------------------
 
@@ -1227,6 +1487,7 @@ if update_readiness_available:
         )
 
     add("")
+
     add(
         f"Repair issues:               "
         f"{readiness_issue_count}"
@@ -1286,7 +1547,7 @@ if update_readiness_available:
         "pending"
     ):
         add(
-            "Compatibility rules:         "
+            "Compatibility rule pack:     "
             + (
                 "ASSESSED"
                 if compatibility_assessed
@@ -1295,17 +1556,13 @@ if update_readiness_available:
         )
     else:
         add(
-            "Compatibility rules:         "
+            "Compatibility rule pack:     "
             "NOT APPLICABLE"
         )
 
     add(
-        "Runtime release-note fetch:  "
-        + (
-            "PERFORMED"
-            if compatibility_runtime_fetch
-            else "NOT PERFORMED"
-        )
+        "Official release evidence:    "
+        f"{release_status_label}"
     )
 
     add(
@@ -1321,14 +1578,163 @@ if update_readiness_available:
 
     add(
         "Update and Repair evidence is local. "
-        "When compatibility rules are assessed, "
-        "they are shown separately below."
+        "Official release evidence and compatibility "
+        "results are shown separately below."
     )
 
 else:
 
     add(
         "Update readiness report unavailable."
+    )
+
+
+# ------------------------------------------------------------
+# Official release evidence
+# ------------------------------------------------------------
+
+add("")
+add("OFFICIAL RELEASE EVIDENCE")
+add("-" * 58)
+
+if release_evidence_available:
+
+    if release_applicable:
+        add(
+            "Upgrade window:              "
+            f"{core_upgrade_window.get('installed_version')}"
+            " -> "
+            f"{core_upgrade_window.get('target_version')}"
+        )
+
+        if release_same_family:
+            add(
+                "Core releases crossed:       "
+                "0 (same-family update)"
+            )
+        else:
+            add(
+                f"Core releases crossed:       "
+                f"{release_crossed_count}"
+            )
+
+        if release_requested_families:
+            add(
+                "Release families:            "
+                + ", ".join(
+                    str(
+                        item
+                    )
+                    for item
+                    in release_requested_families
+                )
+            )
+
+        add(
+            f"Official releases fetched:   "
+            f"{release_fetch_success_count} / "
+            f"{release_family_count}"
+        )
+
+        add(
+            f"Breaking-change groups:      "
+            f"{release_breaking_group_count}"
+        )
+
+        add(
+            f"Crossed change groups:       "
+            f"{release_crossed_group_count}"
+        )
+
+        add("")
+
+        add(
+            f"Successful parses:           "
+            f"{release_success_count}"
+        )
+
+        add(
+            f"Structured BIC parses:       "
+            f"{release_structured_parse_count}"
+        )
+
+        add(
+            f"Partial parses:              "
+            f"{release_partial_count}"
+        )
+
+        add(
+            f"Failed parses:               "
+            f"{release_failure_count}"
+        )
+
+        add("")
+
+        add(
+            "Official sources only:       "
+            + (
+                "YES"
+                if release_official_sources_only
+                else "NO"
+            )
+        )
+
+        add(
+            "Runtime fetch:               "
+            + (
+                "PERFORMED"
+                if release_external_fetch
+                else "NOT PERFORMED"
+            )
+        )
+
+        add(
+            f"Evidence collection:         "
+            f"{release_status_label}"
+        )
+
+        add(
+            "Compatibility matching:      SEPARATE"
+        )
+
+        add(
+            "Readiness verdict:           NOT PRODUCED"
+        )
+
+        add("")
+
+        add(
+            "Official evidence is collected release by release. "
+            "Evidence completeness does not mean compatibility "
+            "assessment is complete."
+        )
+
+        if release_same_family:
+            add(
+                "Same-family monthly change groups are retained "
+                "as evidence but are not counted as newly crossed."
+            )
+
+    else:
+        add(
+            f"Evidence collection:         "
+            f"{release_status_label}"
+        )
+
+        add(
+            f"Release-range status:        "
+            f"{release_range_status}"
+        )
+
+        if release_applicability_reason:
+            add(
+                "Reason:                     "
+                f"{release_applicability_reason}"
+            )
+
+else:
+    add(
+        "Official release evidence report unavailable."
     )
 
 
@@ -1412,7 +1818,7 @@ if upgrade_compatibility_available:
         )
 
         add(
-            "Runtime release-note fetch:  "
+            "Compatibility scanner fetch: "
             + (
                 "PERFORMED"
                 if compatibility_runtime_fetch
@@ -2019,6 +2425,25 @@ if update_readiness_available:
         "pending"
     ):
 
+        if release_status_label != "COMPLETE":
+
+            actions += 1
+
+            add(
+                f"[!] Official Core release evidence is "
+                f"{release_status_label.lower()}."
+            )
+
+            if release_applicability_reason:
+                add(
+                    f"    {release_applicability_reason}"
+                )
+
+            add(
+                "    Review release_evidence_audit.json before "
+                "treating upgrade evidence as complete."
+            )
+
         if compatibility_assessed:
 
             actions += 1
@@ -2057,10 +2482,25 @@ if update_readiness_available:
                     "change rule(s) were checked."
                 )
 
+                if release_collection_complete:
+                    add(
+                        f"    Official release evidence was collected "
+                        f"for {release_family_count} release "
+                        "family/families."
+                    )
+
                 add(
                     "    No affected local usage requiring "
-                    "review was detected."
+                    "review was detected by this rule pack."
                 )
+
+                if release_family_count > 1:
+                    add(
+                        f"    Official evidence spans "
+                        f"{release_family_count} release families; "
+                        "local compatibility matching does not yet "
+                        "cover every fetched family."
+                    )
 
                 add(
                     "    Coverage has limitations; this is not "
@@ -2410,8 +2850,9 @@ if actions == 0:
 
     add(
         "No immediate configuration, availability, "
-        "update-readiness, or compatibility-review "
-        "actions were identified by this audit."
+        "update-readiness, release-evidence, or "
+        "compatibility-review actions were identified "
+        "by this audit."
     )
 
 
@@ -2481,6 +2922,7 @@ for report_file in (
     "update_readiness_audit.json",
     "upgrade_impact_audit.json",
     "upgrade_compatibility_audit.json",
+    "release_evidence_audit.json",
     "ha_audit_latest.txt",
 ):
 
