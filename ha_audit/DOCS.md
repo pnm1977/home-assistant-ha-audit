@@ -1,28 +1,30 @@
-# HA Audit — User Guide
+# HA Audit User Guide
 
-HA Audit is a read-only Home Assistant health and configuration auditing app.
+HA Audit is a read-only Home Assistant system and configuration auditor.
 
-It is designed to help you work through Home Assistant maintenance systematically:
+It is designed to help you investigate system health, configuration quality, entity availability and maintenance issues using evidence from the actual Home Assistant installation.
+
+The normal workflow is:
 
 **run → read → investigate → act → rerun**
 
-HA Audit does not automatically repair or delete anything.
+HA Audit does not automatically repair Home Assistant or decide that an entity, device or configuration file should be deleted.
+
+Its job is to collect evidence and make investigation easier.
 
 ---
 
 # 1. Running HA Audit
 
-HA Audit currently runs manually.
+HA Audit is currently designed to run manually.
 
 In Home Assistant:
 
-1. Go to **Settings → Apps**
-2. Open **HA Audit**
-3. Select **Start**
-4. Wait for the app to finish
+1. Open **Settings → Apps**
+2. Select **HA Audit**
+3. Click **Start**
+4. Wait for the audit to complete
 5. Open the **Log** tab
-
-HA Audit stops automatically when the audit is complete.
 
 A successful run ends with:
 
@@ -30,25 +32,47 @@ A successful run ends with:
 HA Audit finished
 ```
 
-The `s6-rc` shutdown messages that appear afterwards are part of the app stopping and are not HA Audit findings.
+HA Audit is a run-once app.
+
+After the audit has completed, the app stops automatically.
+
+This is expected behaviour.
+
+---
+
+## s6-rc shutdown messages
+
+After:
+
+```text
+HA Audit finished
+```
+
+you may see messages from `s6-rc` as the app container shuts down.
+
+These are normal container shutdown messages.
+
+They are not HA Audit findings.
+
+Only investigate them if there is an actual error before:
+
+```text
+HA Audit finished
+```
+
+or if one of the audit stages reports a failure.
 
 ---
 
 # 2. Finding the latest run
 
-The Home Assistant app log may contain several previous HA Audit runs.
-
-Each new run therefore has a clearly marked section:
+Each run contains a clearly marked section:
 
 ```text
 HA AUDIT vX.X.X - CURRENT RUN SUMMARY
 ```
 
-Look for the **last occurrence** of this heading in the Log tab.
-
-That is the audit you should use.
-
-The summary is designed to be much shorter than the detailed audit data so repeated test/fix/rerun cycles are easier to follow.
+If the log contains several previous runs, use the final occurrence.
 
 HA Audit also writes:
 
@@ -56,86 +80,136 @@ HA Audit also writes:
 ha_audit_latest.txt
 ```
 
-This file is overwritten on every run so there is always a clean copy of the latest summary in HA Audit's private app storage.
+This file is overwritten on every run.
 
-The detailed JSON reports are also retained, but normal use should begin with the **CURRENT RUN SUMMARY** in the app log.
+It contains only the latest concise user-facing summary.
+
+This can be easier to use than scrolling through a long app log containing several audits.
 
 ---
 
-# 3. How to read the summary
+# 3. Reading the current-run summary
 
-Work through the summary from top to bottom.
-
-The main sections are:
+The summary contains sections such as:
 
 ```text
 SYSTEM
 CONFIGURATION
 ENTITY HEALTH
+AVAILABILITY CONTEXT
+UNAVAILABLE HISTORY CONTEXT
 REVIEW
+NOT-PROVIDED HISTORY SAFETY
 NEXT ACTIONS
 DETAILED REPORTS
 ```
 
-Do not assume that every non-zero number is a fault.
+The summary is intentionally shorter than the underlying JSON reports.
 
-Some values are inventory or review information rather than errors.
+Its purpose is to tell you:
 
-The **NEXT ACTIONS** section is the most important part after a run.
+* whether the audit completed correctly
+* whether Home Assistant configuration is valid
+* what changed since the previous audit
+* which findings deserve investigation
+* where to find more detailed evidence
 
-A useful workflow is:
+Do not assume that every non-zero number represents a problem.
 
-1. Confirm the audit completed correctly
-2. Check whether Home Assistant configuration is valid
-3. Review any configuration findings
-4. Review entity-health findings
-5. Read **NEXT ACTIONS**
-6. Pick one issue or category
-7. Investigate it in the location HA Audit gives you
-8. Make the smallest appropriate change
-9. Rerun HA Audit
-10. Confirm the expected count or finding changed
+Some values are:
+
+* inventory
+* context
+* change detection
+* review candidates
+* informational findings
+
+rather than faults.
+
+---
+
+## Recommended reading order
+
+For a normal run:
+
+1. Check `Config check`
+2. Check `Collector errors`
+3. Review `CONFIGURATION`
+4. Review `ENTITY HEALTH`
+5. Review `AVAILABILITY CONTEXT`
+6. Review `UNAVAILABLE HISTORY CONTEXT`
+7. Review `REVIEW`
+8. Review `NOT-PROVIDED HISTORY SAFETY`
+9. Read `NEXT ACTIONS`
+10. Open detailed JSON reports only where useful
+
+The preferred starting results are:
+
+```text
+Config check:               VALID
+Collector errors:           0
+```
 
 ---
 
 # 4. SYSTEM
 
-Example:
+The `SYSTEM` section normally includes:
 
 ```text
-SYSTEM
-----------------------------------------------------------
-Core:                       2026.x.x
-Supervisor:                 2026.xx.x
-OS:                         xx.x
-Config check:               VALID
-Updates available:          2
-Collector errors:           0
+Core
+Supervisor
+OS
+Config check
+Updates available
+Collector errors
 ```
+
+---
+
+## Core
+
+This shows the currently installed Home Assistant Core version.
+
+It is inventory information.
+
+HA Audit does not currently decide whether a particular Core release should be installed.
+
+Upgrade-readiness analysis is planned as a later development area.
+
+---
+
+## Supervisor
+
+This shows the installed Home Assistant Supervisor version.
+
+Again, this is currently inventory information rather than an automatic recommendation.
+
+---
+
+## OS
+
+This shows the installed Home Assistant OS version where that information is available.
+
+---
 
 ## Config check
 
 The preferred result is:
 
 ```text
-Config check: VALID
+Config check:               VALID
 ```
 
-This means Home Assistant's configuration validation completed successfully.
+HA Audit uses Home Assistant's own configuration validation.
 
-If it is not `VALID`, do not restart Home Assistant simply to see whether the configuration works.
+If the result is not valid, investigate the configuration before restarting Home Assistant.
 
-Investigate the configuration problem first.
-
-### Where to check manually
-
-In Home Assistant go to:
+Home Assistant's own configuration validation controls are available under:
 
 **Developer tools → YAML**
 
-Use Home Assistant's configuration validation/restart controls available there.
-
-Also review the **NEXT ACTIONS** section of the HA Audit log.
+A failed configuration check is more important than a cosmetic or informational audit finding.
 
 ---
 
@@ -143,15 +217,13 @@ Also review the **NEXT ACTIONS** section of the HA Audit log.
 
 This is the number of Home Assistant `update` entities currently reporting an available update.
 
-It does not mean HA Audit recommends installing them immediately.
+It does not mean HA Audit recommends installing every available update immediately.
 
-### Where to check
-
-Go to:
+Review updates under:
 
 **Settings → System → Updates**
 
-Review the available Home Assistant and app updates there.
+The future update-readiness work is intended to add more useful context around updates rather than simply count them.
 
 ---
 
@@ -160,567 +232,1308 @@ Review the available Home Assistant and app updates there.
 The preferred result is:
 
 ```text
-Collector errors: 0
+Collector errors:           0
 ```
 
-If this is greater than zero, part of the audit did not complete correctly.
+A collector error means part of HA Audit did not complete correctly.
 
-### What to do
+When a scanner stage fails, HA Audit attempts to print the captured output from that stage in the app log.
 
-Stay in:
+Do not rely on the affected report until the collection problem is understood.
 
-**Settings → Apps → HA Audit → Log**
-
-Look above the summary for:
-
-```text
-ERROR
-```
-
-or:
-
-```text
-failed
-```
-
-HA Audit deliberately prints the captured output from a scanner when that scanner fails.
-
-Fix the audit collection problem before relying on that section of the report.
+For example, if a history scanner fails, absence of history in that failed report must not be interpreted as evidence about an entity.
 
 ---
 
 # 5. CONFIGURATION
 
-Example:
+The `CONFIGURATION` section contains findings from the YAML inventory and configuration-quality scanners.
+
+Typical fields include:
 
 ```text
-CONFIGURATION
-----------------------------------------------------------
-Active YAML files:          135
-Missing active includes:    0
-Missing entity candidates:  0
-Orphan YAML candidates:     0
-Duplicate automation IDs:   0
-Duplicate automation names: 0
-Duplicate script names:     0
+Active YAML files
+Missing active includes
+Missing entity candidates
+Orphan YAML candidates
+Duplicate automation IDs
+Active duplicate auto names
+Unresolved duplicate names
+Duplicate script names
 ```
 
 ---
 
-## Active YAML files
+# 6. Active YAML files
 
-This is an inventory count.
+HA Audit begins with:
 
-It is the number of YAML files HA Audit found in the active Home Assistant include tree.
+```text
+configuration.yaml
+```
 
-There is no target number.
+and follows the active include tree.
 
-A change may simply mean that configuration files were added, removed, merged or reorganised.
+Files discovered through active includes are treated as active configuration.
+
+This provides a more useful view than treating every `.yaml` file under `/config` as active.
 
 ---
 
-## Missing active includes
+## Why the active tree matters
 
-The preferred result is:
+A Home Assistant installation can contain YAML that is deliberately retained but no longer loaded.
 
-```text
-Missing active includes: 0
-```
+Examples include:
 
-A non-zero value means active YAML points to a file or directory that HA Audit could not find.
+* old configuration
+* backups
+* reference files
+* migration copies
+* retired packages
+* commented rollback versions
 
-### Where to investigate
+HA Audit therefore distinguishes between:
 
-Open **Studio Code Server** or your normal Home Assistant configuration editor.
+* YAML that belongs to the active configuration tree
+* YAML that exists but is not part of the active tree
 
-Use the source file and line reported by HA Audit to find the relevant include.
-
-Typical Home Assistant include syntax looks like:
-
-```yaml
-!include filename.yaml
-```
-
-or:
-
-```yaml
-!include_dir_merge_list directory/
-```
-
-Check whether:
-
-- the target still exists
-- the path is correct
-- the file was renamed or moved
-- the include is obsolete
-
-After correcting the configuration, rerun HA Audit and confirm:
-
-```text
-Missing active includes: 0
-```
+This reduces false findings.
 
 ---
 
-## Missing entity candidates
+# 7. Commented rollback and reference configuration
 
-The preferred result is:
+HA Audit is designed to tolerate commented-out rollback material.
+
+Fully commented YAML is not treated as active configuration when performing checks such as:
+
+* active entity-reference analysis
+* active automation duplicate checks
+* active include analysis
+
+This allows you to retain commented backup blocks without them being treated as currently running configuration.
+
+A commented line can still contribute to overall file size or comment-density information, but it should not create an active configuration finding.
+
+---
+
+# 8. Missing active includes
+
+A missing active include means a file in the active YAML tree references another file or directory that HA Audit could not find.
+
+The summary may show:
 
 ```text
-Missing entity candidates: 0
+Missing active includes:    1
 ```
 
-These are entity IDs referenced in active YAML that HA Audit could not match to a current Home Assistant entity.
+The detailed evidence is stored in:
 
-They are **candidates**, not automatically confirmed errors.
+```text
+quality_audit.json
+```
 
-### Where to investigate the entity
+under the configuration-tree information.
 
-Go to:
+---
+
+## Investigating a missing include
+
+Use the reported:
+
+* source file
+* source line
+* include target
+
+Open that location in your Home Assistant configuration.
+
+For example, if the report says that:
+
+```text
+integrations/binary_sensors.yaml
+```
+
+references a missing target, inspect the exact include statement at the reported line.
+
+Check for:
+
+* a typo in the path
+* an incorrect relative path
+* a renamed file
+* a deleted file
+* a directory/include-type mismatch
+* a deliberately retired include that should be removed
+
+---
+
+## Do not create a file just to clear the warning
+
+The correct fix depends on the intended configuration.
+
+Sometimes the right action is to restore a missing file.
+
+Sometimes the right action is to remove or correct the include.
+
+HA Audit does not choose between those possibilities automatically.
+
+---
+
+# 9. Missing entity candidates
+
+HA Audit scans active YAML for Home Assistant entity IDs.
+
+It compares those references with the current Home Assistant entity inventory.
+
+A missing entity candidate means HA Audit found an entity reference in active YAML that it could not match to a current entity.
+
+For example:
+
+```text
+Missing entity candidates:  3
+```
+
+does not automatically mean there are three confirmed broken automations.
+
+---
+
+## Why a candidate may be reported
+
+Possible explanations include:
+
+* the entity was renamed
+* the entity was removed
+* the integration creating it is currently unavailable
+* configuration still refers to an old entity
+* the scanner cannot fully resolve a dynamic construction
+* the reference is genuinely broken
+
+The detailed report includes the YAML location so the exact usage can be investigated.
+
+---
+
+## Investigating a missing entity candidate
+
+First inspect:
+
+```text
+quality_audit.json
+```
+
+and find the reported:
+
+* entity ID
+* YAML file
+* line number
+* reference location
+
+Then check Home Assistant under:
 
 **Settings → Devices & services → Entities**
 
-Search for the complete entity ID.
+Search for the entity.
 
-If the entity does not exist, inspect the YAML location reported by HA Audit.
+If it is not present, check whether:
 
-### Where to investigate the YAML
+* it has been renamed
+* a replacement entity exists
+* the integration is loaded
+* the device still exists
+* the YAML reference is still needed
 
-Open **Studio Code Server**.
+---
 
-Open the file and line reported by HA Audit.
+## Do not perform blind replacements
 
-Determine whether the reference:
+An entity with a similar name is not automatically the correct replacement.
 
-- contains a typo
-- uses an old entity ID
-- refers to something that was removed
-- should be replaced with a current entity
-- should itself be removed
+Check what the automation, script, template or configuration is supposed to do before changing the reference.
 
-After making the change, use Home Assistant's configuration validation where appropriate and rerun HA Audit.
+---
 
-The goal is normally:
+# 10. Unreferenced and orphan YAML
 
-```text
-Missing entity candidates: 0
-```
+HA Audit records YAML files that are not part of the active include tree.
+
+It separates known categories where possible.
+
+These may include:
+
+* blueprints
+* Zigbee2MQTT configuration
+* backup/archive material
+* other inactive YAML
+* orphan candidates
 
 ---
 
 ## Orphan YAML candidates
 
-An orphan candidate is a YAML file found by HA Audit that is not part of the active Home Assistant include tree and has not been classified as a known blueprint, Zigbee2MQTT file or backup/archive file.
+An orphan candidate is a YAML file that HA Audit could not associate with the active configuration tree or a known excluded category.
 
-This does not automatically mean the file should be deleted.
+This is a review finding.
 
-### Where to investigate
-
-Open **Studio Code Server** and locate the reported file.
-
-Check whether it is:
-
-- an old unused configuration file
-- an intentional backup
-- documentation/reference material
-- a file that should actually be included in Home Assistant
-
-If it is no longer required, it can be removed manually.
-
-Rerun HA Audit afterwards.
+It is not a deletion recommendation.
 
 ---
 
-## Duplicate automation IDs
+## Investigating an orphan YAML file
 
-The preferred result is:
+Before removing anything:
+
+1. Open the file
+2. Identify what it contains
+3. Search active configuration for its filename
+4. Check whether it is intentionally retained
+5. Check whether it is documentation or rollback material
+6. Check whether another external process uses it
+7. Only remove it when you understand its purpose
+
+A file being inactive does not mean it has no value.
+
+---
+
+# 11. Duplicate automation IDs
+
+Home Assistant automation IDs should be unique.
+
+A duplicate automation ID is therefore a structural configuration finding.
+
+The summary reports the number of duplicate ID groups.
+
+Detailed information is stored in:
 
 ```text
-Duplicate automation IDs: 0
+quality_audit.json
 ```
 
-Automation IDs should be unique.
+---
 
-### Where to investigate
+## Investigating duplicate automation IDs
 
-Open **Studio Code Server** and search for the duplicate ID reported by HA Audit.
+Review the reported:
 
-For automations stored in `automations.yaml`, check each occurrence of:
+* automation alias
+* automation ID
+* YAML file
+* source line
 
-```yaml
-id:
-```
+Determine which automation should retain the existing ID.
 
-Do not simply delete one occurrence without checking which automation it belongs to.
+If both automations are genuinely active, one should normally receive a new unique ID.
+
+Do not change an ID merely because two automation aliases are similar.
+
+Automation ID and automation alias are different concepts.
 
 ---
 
-## Duplicate automation names
+# 12. Duplicate automation aliases
 
-This reports duplicate automation aliases/names.
+Duplicate automation aliases or names are not automatically errors.
 
-Duplicate names are not necessarily a Home Assistant configuration error, but they make maintenance and troubleshooting harder.
+Two automations can legally share the same alias.
 
-### Where to check
+This may happen intentionally when:
 
-Go to:
+* a previous version is retained
+* a rollback copy is disabled
+* an old version is kept temporarily
+* two different automations happen to have the same descriptive name
 
-**Settings → Automations & scenes → Automations**
-
-Search for the reported automation name.
-
-Also check the relevant YAML if the automation is YAML-managed.
-
----
-
-## Duplicate script names
-
-This is similar to duplicate automation names.
-
-### Where to check
-
-Go to:
-
-**Settings → Automations & scenes → Scripts**
-
-Search for the reported script name.
-
-Check `scripts.yaml` or the appropriate YAML file where necessary.
+HA Audit therefore treats duplicate aliases differently from duplicate IDs.
 
 ---
 
-# 6. ENTITY HEALTH
+## Live-state-aware duplicate checking
 
-Example:
+From 0.6.10, HA Audit cross-checks duplicate automation aliases against the live Home Assistant automation states.
+
+The normal health summary surfaces duplicate alias groups when:
+
+* two or more matching automations are currently `on`
+* the live state cannot be fully resolved
+
+Disabled or mixed-state duplicate aliases remain available in the detailed report but are not promoted as normal routine health findings.
+
+---
+
+## Why this matters
+
+Suppose two automations are both called:
 
 ```text
-ENTITY HEALTH
-----------------------------------------------------------
-Entities:                   3039
-Unavailable:                527
-Unknown:                    222
-Not currently provided:     245
-New unavailable:            0
-Recovered unavailable:      5
+Music 2.0 - Check Queue - Old
 ```
 
-Large non-zero values here do **not** necessarily mean Home Assistant is unhealthy.
+but both are intentionally disabled rollback copies.
 
-The important question is why the entities have those states.
+Static YAML inspection alone can see that the aliases are duplicated.
+
+It cannot establish whether both automations are actually active.
+
+The live-state cross-check prevents deliberately disabled rollback copies from creating unnecessary routine warnings.
 
 ---
 
-## Unavailable
+## HA Audit does not guess from names
 
-An unavailable entity still exists in Home Assistant but currently has no usable state.
+HA Audit does not assume that an automation is inactive because its alias contains words such as:
 
-Common causes include:
+```text
+Old
+Backup
+Previous
+Test
+Disabled
+```
 
-- powered-off devices
-- disconnected devices
-- integrations that cannot connect
-- retired devices
-- temporarily unavailable cloud services
-- stale entities
+Names are descriptive text.
 
-### Where to check
+The live Home Assistant automation state is used instead.
 
-Go to:
+---
 
-**Settings → Devices & services → Entities**
+## Active duplicate alias groups
 
-Set the filter:
+If two or more matching automations are currently on, the summary may report:
 
-**Status → Unavailable**
+```text
+Active duplicate auto names: 1
+```
 
-You can then add an **Integration** filter to investigate one group at a time.
+This is a maintainability finding.
+
+It is not the same as an automation-ID collision.
+
+Review:
+
+```text
+quality_audit.json
+```
+
+and decide whether the duplicated active aliases are intentional.
+
+---
+
+## Unresolved duplicate aliases
+
+If HA Audit cannot confidently resolve the live state of every member of a duplicate alias group, it is reported separately.
 
 For example:
 
-**Integration → Template**
+```text
+Unresolved duplicate names:  1
+```
+
+Review the detailed report rather than assuming the group is either active or harmless.
+
+---
+
+# 13. Duplicate script names
+
+Script aliases can also be duplicated.
+
+This is normally a maintainability finding rather than proof of invalid Home Assistant configuration.
+
+Review the detailed report where necessary.
+
+---
+
+# 14. Large automations and scripts
+
+HA Audit identifies unusually large automation and script definitions.
+
+Large does not automatically mean bad.
+
+A long automation can be entirely appropriate.
+
+These findings identify configuration that may:
+
+* be harder to read
+* be harder to maintain
+* contain repeated logic
+* benefit from future refactoring
+
+There is no requirement to reduce every large automation or script.
+
+---
+
+# 15. ENTITY HEALTH
+
+The `ENTITY HEALTH` section contains current entity-state information.
+
+Typical fields include:
+
+```text
+Entities
+Unavailable
+Unknown
+Not currently provided
+New unavailable
+Recovered unavailable
+```
+
+---
+
+# 16. Total entities
+
+This is the number of entities included in the current audit view.
+
+It provides context for the unavailable and unknown counts.
+
+The absolute number can change as integrations add, remove or restructure entities.
+
+---
+
+# 17. Unavailable entities
+
+An unavailable entity exists in Home Assistant but currently has no usable state.
+
+An unavailable entity is not automatically a failed device.
+
+Possible causes include:
+
+* deliberately powered-off equipment
+* temporary Wi-Fi loss
+* temporary Zigbee loss
+* MQTT devices that are offline
+* battery-powered devices
+* cloud-service availability
+* integration reconnects
+* equipment under maintenance
+* optional feature entities
+* unsupported feature entities
+* genuinely failed hardware
+* stale entities
+
+Do not bulk-delete unavailable entities based on the headline count.
+
+---
+
+# 18. Unknown entities
+
+An entity with state:
+
+```text
+unknown
+```
+
+exists but Home Assistant does not currently have a meaningful value for it.
+
+Some integrations legitimately expose unknown states under certain conditions.
+
+As with unavailable entities, use context rather than treating the count itself as a fault total.
+
+---
+
+# 19. New unavailable and recovered unavailable
+
+HA Audit compares the current audit with the previous audit.
+
+This allows it to report:
+
+```text
+New unavailable
+Recovered unavailable
+```
+
+These changes are often more useful than the total unavailable count.
+
+A long-standing intentionally powered-off device is less interesting than a device that was healthy in the previous audit and has just become unavailable.
+
+---
+
+## Investigating new unavailable entities
+
+If the count is non-zero:
+
+1. Open the detailed snapshot or availability report
+2. Identify the newly unavailable entity
+3. Identify the device and integration
+4. Check whether the change is expected
+5. Check whether the device still has healthy sibling entities
+6. Check Recorder history where useful
+7. Only escalate when the evidence suggests a genuine problem
+
+---
+
+# 20. AVAILABILITY CONTEXT
+
+The raw unavailable count cannot distinguish between:
+
+* a completely offline device
+* a healthy device with one unavailable optional feature
+* deliberately powered-off equipment
+* an entity not attached to a device
+
+`availability_audit.json` adds that context.
+
+---
+
+## Not-currently-provided entities are excluded
+
+Entities already classified as not currently provided are excluded from ordinary availability classification.
+
+They have their own:
+
+* active-YAML reference analysis
+* Recorder-history safety analysis
+
+This avoids mixing two different review categories.
+
+---
+
+# 21. Partial availability
+
+A device has partial availability when:
+
+* one or more entities are unavailable
+* at least one other current entity belonging to the device is healthy
+
+For example, a robot vacuum may have:
+
+* a healthy main vacuum entity
+* a healthy battery entity
+* healthy consumable sensors
+* unavailable notification or optional-cleaning feature entities
+
+Calling that entire vacuum "unavailable" would be misleading.
+
+HA Audit therefore records it as partial availability.
+
+---
+
+## How to investigate partial availability
+
+Ask:
+
+1. What is the main function of this device?
+2. Is its primary entity healthy?
+3. Which entities are unavailable?
+4. Are those unavailable entities optional?
+5. Have they ever had usable Recorder history?
+6. Did an integration update introduce them?
+7. Does Home Assistant normally expose them for this device model?
+
+Partial availability is often feature-level context rather than a device fault.
+
+---
+
+# 22. Whole-device unavailable
+
+A device is classified as whole-device unavailable when HA Audit sees no healthy current state entities belonging to that device.
+
+The summary may show:
+
+```text
+Whole device unavailable:   5 entities / 1 device
+```
+
+This is observational context.
+
+It is not an automatic fault verdict.
+
+---
+
+## Possible explanations
+
+A whole-device unavailable result may represent:
+
+* deliberately powered-off equipment
+* temporary maintenance
+* building work
+* a Wi-Fi outage
+* a Zigbee device that has stopped responding
+* an MQTT device that is disconnected
+* a cloud integration outage
+* a battery issue
+* genuinely failed equipment
+
+The next useful evidence is often Recorder history.
+
+---
+
+# 23. Ungrouped unavailable entities
+
+Some unavailable entities are not attached to a Home Assistant device.
+
+These are reported separately.
+
+The detailed report can show:
+
+* entity ID
+* platform
+* name
+* area where available
+
+Review the entity individually because device-level context is unavailable.
+
+---
+
+# 24. Optional availability labels
+
+HA Audit supports optional Home Assistant labels for users who want to add explicit context.
+
+Examples supported by the scanner include expected-offline and maintenance context.
+
+These labels are optional.
+
+You do not need to maintain them for HA Audit to work.
+
+---
+
+## Missing labels are not a health issue
+
+HA Audit does not:
+
+* require users to create availability labels
+* count missing labels as a fault
+* prompt for routine label maintenance in `NEXT ACTIONS`
+
+This keeps the normal workflow low-maintenance.
+
+Users who find labels useful can use them.
+
+Users who do not want to maintain them can ignore them.
+
+---
+
+# 25. UNAVAILABLE HISTORY CONTEXT
+
+`unavailable_history_audit.json` adds Recorder evidence to ordinary currently unavailable entities.
+
+Its purpose is to answer questions such as:
+
+* Has this entity had a usable state recently?
+* When did its final usable interval begin?
+* Can Recorder show when that interval ended?
+* Has Recorder only seen it as unavailable?
+* Is there no Recorder history for it?
+* Did the history query itself fail?
+
+---
+
+# 26. Requested and effective history windows
+
+The requested lookback is:
+
+```text
+90 days
+```
+
+HA Audit also checks how much Recorder history is actually available.
+
+If Recorder only retains approximately 34 days, HA Audit uses that available window.
+
+The summary therefore distinguishes between:
+
+* requested lookback
+* Recorder history start
+* effective history checked
+
+HA Audit does not claim to have checked history that Home Assistant no longer retains.
+
+---
+
+# 27. Matching history to the availability snapshot
+
+The availability scanner records when its current-state snapshot was taken.
+
+The unavailable-history scanner uses that timestamp as the history endpoint.
+
+This is important.
+
+Without it, an entity could:
+
+1. be classified as unavailable
+2. recover a few seconds later
+3. appear as healthy in history collected after the availability snapshot
+
+That would mix two different points in time.
+
+Using the availability snapshot timestamp keeps the evidence aligned.
+
+---
+
+# 28. Usable states
+
+For unavailable-history analysis, these states are treated as non-usable:
+
+```text
+unavailable
+unknown
+none
+```
+
+Other states can provide evidence that the entity was usable.
+
+Examples might include:
+
+```text
+on
+off
+idle
+playing
+23.4
+Task finished, returning to dock
+```
+
+depending on the entity type.
+
+---
+
+# 29. unavailable-history statuses
+
+An unavailable entity receives one of these statuses:
+
+```text
+usable_history_found
+history_found_no_usable_state
+no_history_returned
+history_query_failed
+```
+
+These statuses describe the Recorder evidence.
+
+They are not fault classifications.
+
+---
+
+# 30. usable_history_found
+
+This means Recorder returned at least one usable state during the effective history window.
+
+HA Audit records fields such as:
+
+```text
+last_usable_state
+last_usable_state_started_at
+last_usable_state_ended_at
+```
+
+---
+
+## last_usable_state
+
+This is the final usable state found in the retained history.
+
+For example:
+
+```text
+off
+```
 
 or:
 
-**Integration → MQTT**
-
-Do not bulk-delete unavailable entities just because they appear in this count.
-
----
-
-## Unknown
-
-An entity with an `unknown` state exists but Home Assistant does not currently have a meaningful value for it.
-
-This can be normal for some entities.
-
-### Where to check
-
-Go to:
-
-**Settings → Devices & services → Entities**
-
-Search for the entity ID or device shown by HA Audit.
-
-Open it and inspect its current state and integration.
-
----
-
-## New unavailable
-
-This compares the current audit with the previous run.
-
-A value greater than zero means entities have become unavailable since the previous audit.
-
-This is often more useful than the total unavailable count because it highlights change.
-
-### What to do
-
-Check the affected entities before assuming they are faults.
-
-For device-based entities, go to:
-
-**Settings → Devices & services → Devices**
-
-Search for the device.
-
-For an individual entity, go to:
-
-**Settings → Devices & services → Entities**
-
-Search for the entity ID.
-
----
-
-## Recovered unavailable
-
-These entities were unavailable during the previous audit but are no longer unavailable.
-
-This is normally informational.
-
-A rising recovered count after maintenance is often evidence that the change had the intended effect.
-
----
-
-# 7. NOT CURRENTLY PROVIDED
-
-This is different from ordinary `Unavailable`.
-
-A registry entity can remain stored in Home Assistant even when its integration no longer currently creates or provides that entity.
-
-HA Audit compares the enabled Home Assistant entity registry with the entities currently being supplied by integrations.
-
-Example:
-
 ```text
-Not currently provided: 245
+idle
 ```
 
-This is a **review list**, not a deletion list.
+---
+
+## last_usable_state_started_at
+
+This records when the final usable state began.
+
+It should not automatically be interpreted as the time the entity became unavailable.
+
+A device may remain in the same state for hours or days.
+
+---
+
+## last_usable_state_ended_at
+
+Where Recorder contains a later non-usable transition, HA Audit records that transition as the end of the final usable interval.
+
+For example:
+
+```text
+off
+```
+
+may have started on Monday.
+
+The device may remain healthy and `off` until Friday.
+
+If it becomes:
+
+```text
+unavailable
+```
+
+on Friday, the relevant loss-of-usability time is Friday, not Monday.
+
+This distinction was added to prevent misleading history interpretation.
+
+---
+
+## Unknown end time
+
+If the history window contains a usable state but no later non-usable transition, HA Audit cannot prove when that usable interval ended.
+
+It does not invent an end timestamp.
+
+---
+
+# 31. history_found_no_usable_state
+
+This means Recorder returned history records, but every usable candidate in the effective history window was:
+
+```text
+unavailable
+unknown
+none
+```
+
+This can legitimately happen.
+
+For example:
+
+* an optional feature entity may have always been unavailable
+* a deliberately unpowered device may already have been offline when retained Recorder history begins
+* Recorder retention may no longer include its earlier healthy period
+
+This status does not prove that the entity has always been faulty.
+
+---
+
+# 32. no_history_returned
+
+This means Recorder returned no history records for the entity.
 
 Possible reasons include:
 
-- an integration no longer exposing an old entity
-- a device or integration being removed
-- an integration changing its entity model
-- old registry entries being retained
-- an integration currently failing to load
+* Recorder exclusions
+* retention
+* entity-specific history behaviour
+* the entity being newer than expected
+* the integration not recording useful state history
 
-Therefore:
+No history is unknown evidence.
 
-**Not currently provided does not automatically mean safe to delete.**
-
----
-
-# 8. REVIEW
-
-Example:
-
-```text
-REVIEW
-----------------------------------------------------------
-Not provided + active YAML: 1
-Template cleanup candidates: 29
-```
-
-This section narrows the larger inventory into findings that deserve attention.
+It is not approval to delete an entity.
 
 ---
 
-## Not provided + active YAML
+# 33. history_query_failed
 
-This is one of the more important findings.
+This means HA Audit could not successfully retrieve Recorder history for the entity.
 
-It means:
+Query failure must remain separate from:
 
-1. Home Assistant still has the entity in its registry
-2. its integration is not currently providing it
-3. HA Audit found the entity ID referenced in active YAML
+```text
+no_history_returned
+```
 
-### What to do
-
-Do **not** delete the entity first.
-
-Use the file and line information reported by HA Audit and open that location in **Studio Code Server**.
-
-Determine why the YAML still expects the entity.
-
-Possible actions include:
-
-- replacing an old entity ID
-- correcting a typo
-- removing obsolete YAML
-- restoring the missing integration or device if it is still required
-
-After changing the YAML, validate the configuration where appropriate and rerun HA Audit.
+because a failed request is not evidence that history does not exist.
 
 ---
 
-# 9. TEMPLATE CLEANUP CANDIDATES
+## Batch query retry protection
 
-A Template cleanup candidate is an entity that:
+HA Audit requests unavailable history in batches for efficiency.
 
-1. remains in Home Assistant's entity registry
-2. is no longer currently provided by the Template integration
-3. has no reference found in the active YAML files scanned by HA Audit
+If a batch request fails:
 
-This is a much stronger cleanup signal, but it is still not an automatic deletion instruction.
+1. the batch failure is recorded
+2. each entity in that batch is retried individually
+3. entities whose individual retry succeeds continue normally
+4. only genuine individual failures remain `history_query_failed`
 
-### Where to check
-
-In Home Assistant go to:
-
-**Settings → Devices & services → Entities**
-
-Set:
-
-**Status → Unavailable**
-
-Then set:
-
-**Integration → Template**
-
-Open the candidate entity.
-
-For a stale Template entity, Home Assistant may display:
-
-```text
-This entity is no longer being provided by the template integration.
-If the entity is no longer in use, delete it in settings.
-```
-
-### Before deleting
-
-Confirm:
-
-- HA Audit reports no active YAML reference
-- you recognise the entity as obsolete
-- Home Assistant says it is no longer provided
-- you do not intentionally need it for something outside the active YAML scanned by HA Audit
-
-If those checks are satisfied, use Home Assistant's **Delete** option on the entity screen.
-
-### After deleting
-
-Run HA Audit again.
-
-Confirm that:
-
-- the total entity count falls by one
-- the Template `Unavailable` count falls if the entity was unavailable
-- the Template cleanup candidate count falls by one
-
-This rerun is an important part of the cleanup process.
+This prevents one problematic batch request from incorrectly making every entity in that batch appear to have failed history collection.
 
 ---
 
-# 10. A USEFUL EXAMPLE: UNAVAILABLE DOES NOT MEAN STALE
+# 34. Interpreting unavailable history
 
-Suppose a Template entity is unavailable because the physical equipment it depends on has been unplugged.
+Recorder history is observational context only.
 
-Home Assistant may still actively provide the Template entity.
+Old, recent or absent usable history does not by itself indicate:
 
-In that situation HA Audit should show it under:
+* a broken device
+* a stale entity
+* a configuration problem
+* an entity that should be deleted
+* a required action
 
-```text
-Unavailable
-```
+Use history together with:
 
-but **not** classify it as:
-
-```text
-Not currently provided
-```
-
-That entity should not be deleted simply because it is unavailable.
-
-This is why HA Audit keeps the two categories separate.
+* current availability classification
+* integration
+* device type
+* known power state
+* normal usage pattern
+* whether the device is deliberately offline
 
 ---
 
-# 11. NEXT ACTIONS
+# 35. REVIEW
 
-After checking the headline numbers, read the:
+The `REVIEW` section currently includes stronger configuration/entity review findings such as:
 
 ```text
-NEXT ACTIONS
+Not provided + active YAML
+Template review candidates
 ```
 
-section.
+These are different from ordinary unavailable entities.
 
-This is intended to turn audit findings into practical investigation steps.
+---
 
-Entries beginning with:
+# 36. NOT CURRENTLY PROVIDED
+
+A not-currently-provided entity is an entity that remains in the Home Assistant entity registry but is not currently present in the live entity source information collected by HA Audit.
+
+This is different from:
+
+```text
+state = unavailable
+```
+
+An unavailable entity is currently provided but has no usable state.
+
+A not-currently-provided entity is not currently being created or exposed in the live source used by the audit.
+
+---
+
+## Possible explanations
+
+A not-currently-provided entity may result from:
+
+* an integration changing its entity model
+* a removed device
+* an integration that failed to load
+* an entity being removed by an integration update
+* old registry data
+* a configuration change
+* a genuinely stale entity
+
+It is therefore a review category rather than a deletion list.
+
+---
+
+# 37. Active-YAML references to not-currently-provided entities
+
+HA Audit cross-references not-currently-provided entities with the active YAML configuration tree.
+
+The detailed report is:
+
+```text
+not_provided_reference_audit.json
+```
+
+If an entity is both:
+
+* not currently provided
+* still referenced by active YAML
+
+it deserves stronger investigation.
+
+---
+
+## Why this matters
+
+Deleting the entity from Home Assistant without checking its active references may leave:
+
+* automations
+* scripts
+* templates
+* conditions
+* service calls
+* other YAML configuration
+
+pointing to an entity that no longer exists.
+
+---
+
+## Investigation workflow
+
+For each reported entity:
+
+1. Find the entity in `not_provided_reference_audit.json`
+2. Note the reported source file and line
+3. Open that YAML location
+4. Understand what the reference is doing
+5. Search Home Assistant for the entity ID
+6. Check whether a replacement entity exists
+7. Check the integration/device involved
+8. Decide whether to repair the reference, restore the entity or retire the configuration
+
+Do not delete first and investigate afterwards.
+
+---
+
+# 38. Template review candidates
+
+A Template entity can be a stronger cleanup candidate when it is:
+
+* no longer currently provided
+* not referenced by active YAML
+
+HA Audit can identify these as Template review candidates.
+
+The summary may show:
+
+```text
+Template review candidates: 1
+```
+
+This still does not mean automatic deletion.
+
+---
+
+## Investigating a Template review candidate
+
+In Home Assistant:
+
+1. Go to **Settings → Devices & services → Entities**
+2. Search for the entity ID
+3. Check its integration
+4. Check whether it belongs to **Template**
+5. Check whether it is unavailable
+6. Check whether another entity replaced it
+7. Check whether it appears in dashboards or UI-created automations
+8. Check Recorder evidence where useful
+
+HA Audit currently analyses active YAML references.
+
+It cannot guarantee that an entity is unused everywhere in every UI-managed object simply because no YAML reference exists.
+
+Use the result as a review aid.
+
+---
+
+# 39. NOT-PROVIDED HISTORY SAFETY
+
+HA Audit uses Recorder history as protective evidence for entities that are no longer currently provided.
+
+The detailed report is:
+
+```text
+not_provided_history_audit.json
+```
+
+History is used conservatively.
+
+Its purpose is to prevent recent evidence from being overlooked during cleanup review.
+
+---
+
+# 40. Requested lookback
+
+The requested history lookback is:
+
+```text
+90 days
+```
+
+The effective lookback is limited by actual Recorder retention.
+
+The summary shows the amount of history that could actually be checked.
+
+---
+
+# 41. Recent/protective usable history
+
+If a not-currently-provided entity has usable history whose final usable interval ended within the recent window, that is protective evidence.
+
+The normal recent window is:
+
+```text
+45 days
+```
+
+These entities should be treated as:
+
+```text
+KEEP / REVIEW
+```
+
+rather than easy cleanup candidates.
+
+---
+
+# 42. Final usable interval semantics
+
+From 0.6.10, HA Audit distinguishes between:
+
+```text
+last_usable_state_started_at
+```
+
+and:
+
+```text
+last_usable_state_ended_at
+```
+
+where Recorder contains enough evidence.
+
+This prevents an important timing error.
+
+---
+
+## Example
+
+Suppose an entity changed to:
+
+```text
+off
+```
+
+60 days ago.
+
+It stayed healthy and `off` until yesterday.
+
+Yesterday it stopped being provided.
+
+Using the start of the `off` state as the "last usable" time would make the entity look 60 days old.
+
+That would be misleading.
+
+The useful evidence is that its final usable interval continued until yesterday.
+
+---
+
+# 43. Unknown final-interval end
+
+Sometimes Recorder shows a usable state but contains no later non-usable transition.
+
+In that case HA Audit cannot prove when the final usable interval ended.
+
+It does not assume that the interval ended when it began.
+
+Instead, that history remains conservatively protective.
+
+---
+
+## Why the conservative rule exists
+
+HA Audit is designed to avoid unsafe cleanup conclusions.
+
+It is better to retain an entity for manual review than to call it old based on incomplete evidence.
+
+---
+
+# 44. Older usable activity
+
+An entity is only classified as older activity when Recorder can prove that the final usable interval ended before the recent-history cutoff.
+
+Older usable activity can support a cleanup investigation.
+
+It is still not automatic permission to delete.
+
+---
+
+# 45. No usable history
+
+If no usable history is found in the effective Recorder window, the summary may report:
+
+```text
+No usable history found
+```
+
+This means only that no usable evidence was found in the retained history that was checked.
+
+Possible limitations include:
+
+* Recorder retention
+* Recorder exclusions
+* earlier activity outside the retained window
+
+No usable history is not proof that an entity is obsolete.
+
+---
+
+# 46. History query failure
+
+If history collection fails, the entity is not treated as though it has no history.
+
+The failure is reported separately.
+
+Review the collector issue before using the history result in a cleanup decision.
+
+---
+
+# 47. NEXT ACTIONS
+
+`NEXT ACTIONS` converts the strongest current findings into practical investigation prompts.
+
+It does not list every piece of inventory.
+
+---
+
+## `[!]` entries
+
+An entry beginning with:
 
 ```text
 [!]
 ```
 
-need attention.
+normally represents something requiring attention.
 
-Entries beginning with:
+Examples include:
+
+* invalid configuration
+* collector failure
+* missing active include
+* missing active entity reference candidate
+* duplicate automation ID
+* history query failure
+* not-currently-provided entity still referenced by active YAML
+
+---
+
+## `[i]` entries
+
+An entry beginning with:
 
 ```text
 [i]
 ```
 
-are informational or cleanup/review opportunities.
+is normally informational or a review opportunity.
 
-Work through these findings one category at a time.
+Examples include:
 
-There is no benefit in trying to clear every non-zero count in one session.
-
----
-
-# 12. RECOMMENDED CLEANUP WORKFLOW
-
-A practical maintenance session is:
-
-1. Go to **Settings → Apps → HA Audit**
-2. Start HA Audit
-3. Open the **Log** tab
-4. Find the latest **CURRENT RUN SUMMARY**
-5. Confirm **Config check = VALID**
-6. Confirm **Collector errors = 0**
-7. Review the **NEXT ACTIONS** section
-8. Pick one finding or category
-9. Follow the Home Assistant or Studio Code location given for that finding
-10. Make only the intended change
-11. Validate Home Assistant configuration where appropriate
-12. Run HA Audit again
-13. Confirm the expected count changed
-14. Continue with the next finding only when ready
-
-Repeated reruns are expected.
-
-That is one reason HA Audit keeps the normal console output concise.
+* whole-device unavailable context
+* partial availability
+* ungrouped unavailable entities
+* recent/protective history
+* Template review candidates
+* orphan YAML candidates
 
 ---
 
-# 13. DETAILED REPORTS
+## Informational does not mean irrelevant
 
-HA Audit generates detailed reports as well as the short summary shown in the app log.
+An `[i]` result may still deserve investigation.
 
-Current files include:
+It simply means the audit does not have enough evidence to present it as a definite fault.
+
+---
+
+## Do not force NEXT ACTIONS to zero
+
+A healthy Home Assistant installation may legitimately retain informational findings.
+
+The goal is:
+
+* understand them
+* remove false positives where the scanner can be improved
+* act on genuine issues
+
+rather than forcing every count to zero.
+
+---
+
+# 48. DETAILED REPORTS
+
+HA Audit stores detailed reports in its private app-config folder.
+
+Current reports include:
 
 ```text
 audit_snapshot.json
@@ -728,18 +1541,180 @@ audit_snapshot_previous.json
 config_inventory.json
 quality_audit.json
 not_provided_reference_audit.json
+recorder_health_audit.json
+not_provided_history_audit.json
+availability_audit.json
+unavailable_history_audit.json
 ha_audit_latest.txt
 ```
 
-`ha_audit_latest.txt` contains the latest user-facing summary and is overwritten on every run.
+---
 
-The JSON files contain the detailed data used by HA Audit and are useful when a finding tells you to inspect a particular report.
+# 49. audit_snapshot.json
 
-## Where to find the files
+Contains the detailed current Home Assistant audit snapshot.
 
-The files are stored in HA Audit's own app-config folder rather than your normal Home Assistant configuration folder.
+This includes core system and entity-health information collected during the run.
 
-In **Studio Code Server**:
+---
+
+# 50. audit_snapshot_previous.json
+
+Contains the previous snapshot retained for selected run-to-run comparisons.
+
+This allows HA Audit to identify changes such as:
+
+```text
+New unavailable
+Recovered unavailable
+```
+
+---
+
+# 51. config_inventory.json
+
+Contains the YAML configuration inventory.
+
+It includes information such as:
+
+* discovered YAML files
+* active/inactive classification
+* line counts
+* include relationships
+
+---
+
+# 52. quality_audit.json
+
+Contains detailed configuration-quality findings.
+
+These include areas such as:
+
+* configuration tree
+* missing include targets
+* missing entity reference candidates
+* duplicate automation IDs
+* duplicate automation aliases
+* live-state classification of duplicate automation aliases
+* duplicate script names
+* large automations
+* large scripts
+
+Use this file when the summary points to a YAML/configuration issue.
+
+---
+
+# 53. not_provided_reference_audit.json
+
+Contains reference analysis for not-currently-provided entities.
+
+It identifies whether those entities are still referenced in active YAML.
+
+---
+
+# 54. recorder_health_audit.json
+
+Contains information about Recorder history availability.
+
+This allows history scanners to distinguish between:
+
+```text
+requested history window
+```
+
+and:
+
+```text
+history actually retained
+```
+
+---
+
+# 55. not_provided_history_audit.json
+
+Contains protective Recorder-history evidence for not-currently-provided entities.
+
+It includes final usable state information and the recent/older/no-history classifications.
+
+---
+
+# 56. availability_audit.json
+
+Contains device-level classification for ordinary currently unavailable entities.
+
+This includes categories such as:
+
+* expected offline where explicitly labelled
+* maintenance where explicitly labelled
+* partial availability
+* whole-device unavailable
+* ungrouped unavailable
+
+It also contains device-state context such as healthy and unavailable sibling entities.
+
+---
+
+# 57. unavailable_history_audit.json
+
+Contains Recorder-history context for ordinary currently unavailable entities.
+
+This includes:
+
+```text
+last_recorded_state
+last_recorded_state_at
+last_usable_state
+last_usable_state_started_at
+last_usable_state_ended_at
+history_status
+history_error
+```
+
+where appropriate.
+
+---
+
+# 58. ha_audit_latest.txt
+
+Contains the concise current-run summary.
+
+This file is overwritten on every run.
+
+For normal day-to-day use, this is usually the most useful report after the app log.
+
+---
+
+# 59. Finding the detailed reports
+
+The reports are stored in HA Audit's private app-config folder.
+
+They are not stored in the normal:
+
+```text
+/config
+```
+
+directory.
+
+If your Home Assistant file-access tool can browse:
+
+```text
+/addon_configs
+```
+
+open that location and find the folder whose name ends in:
+
+```text
+_ha_audit
+```
+
+The part before `_ha_audit` is generated by Home Assistant and may differ between installations.
+
+---
+
+## Studio Code Server example
+
+In Studio Code Server:
 
 1. Select **File → Open Folder...**
 2. Enter:
@@ -748,193 +1723,597 @@ In **Studio Code Server**:
 /addon_configs
 ```
 
-3. Open the folder whose name ends with:
+3. Open the folder whose name ends in:
 
 ```text
 _ha_audit
 ```
 
-Inside that folder you should see the HA Audit report files.
+You should then see the audit report files.
+
+---
+
+## Returning to your previous workspace
+
+When you finish reviewing the reports:
+
+1. Select **File → Open Recent**
+2. Reopen the folder or workspace you were previously using
+
+If it is not listed:
+
+1. Select **File → Open Folder...**
+2. Open your normal Home Assistant configuration folder or previous workspace manually
+
+---
+
+# 60. Investigation workflow: missing include
+
+When `NEXT ACTIONS` reports a missing active include:
+
+1. Open `quality_audit.json`
+2. Find `configuration_tree`
+3. Find the missing include entry
+4. Note the source file
+5. Note the source line
+6. Open that YAML file
+7. Check the include syntax
+8. Check the target path
+9. Decide whether the target should exist or the include should be removed
+10. Validate Home Assistant configuration
+11. Rerun HA Audit
+
+The finding should disappear after the actual problem is corrected.
+
+---
+
+# 61. Investigation workflow: missing entity candidate
+
+When an active YAML entity reference is missing:
+
+1. Open `quality_audit.json`
+2. Find the missing candidate
+3. Note the source file and line
+4. Open the YAML
+5. Understand how the entity is being used
+6. Search Home Assistant's entity registry
+7. Check whether it was renamed or replaced
+8. Correct the YAML only when the intended replacement is known
+9. Validate/reload the appropriate configuration
+10. Rerun HA Audit
+
+---
+
+# 62. Investigation workflow: duplicate automation ID
+
+When a duplicate automation ID is reported:
+
+1. Open `quality_audit.json`
+2. Identify every automation using the ID
+3. Open each reported YAML location
+4. Determine whether both definitions are intended
+5. Give each genuinely separate automation a unique ID
+6. Validate/reload
+7. Rerun HA Audit
+
+The duplicate-ID group should disappear.
+
+---
+
+# 63. Investigation workflow: duplicate automation alias
+
+When an active duplicate alias is reported:
+
+1. Open `quality_audit.json`
+2. Review the automations in the alias group
+3. Check their automation IDs
+4. Check their current Home Assistant states
+5. Confirm whether the matching names are intentional
+6. Rename only where clearer naming would improve maintenance
+
+Do not change IDs just because aliases match.
+
+If the duplicate copies are intentionally disabled rollback versions, their presence in detailed audit data is expected.
+
+---
+
+# 64. Investigation workflow: whole-device unavailable
+
+When a device has no healthy state entities:
+
+1. Identify the device in `availability_audit.json`
+2. Identify its integration
+3. Check whether it is intentionally powered
+4. Check physical power where relevant
+5. Check Wi-Fi/Zigbee/MQTT/cloud connectivity where relevant
+6. Review `unavailable_history_audit.json`
+7. Check when the final usable interval ended
+8. Compare with known maintenance or building work
+9. Decide whether any action is needed
+
+Do not assume that whole-device unavailable means hardware failure.
+
+---
+
+# 65. Investigation workflow: partial availability
+
+When a device has partial availability:
+
+1. Identify its healthy entities
+2. Identify its unavailable entities
+3. Determine which entities represent the device's primary function
+4. Determine whether unavailable entities are optional or diagnostic
+5. Review Recorder history if useful
+6. Check whether an integration update recently changed the entity set
+7. Act only if unavailable features should actually be working
+
+Partial availability often requires no action.
+
+---
+
+# 66. Investigation workflow: not provided + active YAML
+
+When an entity is both not currently provided and still referenced:
+
+1. Open `not_provided_reference_audit.json`
+2. Identify every active reference
+3. Open the source YAML
+4. Search Home Assistant for the entity
+5. Check its integration/device
+6. Check Recorder history
+7. Determine whether the entity has been renamed, replaced or removed
+8. Repair the reference or restore the entity as appropriate
+9. Rerun HA Audit
+
+This is a stronger finding than a not-currently-provided entity with no known active references.
+
+---
+
+# 67. Investigation workflow: Template review candidate
+
+For a Template review candidate:
+
+1. Search the entity under **Settings → Devices & services → Entities**
+2. Confirm the integration is Template
+3. Check whether it is currently unavailable
+4. Check `not_provided_reference_audit.json`
+5. Check `not_provided_history_audit.json`
+6. Search your dashboards or UI-managed automations if appropriate
+7. Confirm it has genuinely been replaced or retired
+8. Delete only after confirming it is no longer needed
+9. Rerun HA Audit
+
+---
+
+# 68. Investigation workflow: history query failure
+
+If history queries fail:
+
+1. Check `Collector errors`
+2. Check the HA Audit app log
+3. Open the relevant history JSON
+4. Identify the entity and `history_error`
+5. Check whether failures affected a whole batch or only individual entities
+6. Do not interpret failed queries as no history
+7. Resolve the collection issue where possible
+8. Rerun HA Audit
+
+---
+
+# 69. Investigation workflow: orphan YAML
+
+For an orphan YAML candidate:
+
+1. Open the file
+2. Identify its purpose
+3. Search the active configuration for its path/name
+4. Check whether it is an intentional rollback/reference file
+5. Check whether it belongs to an external tool
+6. Decide whether to keep, archive or remove it
+7. Rerun HA Audit if its status should change
+
+---
+
+# 70. Repeated audit/fix/rerun cycles
+
+HA Audit is designed to be run repeatedly.
+
+A typical maintenance cycle is:
+
+1. Run HA Audit
+2. Pick one clear finding
+3. Investigate it
+4. Make the smallest appropriate change
+5. Validate Home Assistant where necessary
+6. Rerun HA Audit
+7. Confirm the expected result changed
+8. Move to the next finding
+
+This is safer than trying to clean dozens of findings at once.
+
+---
+
+# 71. Verify the result, not just the edit
+
+After making a change, do not assume success because the YAML saved correctly.
+
+Check:
+
+* Home Assistant configuration validation
+* relevant entity/device behaviour
+* HA Audit summary
+* detailed report if appropriate
 
 For example:
+
+* a missing entity reference should disappear
+* a duplicate automation ID should disappear
+* a recovered device may move out of unavailable
+* a retired entity may disappear from the registry-related review list
+
+---
+
+# 72. SAFETY
+
+HA Audit is designed to be read-only.
+
+It does not:
+
+* modify Home Assistant configuration
+* delete entities
+* remove devices
+* disable entities
+* alter integrations
+* change automations
+* change scripts
+* install Home Assistant updates
+* restart Home Assistant
+* automatically apply cleanup changes
+
+---
+
+# 73. Configuration access
+
+Home Assistant configuration is mounted read-only for the audit app.
+
+HA Audit reads configuration in order to inspect it.
+
+It does not write changes back into Home Assistant configuration.
+
+---
+
+# 74. Report storage
+
+HA Audit writes its generated reports only to its own private app-config directory.
+
+These reports are the output of the audit.
+
+They are separate from the Home Assistant configuration files being inspected.
+
+---
+
+# 75. Sensitive configuration exclusions
+
+Configuration scanning excludes sensitive or unrelated areas such as:
+
+```text
+.storage
+.cloud
+backups
+custom_components
+esphome
+media
+tts
+www
+```
+
+Files whose filename contains:
+
+```text
+secret
+```
+
+are excluded from configuration scanning.
+
+This includes:
+
+```text
+secrets.yaml
+```
+
+HA Audit therefore does not need to read Home Assistant secret values to perform its normal configuration analysis.
+
+---
+
+# 76. External services
+
+HA Audit currently performs its audit locally inside the Home Assistant app environment.
+
+It does not currently send audit data to:
+
+* OpenAI
+* ChatGPT
+* GitHub
+* another external AI analysis service
+
+Future AI-assisted analysis is planned as a separate optional development stage.
+
+It is not part of the current local audit.
+
+---
+
+# 77. TROUBLESHOOTING
+
+## The app stops after running
+
+This is normal.
+
+HA Audit is a run-once app.
+
+Check for:
+
+```text
+HA Audit finished
+```
+
+The app stops after completing its work.
+
+---
+
+## I see s6-rc messages
+
+This is normal after the audit completes.
+
+They are container shutdown messages.
+
+If:
+
+```text
+HA Audit finished
+```
+
+appears cleanly first, the shutdown messages themselves are not an audit problem.
+
+---
+
+## I see a shell or Python error before HA Audit finished
+
+This is different.
+
+Review the error and identify which stage failed.
+
+The summary may also show a collector error or missing report.
+
+Do not rely on an affected report until the run is clean.
+
+---
+
+## Collector errors is non-zero
+
+Example:
+
+```text
+Collector errors:           1
+```
+
+Review the HA Audit app log.
+
+The failed stage should be identified.
+
+HA Audit normally captures scanner output and shows it when a stage fails.
+
+---
+
+## Config check is not VALID
+
+Do not restart Home Assistant merely to see whether the problem clears.
+
+Use:
+
+**Developer tools → YAML**
+
+to validate and investigate the configuration first.
+
+---
+
+## I cannot find the report files
+
+Browse:
+
+```text
+/addon_configs
+```
+
+and open the folder ending:
+
+```text
+_ha_audit
+```
+
+They are not stored in the normal `/config` directory.
+
+---
+
+## The app log contains several runs
+
+Use the final:
+
+```text
+HA AUDIT vX.X.X - CURRENT RUN SUMMARY
+```
+
+section.
+
+Alternatively open:
 
 ```text
 ha_audit_latest.txt
-quality_audit.json
-not_provided_reference_audit.json
 ```
 
-The part of the folder name before `_ha_audit` is generated by Home Assistant and may differ between installations.
+which contains only the latest summary.
 
-## Returning to your previous files
+---
 
-Opening `/addon_configs` changes the folder/workspace shown by Studio Code Server.
+## The unavailable count is very high
 
-When you have finished reviewing HA Audit reports:
+Do not assume the number represents failed devices.
 
-1. Select **File → Open Recent**
-2. Reopen the folder or workspace you were using previously
-
-If it is not shown in **Open Recent**:
-
-1. Select **File → Open Folder...**
-2. Choose the folder you were using before
-
-HA Audit does not assume that your previous workspace was a particular folder.
-
-## Which report should I start with?
-
-For normal use, start with:
-
-**Settings → Apps → HA Audit → Log**
-
-and read the latest:
+Review:
 
 ```text
-CURRENT RUN SUMMARY
+AVAILABILITY CONTEXT
 ```
 
-Use the detailed files only when the summary or **NEXT ACTIONS** section directs you to them.
+A large total can come from integrations exposing many:
 
-For example:
+* optional entities
+* feature entities
+* diagnostics
+* controls that are not supported by a particular device
+
+Then review:
 
 ```text
-Not provided + active YAML: 1
+unavailable_history_audit.json
 ```
 
-may direct you to:
+where more context is needed.
+
+---
+
+## A whole device is unavailable but I know it is powered off intentionally
+
+That can be a valid result.
+
+Whole-device unavailable means HA Audit saw no healthy state entities at that audit snapshot.
+
+It does not claim to know why.
+
+No fix is required if the state is intentional.
+
+Optional labels can be used if you want explicit expected-offline context, but maintaining them is not required.
+
+---
+
+## An entity shows history_found_no_usable_state
+
+This means Recorder returned history but no state other than:
 
 ```text
-not_provided_reference_audit.json
+unavailable
+unknown
+none
 ```
 
-where the affected entity, YAML file and line number can be identified.
+was found during the retained window.
 
-The detailed reports are primarily investigation data; you do not need to read every JSON file after every audit.
+It does not prove the entity has never worked.
 
----
-
-# 14. CONFIGURATION INVENTORY
-
-HA Audit scans the Home Assistant YAML configuration using read-only access.
-
-It records information including:
-
-- YAML file count
-- YAML line count
-- configuration layout
-- largest YAML files
-- include relationships
-- exact duplicate YAML files
-- `!secret` usage
-
-File contents are not copied into the inventory report.
+Recorder may no longer retain its earlier healthy period.
 
 ---
 
-# 15. COMMENTED BACKUP CONFIGURATION
+## Recorder history is much shorter than 90 days
 
-Fully commented-out YAML is not treated as active configuration.
+This is expected when your Home Assistant Recorder retention is shorter.
 
-This is deliberate.
+HA Audit reports:
 
-Users may retain previous versions of templates, automations or other configuration as commented blocks for rollback or reference.
+* requested lookback
+* actual Recorder start
+* effective history checked
 
-HA Audit therefore ignores fully commented lines when checking active entity references.
-
-A high proportion of comments can still be reported as informational inventory.
-
-It is not automatically considered a problem.
+Only the available history is analysed.
 
 ---
 
-# 16. LARGE AUTOMATIONS AND SCRIPTS
+## No history was returned
 
-HA Audit can identify unusually large automation and script definitions.
+Do not treat this as evidence that the entity is stale.
 
-This is informational.
+Possible causes include:
 
-A large automation is not automatically wrong.
+* Recorder exclusion
+* retention
+* entity-specific history behaviour
 
-The purpose is to identify configuration that may be worth reviewing later for maintainability.
-
-Do not split or rewrite working automations purely because HA Audit labels them as large.
-
----
-
-# 17. SECURITY AND PRIVACY
-
-HA Audit currently operates locally.
-
-It does not send audit information to OpenAI, ChatGPT, GitHub or another external analysis service.
-
-The app has:
-
-- read-only access to the Home Assistant configuration directory
-- access to Home Assistant and Supervisor information APIs
-- writable access only to its own private app configuration/storage area
-
-HA Audit does not modify Home Assistant configuration.
-
-The following locations are deliberately excluded from YAML scanning:
-
-- `.storage`
-- `.cloud`
-- backups
-- `custom_components`
-- ESPHome configuration
-- media
-- TTS
-- `www`
-
-Files with `secret` in the filename are also excluded.
-
-`secrets.yaml` is therefore not read by the configuration scanners.
+The result is unknown context.
 
 ---
 
-# 18. CURRENT LIMITATIONS
+## A duplicate automation name disappeared from NEXT ACTIONS
+
+From 0.6.10, duplicate aliases are checked against live automation state.
+
+If duplicate copies are disabled or mixed-state, they can remain in the detailed report without being promoted as a routine health finding.
+
+This is intentional.
+
+Duplicate automation IDs remain structural findings regardless of alias state.
+
+---
+
+## A report is missing
+
+If a report expected for the current version is absent, check:
+
+* the app log
+* collector errors
+* whether the relevant scanner failed
+
+The summary should not silently treat a missing report as clean evidence.
+
+---
+
+# 78. Current limitations
 
 HA Audit is under active development.
 
-It does not currently:
+It does not yet:
 
-- automatically repair problems
-- automatically delete stale entities
-- fully analyse Home Assistant Repairs
-- provide complete Home Assistant Core log analysis
-- perform scheduled automatic audits
-- send reports to OpenAI
-- assess Home Assistant release notes against the installation
-- provide a graphical HA Audit dashboard
-
-These are areas that may be developed later.
+* automatically repair Home Assistant
+* analyse all Home Assistant Repairs
+* perform complete Core log analysis
+* automatically run on a schedule
+* assess every release note against the installed configuration
+* automatically assess all third-party integration compatibility
+* make configuration changes
+* send reports to an AI analysis service
 
 ---
 
-# 19. IMPORTANT SAFETY RULE
+# 79. Next development areas
 
-Treat HA Audit as an **investigation assistant**, not an automatic cleanup tool.
+The next major development area is update and upgrade readiness.
 
-A finding means:
+The aim is to provide more useful information before Home Assistant upgrades, including evidence relevant to:
 
-> check this
+* breaking changes
+* integration compatibility
+* configuration risk
+* outstanding system issues
 
-not necessarily:
+Later work is expected to include:
 
-> delete this
-
-When changing Home Assistant configuration:
-
-1. understand the finding
-2. verify it in Home Assistant or the relevant YAML
-3. make the smallest appropriate change
-4. validate where appropriate
-5. rerun HA Audit
-6. confirm the result
+* a structured LLM-ready audit report
+* optional AI-assisted analysis
+* deeper ongoing health monitoring
 
 ---
 
-# Version
+# 80. Project goal
 
-Current release: **0.6.5**
+The long-term goal of HA Audit is to provide a structured technical view of a Home Assistant installation so that:
+
+* maintenance
+* troubleshooting
+* upgrades
+* migration planning
+* cleanup
+* future-proofing
+
+can be based on evidence from the actual system rather than generic assumptions.
+
+The core principle is:
+
+**collect evidence first, make changes only after review.**
