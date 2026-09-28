@@ -88,6 +88,10 @@ run_quiet_python \
     "upgrade_correlation_scan.py" \
     "Dynamic upgrade correlation audit"
 
+run_quiet_python \
+    "correlation_validation_scan.py" \
+    "Correlation validation audit"
+
 
 if ! python3 /summary_report.py; then
     bashio::log.error "Latest-run summary generation failed"
