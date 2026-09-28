@@ -4,6 +4,7 @@ import re
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 import websocket
@@ -102,6 +103,47 @@ def normalise_text(value):
     )
 
 
+def normalise_version(value):
+    if value is None:
+        return None
+
+    text = str(
+        value
+    ).strip()
+
+    if not text:
+        return None
+
+    if text[:1].lower() == "v":
+        text = text[1:]
+
+    return text.lower()
+
+
+def versions_agree(
+    left,
+    right,
+):
+    left_normalised = normalise_version(
+        left
+    )
+
+    right_normalised = normalise_version(
+        right
+    )
+
+    if (
+        left_normalised is None
+        or right_normalised is None
+    ):
+        return None
+
+    return (
+        left_normalised
+        == right_normalised
+    )
+
+
 def update_entity_slug(
     entity_id,
 ):
@@ -146,6 +188,34 @@ def component_tokens(
     ]
 
 
+def component_root(
+    component,
+):
+    tokens = component_tokens(
+        component
+    )
+
+    if not tokens:
+        return None
+
+    return tokens[0]
+
+
+def component_platform(
+    component,
+):
+    tokens = component_tokens(
+        component
+    )
+
+    if len(
+        tokens
+    ) < 2:
+        return None
+
+    return tokens[1]
+
+
 def domain_loaded_by_components(
     domain,
     loaded_components,
@@ -174,12 +244,109 @@ def domain_loaded_by_components(
         ):
             return True
 
-        if component.endswith(
-            f".{domain}"
-        ):
-            return True
-
     return False
+
+
+def normalise_repository_url(
+    value,
+):
+    if not value:
+        return None
+
+    text = str(
+        value
+    ).strip()
+
+    if not text:
+        return None
+
+    if "://" not in text:
+        text = (
+            "https://"
+            + text
+        )
+
+    try:
+        parsed = urlparse(
+            text
+        )
+
+    except Exception:
+        return None
+
+    host = (
+        parsed.netloc
+        or ""
+    ).lower()
+
+    if host.startswith(
+        "www."
+    ):
+        host = host[4:]
+
+    if host != "github.com":
+        return None
+
+    path_parts = [
+        part
+        for part
+        in parsed.path.split("/")
+        if part
+    ]
+
+    if len(
+        path_parts
+    ) < 2:
+        return None
+
+    owner = path_parts[0].lower()
+
+    repository = (
+        path_parts[1]
+        .removesuffix(
+            ".git"
+        )
+        .lower()
+    )
+
+    return (
+        f"github.com/"
+        f"{owner}/"
+        f"{repository}"
+    )
+
+
+def repository_candidates_from_manifest(
+    integration,
+):
+    candidates = set()
+
+    for key in (
+        "documentation",
+        "issue_tracker",
+    ):
+        repository = normalise_repository_url(
+            integration.get(
+                key
+            )
+        )
+
+        if repository:
+            candidates.add(
+                repository
+            )
+
+    return sorted(
+        candidates
+    )
+
+
+def repository_from_release_url(
+    release_url,
+):
+    return normalise_repository_url(
+        release_url
+    )
 
 
 def find_ha_config_root():
@@ -699,17 +866,69 @@ bare_loaded_components = sorted(
     ]
 )
 
-component_token_candidates = sorted(
+loaded_component_roots = sorted(
     {
-        token
+        root
         for component
         in loaded_components
-        for token
-        in component_tokens(
-            component
-        )
+        for root
+        in [
+            component_root(
+                component
+            )
+        ]
+        if root
     }
 )
+
+platform_integrations = defaultdict(
+    set
+)
+
+for component in loaded_components:
+    root = component_root(
+        component
+    )
+
+    platform = component_platform(
+        component
+    )
+
+    if (
+        root
+        and platform
+    ):
+        platform_integrations[
+            platform
+        ].add(
+            root
+        )
+
+platform_usage = []
+
+for platform in sorted(
+    platform_integrations
+):
+    platform_usage.append(
+        {
+            "platform":
+                platform,
+
+            "integration_count":
+                len(
+                    platform_integrations[
+                        platform
+                    ]
+                ),
+
+            "integrations":
+                sorted(
+                    platform_integrations[
+                        platform
+                    ]
+                ),
+        }
+    )
 
 
 # ------------------------------------------------------------
@@ -804,6 +1023,39 @@ for domain in sorted(
         in entries
     )
 
+    loaded_entry_count = sum(
+        1
+        for entry
+        in entries
+        if (
+            not entry.get(
+                "disabled"
+            )
+            and entry.get(
+                "state"
+            )
+            == "loaded"
+        )
+    )
+
+    enabled_count = sum(
+        1
+        for entry
+        in entries
+        if not entry.get(
+            "disabled"
+        )
+    )
+
+    disabled_count = sum(
+        1
+        for entry
+        in entries
+        if entry.get(
+            "disabled"
+        )
+    )
+
     config_domain_details.append(
         {
             "domain":
@@ -815,24 +1067,13 @@ for domain in sorted(
                 ),
 
             "enabled_count":
-                sum(
-                    1
-                    for entry
-                    in entries
-                    if not entry.get(
-                        "disabled"
-                    )
-                ),
+                enabled_count,
 
             "disabled_count":
-                sum(
-                    1
-                    for entry
-                    in entries
-                    if entry.get(
-                        "disabled"
-                    )
-                ),
+                disabled_count,
+
+            "loaded_enabled_count":
+                loaded_entry_count,
 
             "state_counts":
                 dict(
@@ -849,6 +1090,65 @@ configured_domains = sorted(
 
 configured_domain_set = set(
     configured_domains
+)
+
+configured_loaded_domains = sorted(
+    [
+        item.get(
+            "domain"
+        )
+        for item
+        in config_domain_details
+        if item.get(
+            "loaded_enabled_count",
+            0,
+        )
+        > 0
+    ]
+)
+
+configured_not_loaded_domains = sorted(
+    [
+        item.get(
+            "domain"
+        )
+        for item
+        in config_domain_details
+        if (
+            item.get(
+                "enabled_count",
+                0,
+            )
+            > 0
+            and item.get(
+                "loaded_enabled_count",
+                0,
+            )
+            == 0
+        )
+    ]
+)
+
+configured_disabled_domains = sorted(
+    [
+        item.get(
+            "domain"
+        )
+        for item
+        in config_domain_details
+        if (
+            item.get(
+                "entry_count",
+                0,
+            )
+            > 0
+            and item.get(
+                "enabled_count",
+                0,
+            )
+            == 0
+        )
+    ]
 )
 
 
@@ -1006,6 +1306,13 @@ for item in all_updates:
                 item.get(
                     "release_url"
                 ),
+
+            "repository":
+                repository_from_release_url(
+                    item.get(
+                        "release_url"
+                    )
+                ),
         }
     )
 
@@ -1086,23 +1393,33 @@ for integration in custom_integrations:
         )
     )
 
-    enabled_entry_count = sum(
-        1
+    enabled_entries = [
+        entry
         for entry
         in entries
         if not entry.get(
             "disabled"
         )
-    )
+    ]
 
-    disabled_entry_count = sum(
-        1
+    disabled_entries = [
+        entry
         for entry
         in entries
         if entry.get(
             "disabled"
         )
-    )
+    ]
+
+    loaded_enabled_entries = [
+        entry
+        for entry
+        in enabled_entries
+        if entry.get(
+            "state"
+        )
+        == "loaded"
+    ]
 
     integration[
         "config_entry_count"
@@ -1112,11 +1429,21 @@ for integration in custom_integrations:
 
     integration[
         "enabled_config_entry_count"
-    ] = enabled_entry_count
+    ] = len(
+        enabled_entries
+    )
 
     integration[
         "disabled_config_entry_count"
-    ] = disabled_entry_count
+    ] = len(
+        disabled_entries
+    )
+
+    integration[
+        "loaded_enabled_config_entry_count"
+    ] = len(
+        loaded_enabled_entries
+    )
 
     integration[
         "configured_via_entry"
@@ -1140,14 +1467,48 @@ for integration in custom_integrations:
         )
     )
 
-    integration[
-        "in_use_evidence"
-    ] = bool(
+    if (
         integration.get(
             "loaded"
         )
-        or enabled_entry_count > 0
+        or loaded_enabled_entries
+    ):
+        activity = "active"
+
+    elif (
+        entries
+        and not enabled_entries
+    ):
+        activity = "disabled"
+
+    elif enabled_entries:
+        activity = (
+            "configured_not_active"
+        )
+
+    else:
+        activity = "installed_only"
+
+    integration[
+        "activity"
+    ] = activity
+
+    integration[
+        "active_evidence"
+    ] = (
+        activity
+        == "active"
     )
+
+    manifest_repositories = (
+        repository_candidates_from_manifest(
+            integration
+        )
+    )
+
+    integration[
+        "manifest_repository_candidates"
+    ] = manifest_repositories
 
     domain_norm = normalise_text(
         domain
@@ -1190,6 +1551,12 @@ for integration in custom_integrations:
             ""
         )
 
+        update_repository = (
+            update.get(
+                "repository"
+            )
+        )
+
         match_type = None
 
         if (
@@ -1213,6 +1580,15 @@ for integration in custom_integrations:
             )
 
         elif (
+            update_repository
+            and update_repository
+            in manifest_repositories
+        ):
+            match_type = (
+                "repository_url"
+            )
+
+        elif (
             name_norm
             and name_norm
             in update_names
@@ -1222,6 +1598,15 @@ for integration in custom_integrations:
             )
 
         if match_type:
+            agreement = versions_agree(
+                integration.get(
+                    "version"
+                ),
+                update.get(
+                    "installed_version"
+                ),
+            )
+
             matches.append(
                 {
                     "match_type":
@@ -1237,15 +1622,26 @@ for integration in custom_integrations:
                             "state"
                         ),
 
-                    "installed_version":
+                    "repository":
+                        update_repository,
+
+                    "manifest_version":
+                        integration.get(
+                            "version"
+                        ),
+
+                    "hacs_installed_version":
                         update.get(
                             "installed_version"
                         ),
 
-                    "latest_version":
+                    "hacs_latest_version":
                         update.get(
                             "latest_version"
                         ),
+
+                    "version_agreement":
+                        agreement,
 
                     "release_url":
                         update.get(
@@ -1263,6 +1659,48 @@ for integration in custom_integrations:
     ] = bool(
         matches
     )
+
+    if not matches:
+        integration[
+            "hacs_version_agreement"
+        ] = None
+
+        integration[
+            "hacs_version_agreement_reason"
+        ] = "no_hacs_match"
+
+    elif len(
+        matches
+    ) > 1:
+        integration[
+            "hacs_version_agreement"
+        ] = None
+
+        integration[
+            "hacs_version_agreement_reason"
+        ] = "multiple_hacs_matches"
+
+    else:
+        agreement = matches[0].get(
+            "version_agreement"
+        )
+
+        integration[
+            "hacs_version_agreement"
+        ] = agreement
+
+        if agreement is True:
+            reason = "match"
+
+        elif agreement is False:
+            reason = "mismatch"
+
+        else:
+            reason = "version_unavailable"
+
+        integration[
+            "hacs_version_agreement_reason"
+        ] = reason
 
 custom_integrations.sort(
     key=lambda item:
@@ -1282,22 +1720,44 @@ custom_integrations.sort(
 # Derived custom integration groups
 # ------------------------------------------------------------
 
-custom_in_use = [
+custom_active = [
     item
     for item
     in custom_integrations
     if item.get(
-        "in_use_evidence"
+        "activity"
     )
+    == "active"
 ]
 
-custom_not_in_use = [
+custom_configured_not_active = [
     item
     for item
     in custom_integrations
-    if not item.get(
-        "in_use_evidence"
+    if item.get(
+        "activity"
     )
+    == "configured_not_active"
+]
+
+custom_disabled = [
+    item
+    for item
+    in custom_integrations
+    if item.get(
+        "activity"
+    )
+    == "disabled"
+]
+
+custom_installed_only = [
+    item
+    for item
+    in custom_integrations
+    if item.get(
+        "activity"
+    )
+    == "installed_only"
 ]
 
 custom_hacs_matched = [
@@ -1343,6 +1803,36 @@ custom_domain_mismatch = [
     is False
 ]
 
+custom_version_mismatches = [
+    item
+    for item
+    in custom_integrations
+    if item.get(
+        "hacs_version_agreement"
+    )
+    is False
+]
+
+custom_active_version_mismatches = [
+    item
+    for item
+    in custom_version_mismatches
+    if item.get(
+        "activity"
+    )
+    == "active"
+]
+
+custom_inactive_version_mismatches = [
+    item
+    for item
+    in custom_version_mismatches
+    if item.get(
+        "activity"
+    )
+    != "active"
+]
+
 custom_domains = sorted(
     {
         str(
@@ -1366,7 +1856,7 @@ custom_domains = sorted(
     }
 )
 
-custom_in_use_domains = sorted(
+custom_active_domains = sorted(
     {
         str(
             item.get(
@@ -1377,7 +1867,7 @@ custom_in_use_domains = sorted(
             )
         )
         for item
-        in custom_in_use
+        in custom_active
         if (
             item.get(
                 "domain"
@@ -1389,26 +1879,105 @@ custom_in_use_domains = sorted(
     }
 )
 
-custom_not_in_use_domains = sorted(
-    set(
-        custom_domains
-    )
-    - set(
-        custom_in_use_domains
-    )
+custom_configured_not_active_domains = sorted(
+    {
+        str(
+            item.get(
+                "domain"
+            )
+            or item.get(
+                "directory"
+            )
+        )
+        for item
+        in custom_configured_not_active
+        if (
+            item.get(
+                "domain"
+            )
+            or item.get(
+                "directory"
+            )
+        )
+    }
 )
 
-strong_domain_evidence = sorted(
-    set(
-        configured_domains
-    )
-    | set(
-        bare_loaded_components
-    )
-    | set(
-        custom_in_use_domains
-    )
+custom_disabled_domains = sorted(
+    {
+        str(
+            item.get(
+                "domain"
+            )
+            or item.get(
+                "directory"
+            )
+        )
+        for item
+        in custom_disabled
+        if (
+            item.get(
+                "domain"
+            )
+            or item.get(
+                "directory"
+            )
+        )
+    }
 )
+
+custom_installed_only_domains = sorted(
+    {
+        str(
+            item.get(
+                "domain"
+            )
+            or item.get(
+                "directory"
+            )
+        )
+        for item
+        in custom_installed_only
+        if (
+            item.get(
+                "domain"
+            )
+            or item.get(
+                "directory"
+            )
+        )
+    }
+)
+
+
+# ------------------------------------------------------------
+# HACS evidence not matched to custom integrations
+# ------------------------------------------------------------
+
+matched_hacs_entity_ids = {
+    match.get(
+        "entity_id"
+    )
+    for integration
+    in custom_integrations
+    for match
+    in integration.get(
+        "hacs_update_matches",
+        [],
+    )
+    if match.get(
+        "entity_id"
+    )
+}
+
+unmatched_hacs_updates = [
+    item
+    for item
+    in hacs_updates
+    if item.get(
+        "entity_id"
+    )
+    not in matched_hacs_entity_ids
+]
 
 
 # ------------------------------------------------------------
@@ -1446,11 +2015,11 @@ report = {
         "note":
             (
                 "This report inventories local "
-                "integration evidence for later "
-                "upgrade-impact matching. It does "
-                "not yet decide whether a pending "
-                "Home Assistant upgrade affects "
-                "this installation."
+                "integration and platform evidence "
+                "for later upgrade-impact matching. "
+                "It does not yet decide whether a "
+                "pending Home Assistant upgrade "
+                "affects this installation."
             ),
     },
 
@@ -1509,27 +2078,48 @@ report = {
                 bare_loaded_components
             ),
 
-        "component_token_candidate_count":
+        "component_root_count":
             len(
-                component_token_candidates
+                loaded_component_roots
             ),
 
         "bare_components":
             bare_loaded_components,
 
-        "component_token_candidates":
-            component_token_candidates,
+        "component_roots":
+            loaded_component_roots,
 
         "components":
             loaded_components,
 
         "important":
             (
-                "Component tokens are matching "
-                "aids only. A dotted loaded "
-                "component name does not by "
-                "itself prove which token is the "
-                "integration domain."
+                "Loaded component roots are useful "
+                "matching evidence, but they include "
+                "both integration domains and generic "
+                "Home Assistant components. They are "
+                "not treated as equivalent to configured "
+                "integration domains."
+            ),
+    },
+
+    "platform_usage": {
+        "platform_count":
+            len(
+                platform_usage
+            ),
+
+        "platforms":
+            platform_usage,
+
+        "important":
+            (
+                "Platform usage is derived from dotted "
+                "loaded component names such as "
+                "robovac.vacuum. This allows later "
+                "release-note matching to distinguish "
+                "platform changes from integration-domain "
+                "changes."
             ),
     },
 
@@ -1549,6 +2139,21 @@ report = {
                 configured_domains
             ),
 
+        "loaded_domain_count":
+            len(
+                configured_loaded_domains
+            ),
+
+        "configured_not_loaded_domain_count":
+            len(
+                configured_not_loaded_domains
+            ),
+
+        "disabled_domain_count":
+            len(
+                configured_disabled_domains
+            ),
+
         "state_counts":
             dict(
                 sorted(
@@ -1558,6 +2163,15 @@ report = {
 
         "domains":
             configured_domains,
+
+        "loaded_domains":
+            configured_loaded_domains,
+
+        "configured_not_loaded_domains":
+            configured_not_loaded_domains,
+
+        "disabled_domains":
+            configured_disabled_domains,
 
         "domain_details":
             config_domain_details,
@@ -1569,19 +2183,44 @@ report = {
                 custom_integrations
             ),
 
-        "in_use_evidence_count":
+        "active_count":
             len(
-                custom_in_use
+                custom_active
             ),
 
-        "no_in_use_evidence_count":
+        "configured_not_active_count":
             len(
-                custom_not_in_use
+                custom_configured_not_active
+            ),
+
+        "disabled_count":
+            len(
+                custom_disabled
+            ),
+
+        "installed_only_count":
+            len(
+                custom_installed_only
             ),
 
         "hacs_matched_count":
             len(
                 custom_hacs_matched
+            ),
+
+        "hacs_version_mismatch_count":
+            len(
+                custom_version_mismatches
+            ),
+
+        "active_hacs_version_mismatch_count":
+            len(
+                custom_active_version_mismatches
+            ),
+
+        "inactive_hacs_version_mismatch_count":
+            len(
+                custom_inactive_version_mismatches
             ),
 
         "manifest_invalid_count":
@@ -1605,14 +2244,29 @@ report = {
                 [],
             ),
 
-        "in_use_evidence":
-            custom_in_use,
+        "active":
+            custom_active,
 
-        "no_in_use_evidence":
-            custom_not_in_use,
+        "configured_not_active":
+            custom_configured_not_active,
+
+        "disabled":
+            custom_disabled,
+
+        "installed_only":
+            custom_installed_only,
 
         "hacs_matched":
             custom_hacs_matched,
+
+        "hacs_version_mismatches":
+            custom_version_mismatches,
+
+        "active_hacs_version_mismatches":
+            custom_active_version_mismatches,
+
+        "inactive_hacs_version_mismatches":
+            custom_inactive_version_mismatches,
 
         "manifest_invalid":
             custom_manifest_invalid,
@@ -1638,14 +2292,32 @@ report = {
                 hacs_updates
             ),
 
+        "matched_to_custom_integration_count":
+            len(
+                matched_hacs_entity_ids
+            ),
+
+        "unmatched_count":
+            len(
+                unmatched_hacs_updates
+            ),
+
+        "unmatched_entities":
+            unmatched_hacs_updates,
+
         "entities":
             hacs_updates,
     },
 
     "impact_inventory": {
-        "strong_domain_evidence_count":
+        "configured_integration_domain_count":
             len(
-                strong_domain_evidence
+                configured_domains
+            ),
+
+        "configured_loaded_domain_count":
+            len(
+                configured_loaded_domains
             ),
 
         "custom_installed_domain_count":
@@ -1653,40 +2325,72 @@ report = {
                 custom_domains
             ),
 
-        "custom_in_use_domain_count":
+        "custom_active_domain_count":
             len(
-                custom_in_use_domains
+                custom_active_domains
             ),
 
-        "custom_no_in_use_evidence_domain_count":
+        "custom_configured_not_active_domain_count":
             len(
-                custom_not_in_use_domains
+                custom_configured_not_active_domains
             ),
 
-        "strong_domain_evidence":
-            strong_domain_evidence,
+        "custom_disabled_domain_count":
+            len(
+                custom_disabled_domains
+            ),
+
+        "custom_installed_only_domain_count":
+            len(
+                custom_installed_only_domains
+            ),
+
+        "loaded_component_root_count":
+            len(
+                loaded_component_roots
+            ),
+
+        "platform_count":
+            len(
+                platform_usage
+            ),
+
+        "configured_integration_domains":
+            configured_domains,
+
+        "configured_loaded_domains":
+            configured_loaded_domains,
 
         "custom_installed_domains":
             custom_domains,
 
-        "custom_in_use_domains":
-            custom_in_use_domains,
+        "custom_active_domains":
+            custom_active_domains,
 
-        "custom_no_in_use_evidence_domains":
-            custom_not_in_use_domains,
+        "custom_configured_not_active_domains":
+            custom_configured_not_active_domains,
 
-        "component_token_candidates":
-            component_token_candidates,
+        "custom_disabled_domains":
+            custom_disabled_domains,
+
+        "custom_installed_only_domains":
+            custom_installed_only_domains,
+
+        "loaded_component_roots":
+            loaded_component_roots,
+
+        "platform_usage":
+            platform_usage,
 
         "important":
             (
-                "Strong domain evidence is "
-                "suitable for later release-note "
-                "matching, but even a domain "
-                "match will remain review "
-                "evidence rather than proof of "
-                "impact until the actual change "
-                "is assessed."
+                "Configured integration domains, custom "
+                "integration activity, loaded component "
+                "roots, and platform usage are deliberately "
+                "kept as separate evidence classes. A later "
+                "release-note match remains review evidence "
+                "rather than proof of impact until the "
+                "specific change is assessed."
             ),
     },
 
@@ -1808,18 +2512,53 @@ print(
 )
 
 print(
+    f"Configured + loaded domains: "
+    f"{len(configured_loaded_domains)}"
+)
+
+print(
     f"Custom integrations:         "
     f"{len(custom_integrations)}"
 )
 
 print(
-    f"Custom integrations in use:  "
-    f"{len(custom_in_use)}"
+    f"Custom active:               "
+    f"{len(custom_active)}"
+)
+
+print(
+    f"Custom configured inactive:  "
+    f"{len(custom_configured_not_active)}"
+)
+
+print(
+    f"Custom disabled:             "
+    f"{len(custom_disabled)}"
+)
+
+print(
+    f"Custom installed only:       "
+    f"{len(custom_installed_only)}"
 )
 
 print(
     f"HACS matches:                "
     f"{len(custom_hacs_matched)}"
+)
+
+print(
+    f"HACS version mismatches:     "
+    f"{len(custom_version_mismatches)}"
+)
+
+print(
+    f"Active version mismatches:   "
+    f"{len(custom_active_version_mismatches)}"
+)
+
+print(
+    f"Inactive version mismatches: "
+    f"{len(custom_inactive_version_mismatches)}"
 )
 
 print(
