@@ -22,6 +22,7 @@ UPGRADE_COMPATIBILITY_FILE = "/config/upgrade_compatibility_audit.json"
 RELEASE_EVIDENCE_FILE = "/config/release_evidence_audit.json"
 COMPATIBILITY_COVERAGE_FILE = "/config/compatibility_coverage_audit.json"
 UPGRADE_CORRELATION_FILE = "/config/upgrade_correlation_audit.json"
+CORRELATION_VALIDATION_FILE = "/config/correlation_validation_audit.json"
 
 OUTPUT_FILE = "/config/ha_audit_latest.txt"
 
@@ -274,6 +275,10 @@ compatibility_coverage_report = load_json_optional(
 
 upgrade_correlation_report = load_json_optional(
     UPGRADE_CORRELATION_FILE
+)
+
+correlation_validation_report = load_json_optional(
+    CORRELATION_VALIDATION_FILE
 )
 
 
@@ -1423,6 +1428,173 @@ for item in correlation_rows:
 
 
 # ------------------------------------------------------------
+# Correlation validation data
+# ------------------------------------------------------------
+
+validation_report_available = bool(
+    correlation_validation_report
+)
+
+validation_scope = correlation_validation_report.get(
+    "scope",
+    {},
+)
+
+validation_summary = correlation_validation_report.get(
+    "summary",
+    {},
+)
+
+validation_precision_reviews = correlation_validation_report.get(
+    "precision_reviews",
+    [],
+)
+
+validation_collector_status = correlation_validation_report.get(
+    "collector_status",
+    {},
+)
+
+if not isinstance(
+    validation_scope,
+    dict,
+):
+    validation_scope = {}
+
+if not isinstance(
+    validation_summary,
+    dict,
+):
+    validation_summary = {}
+
+if not isinstance(
+    validation_precision_reviews,
+    list,
+):
+    validation_precision_reviews = []
+
+if not isinstance(
+    validation_collector_status,
+    dict,
+):
+    validation_collector_status = {}
+
+validation_groups_compared = validation_summary.get(
+    "official_groups_compared",
+    0,
+)
+
+validation_reference_count = validation_summary.get(
+    "groups_with_deterministic_reference",
+    0,
+)
+
+validation_missing_reference_count = validation_summary.get(
+    "groups_without_complete_deterministic_reference",
+    0,
+)
+
+validation_aligned_count = validation_summary.get(
+    "aligned_count",
+    0,
+)
+
+validation_aligned_local_count = validation_summary.get(
+    "aligned_local_count",
+    0,
+)
+
+validation_aligned_no_local_count = validation_summary.get(
+    "aligned_no_local_count",
+    0,
+)
+
+validation_dynamic_gap_count = validation_summary.get(
+    "dynamic_gap_count",
+    0,
+)
+
+validation_deterministic_gap_count = validation_summary.get(
+    "deterministic_gap_count",
+    0,
+)
+
+validation_unresolved_count = validation_summary.get(
+    "unresolved_count",
+    0,
+)
+
+validation_precision_review_count = validation_summary.get(
+    "precision_review_count",
+    0,
+)
+
+validation_accuracy_score_produced = bool(
+    validation_scope.get(
+        "accuracy_score_produced",
+        False,
+    )
+)
+
+validation_compatibility_assessed = bool(
+    validation_scope.get(
+        "compatibility_assessed",
+        False,
+    )
+)
+
+validation_verdict_produced = bool(
+    validation_scope.get(
+        "readiness_verdict_produced",
+        False,
+    )
+)
+
+validation_overall_status = str(
+    validation_collector_status.get(
+        "overall",
+        "unknown",
+    )
+)
+
+if not validation_report_available:
+    validation_status_label = "UNAVAILABLE"
+
+elif validation_overall_status == "ok":
+    validation_status_label = "COMPLETE"
+
+elif validation_overall_status == "partial":
+    validation_status_label = "PARTIAL"
+
+elif validation_overall_status == "error":
+    validation_status_label = "ERROR"
+
+else:
+    validation_status_label = "UNKNOWN"
+
+
+validation_precision_headings = []
+
+for item in validation_precision_reviews:
+    if not isinstance(
+        item,
+        dict,
+    ):
+        continue
+
+    heading = item.get(
+        "official_heading"
+    )
+
+    if heading:
+        validation_precision_headings.append(
+            str(
+                heading
+            )
+        )
+
+
+# ------------------------------------------------------------
 # General values
 # ------------------------------------------------------------
 
@@ -1823,6 +1995,11 @@ if update_readiness_available:
             f"{correlation_status_label}"
         )
 
+        add(
+            "Correlation validation:      "
+            f"{validation_status_label}"
+        )
+
     else:
         add(
             "Compatibility rule pack:     "
@@ -1836,6 +2013,11 @@ if update_readiness_available:
 
         add(
             "Dynamic correlation:         "
+            "NOT APPLICABLE"
+        )
+
+        add(
+            "Correlation validation:      "
             "NOT APPLICABLE"
         )
 
@@ -1858,8 +2040,9 @@ if update_readiness_available:
     add(
         "Update and Repair evidence is local. "
         "Official release evidence, compatibility coverage, "
-        "dynamic correlation, and deterministic compatibility "
-        "results are shown separately below."
+        "dynamic correlation, correlation validation, and "
+        "deterministic compatibility results are shown "
+        "separately below."
     )
 
 else:
@@ -2276,6 +2459,134 @@ if correlation_report_available:
 else:
     add(
         "Dynamic upgrade correlation report unavailable."
+    )
+
+
+# ------------------------------------------------------------
+# Correlation validation
+# ------------------------------------------------------------
+
+add("")
+add("CORRELATION VALIDATION")
+add("-" * 58)
+
+if validation_report_available:
+
+    add(
+        f"Official groups compared:      "
+        f"{validation_groups_compared}"
+    )
+
+    add(
+        f"Deterministic references:      "
+        f"{validation_reference_count}"
+    )
+
+    if validation_missing_reference_count:
+        add(
+            f"References incomplete:        "
+            f"{validation_missing_reference_count}"
+        )
+
+    add(
+        f"Aligned local relevance:       "
+        f"{validation_aligned_count} / "
+        f"{validation_groups_compared}"
+    )
+
+    add("")
+
+    add(
+        f"  Local evidence:              "
+        f"{validation_aligned_local_count}"
+    )
+
+    add(
+        f"  No local evidence:           "
+        f"{validation_aligned_no_local_count}"
+    )
+
+    add("")
+
+    add(
+        f"Dynamic gaps:                  "
+        f"{validation_dynamic_gap_count}"
+    )
+
+    add(
+        f"Deterministic gaps:            "
+        f"{validation_deterministic_gap_count}"
+    )
+
+    add(
+        f"Unresolved comparisons:        "
+        f"{validation_unresolved_count}"
+    )
+
+    add(
+        f"Precision reviews:             "
+        f"{validation_precision_review_count}"
+    )
+
+    add("")
+
+    add(
+        f"Reference validation:          "
+        f"{validation_status_label}"
+    )
+
+    add(
+        "Accuracy score:                "
+        + (
+            "PRODUCED"
+            if validation_accuracy_score_produced
+            else "NOT PRODUCED"
+        )
+    )
+
+    add(
+        "Compatibility assessed:        "
+        + (
+            "YES"
+            if validation_compatibility_assessed
+            else "NO"
+        )
+    )
+
+    add(
+        "Readiness verdict:             "
+        + (
+            "PRODUCED"
+            if validation_verdict_produced
+            else "NOT PRODUCED"
+        )
+    )
+
+    if validation_precision_headings:
+        add("")
+        add("Precision review:")
+
+        for heading in validation_precision_headings:
+            add(
+                f"  {heading}"
+            )
+
+    add("")
+
+    add(
+        "Validation compares local-relevance alignment between "
+        "the dynamic and deterministic paths."
+    )
+
+    add(
+        "Alignment is reference evidence only. It is not an "
+        "accuracy score, compatibility verdict, or proof that "
+        "either path is correct."
+    )
+
+else:
+    add(
+        "Correlation validation report unavailable."
     )
 
 
@@ -3526,6 +3837,7 @@ for report_file in (
     "release_evidence_audit.json",
     "compatibility_coverage_audit.json",
     "upgrade_correlation_audit.json",
+    "correlation_validation_audit.json",
     "ha_audit_latest.txt",
 ):
 
