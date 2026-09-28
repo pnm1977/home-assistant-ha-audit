@@ -21,9 +21,11 @@ COPY not_provided_history_scan.py /
 COPY availability_scan.py /
 COPY unavailable_history_scan.py /
 COPY update_readiness_scan.py /
+COPY upgrade_impact_scan.py /
 COPY summary_report.py /
 
 RUN chmod a+x /run.sh
+
 LABEL \
   io.hass.version="${BUILD_VERSION}" \
   io.hass.type="app" \
