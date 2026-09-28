@@ -4,32 +4,77 @@ import re
 from collections import Counter
 from datetime import datetime, timezone
 
-VERSION = os.environ.get("HA_AUDIT_VERSION", "unknown")
 
-COVERAGE_FILE = "/config/compatibility_coverage_audit.json"
-COMPATIBILITY_FILE = "/config/upgrade_compatibility_audit.json"
-CORRELATION_FILE = "/config/upgrade_correlation_audit.json"
-OUTPUT_FILE = "/config/correlation_validation_audit.json"
+VERSION = os.environ.get(
+    "HA_AUDIT_VERSION",
+    "unknown",
+)
 
+COVERAGE_FILE = (
+    "/config/compatibility_coverage_audit.json"
+)
+
+COMPATIBILITY_FILE = (
+    "/config/upgrade_compatibility_audit.json"
+)
+
+CORRELATION_FILE = (
+    "/config/upgrade_correlation_audit.json"
+)
+
+OUTPUT_FILE = (
+    "/config/correlation_validation_audit.json"
+)
+
+
+# ------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------
 
 def load_json_optional(path):
     try:
-        with open(path, "r", encoding="utf-8") as handle:
-            return json.load(handle)
+        with open(
+            path,
+            "r",
+            encoding="utf-8",
+        ) as handle:
+            return json.load(
+                handle
+            )
+
     except Exception:
         return {}
 
 
 def as_dict(value):
-    return value if isinstance(value, dict) else {}
+    if isinstance(
+        value,
+        dict,
+    ):
+        return value
+
+    return {}
 
 
 def as_list(value):
-    return value if isinstance(value, list) else []
+    if isinstance(
+        value,
+        list,
+    ):
+        return value
+
+    return []
 
 
 def clean(value):
-    return re.sub(r"\s+", " ", str(value or "")).strip()
+    return re.sub(
+        r"\s+",
+        " ",
+        str(
+            value
+            or ""
+        ),
+    ).strip()
 
 
 def unique(values):
@@ -37,19 +82,37 @@ def unique(values):
     seen = set()
 
     for value in values:
-        value = clean(value)
+        value = clean(
+            value
+        )
 
-        if value and value not in seen:
-            seen.add(value)
-            output.append(value)
+        if (
+            value
+            and value not in seen
+        ):
+            seen.add(
+                value
+            )
+
+            output.append(
+                value
+            )
 
     return output
 
 
-def comparison_key(release_family, heading):
+def comparison_key(
+    release_family,
+    heading,
+):
     return (
-        clean(release_family).casefold(),
-        clean(heading).casefold(),
+        clean(
+            release_family
+        ).casefold(),
+
+        clean(
+            heading
+        ).casefold(),
     )
 
 
@@ -59,67 +122,123 @@ def dynamic_relevance_state(status):
         "local_surface_evidence",
         "partial_local_evidence",
     }:
-        return "local_evidence"
+        return (
+            "local_evidence"
+        )
 
     if status == "no_local_evidence":
-        return "no_local_evidence"
+        return (
+            "no_local_evidence"
+        )
 
-    return "unresolved"
+    return (
+        "unresolved"
+    )
 
 
-def deterministic_relevance_state(reference_status, rows):
-    if reference_status != "available" or not rows:
-        return "unresolved"
+def deterministic_relevance_state(
+    reference_status,
+    rows,
+):
+    if (
+        reference_status != "available"
+        or not rows
+    ):
+        return (
+            "unresolved"
+        )
 
     local_values = [
-        row.get("local_match")
+        row.get(
+            "local_match"
+        )
+
         for row in rows
     ]
 
     if any(
         value is True
-        for value in local_values
+
+        for value
+        in local_values
     ):
-        return "local_evidence"
+        return (
+            "local_evidence"
+        )
 
     if all(
         value is False
-        for value in local_values
-    ):
-        return "no_local_evidence"
 
-    return "unresolved"
+        for value
+        in local_values
+    ):
+        return (
+            "no_local_evidence"
+        )
+
+    return (
+        "unresolved"
+    )
 
 
 def relevance_relationship(
+    reference_status,
     deterministic_state,
     dynamic_state,
 ):
-    if (
-        deterministic_state == "local_evidence"
-        and dynamic_state == "local_evidence"
-    ):
-        return "aligned_local"
+    if reference_status == "not_available":
+        return (
+            "no_deterministic_reference"
+        )
+
+    if reference_status == "incomplete":
+        return (
+            "deterministic_reference_incomplete"
+        )
 
     if (
-        deterministic_state == "no_local_evidence"
-        and dynamic_state == "no_local_evidence"
+        deterministic_state
+        == "local_evidence"
+        and dynamic_state
+        == "local_evidence"
     ):
-        return "aligned_no_local"
+        return (
+            "aligned_local"
+        )
 
     if (
-        deterministic_state == "local_evidence"
-        and dynamic_state == "no_local_evidence"
+        deterministic_state
+        == "no_local_evidence"
+        and dynamic_state
+        == "no_local_evidence"
     ):
-        return "dynamic_gap"
+        return (
+            "aligned_no_local"
+        )
 
     if (
-        deterministic_state == "no_local_evidence"
-        and dynamic_state == "local_evidence"
+        deterministic_state
+        == "local_evidence"
+        and dynamic_state
+        == "no_local_evidence"
     ):
-        return "deterministic_gap"
+        return (
+            "dynamic_gap"
+        )
 
-    return "unresolved"
+    if (
+        deterministic_state
+        == "no_local_evidence"
+        and dynamic_state
+        == "local_evidence"
+    ):
+        return (
+            "deterministic_gap"
+        )
+
+    return (
+        "unresolved"
+    )
 
 
 # ------------------------------------------------------------
@@ -226,7 +345,53 @@ for row in compatibility_results:
 
 
 # ------------------------------------------------------------
+# Build deterministic coverage index
+# ------------------------------------------------------------
+
+coverage_by_group = {}
+
+for row in coverage_groups:
+    if not isinstance(
+        row,
+        dict,
+    ):
+        continue
+
+    release_family = clean(
+        row.get(
+            "release_family"
+        )
+    )
+
+    heading = clean(
+        row.get(
+            "official_heading"
+        )
+        or row.get(
+            "registered_heading"
+        )
+    )
+
+    key = comparison_key(
+        release_family,
+        heading,
+    )
+
+    if (
+        key[0]
+        and key[1]
+    ):
+        coverage_by_group[
+            key
+        ] = row
+
+
+# ------------------------------------------------------------
 # Build dynamic group index
+#
+# Dynamic correlation is the generic path and therefore becomes
+# the canonical group universe when deterministic coverage is
+# unavailable for a future release family.
 # ------------------------------------------------------------
 
 dynamic_by_group = {}
@@ -247,74 +412,194 @@ for row in correlation_rows:
         ),
     )
 
-    if key[0] and key[1]:
+    if (
+        key[0]
+        and key[1]
+    ):
         dynamic_by_group[
             key
         ] = row
 
 
 # ------------------------------------------------------------
-# Compare official groups
+# Build union of official groups
+#
+# Usually both paths contain the same groups.
+#
+# For a future release with no deterministic rule pack:
+#
+#   dynamic correlation still contains the official groups
+#   deterministic coverage may contain none
+#
+# That is now treated as a normal no-reference state.
+# ------------------------------------------------------------
+
+all_group_keys = sorted(
+    set(
+        dynamic_by_group
+    )
+    | set(
+        coverage_by_group
+    )
+)
+
+
+# ------------------------------------------------------------
+# Determine overall deterministic-reference mode
+# ------------------------------------------------------------
+
+reported_rule_count = (
+    compatibility_summary.get(
+        "rule_count",
+        0,
+    )
+)
+
+rule_pack = compatibility_scope.get(
+    "rule_pack"
+)
+
+has_deterministic_rules = bool(
+    reported_rule_count
+    or compatibility_results
+)
+
+
+if not has_deterministic_rules:
+    deterministic_reference_mode = (
+        "not_available"
+    )
+
+elif coverage_groups:
+    deterministic_reference_mode = (
+        "available"
+    )
+
+else:
+    deterministic_reference_mode = (
+        "incomplete"
+    )
+
+
+# ------------------------------------------------------------
+# Compare groups
 # ------------------------------------------------------------
 
 comparisons = []
+
 precision_reviews = []
 
 relationship_counts = Counter()
+
 alignment_detail_counts = Counter()
 
+
 groups_with_reference = 0
+
 groups_without_reference = 0
 
+groups_with_incomplete_reference = 0
 
-for group in coverage_groups:
-    if not isinstance(
-        group,
-        dict,
-    ):
-        continue
 
-    release_family = clean(
-        group.get(
-            "release_family"
+for key in all_group_keys:
+
+    dynamic_row = dynamic_by_group.get(
+        key
+    )
+
+    coverage_row = coverage_by_group.get(
+        key
+    )
+
+
+    release_family = (
+        clean(
+            dynamic_row.get(
+                "release_family"
+            )
+        )
+        if dynamic_row
+        else clean(
+            coverage_row.get(
+                "release_family"
+            )
         )
     )
 
-    heading = clean(
-        group.get(
-            "official_heading"
+
+    heading = (
+        clean(
+            dynamic_row.get(
+                "heading"
+            )
         )
-        or group.get(
-            "registered_heading"
+        if dynamic_row
+        else clean(
+            coverage_row.get(
+                "official_heading"
+            )
+            or coverage_row.get(
+                "registered_heading"
+            )
         )
     )
 
-    coverage_status = clean(
-        group.get(
-            "coverage_status"
-        )
-    ).casefold()
 
-    mapped_rule_ids = unique(
-        group.get(
-            "mapped_rule_ids",
-            [],
+    release_notes_url = (
+        dynamic_row.get(
+            "release_notes_url"
+        )
+        if dynamic_row
+        else coverage_row.get(
+            "release_notes_url"
         )
     )
 
-    present_rule_ids = unique(
-        group.get(
-            "present_rule_ids",
-            [],
-        )
-    )
 
-    coverage_missing_rule_ids = unique(
-        group.get(
-            "missing_rule_ids",
-            [],
+    # --------------------------------------------------------
+    # Deterministic coverage/reference
+    # --------------------------------------------------------
+
+    if coverage_row:
+
+        coverage_status = clean(
+            coverage_row.get(
+                "coverage_status"
+            )
+        ).casefold()
+
+        mapped_rule_ids = unique(
+            coverage_row.get(
+                "mapped_rule_ids",
+                [],
+            )
         )
-    )
+
+        present_rule_ids = unique(
+            coverage_row.get(
+                "present_rule_ids",
+                [],
+            )
+        )
+
+        coverage_missing_rule_ids = unique(
+            coverage_row.get(
+                "missing_rule_ids",
+                [],
+            )
+        )
+
+    else:
+
+        coverage_status = (
+            "not_available"
+        )
+
+        mapped_rule_ids = []
+
+        present_rule_ids = []
+
+        coverage_missing_rule_ids = []
 
 
     deterministic_rows = [
@@ -322,7 +607,8 @@ for group in coverage_groups:
             rule_id
         ]
 
-        for rule_id in present_rule_ids
+        for rule_id
+        in present_rule_ids
 
         if rule_id
         in deterministic_by_id
@@ -336,7 +622,8 @@ for group in coverage_groups:
             )
         )
 
-        for row in deterministic_rows
+        for row
+        in deterministic_rows
 
         if clean(
             row.get(
@@ -349,7 +636,8 @@ for group in coverage_groups:
     missing_result_rule_ids = [
         rule_id
 
-        for rule_id in present_rule_ids
+        for rule_id
+        in present_rule_ids
 
         if rule_id
         not in result_rule_ids
@@ -357,10 +645,26 @@ for group in coverage_groups:
 
 
     # --------------------------------------------------------
-    # Determine deterministic reference availability
+    # Reference classification
+    #
+    # not_available:
+    #   No deterministic rule exists for this group/release.
+    #   This is normal for a new dynamically supported release.
+    #
+    # incomplete:
+    #   A deterministic mapping exists but expected rule output
+    #   is absent. This is materially different and merits review.
     # --------------------------------------------------------
 
     if (
+        not coverage_row
+        and not has_deterministic_rules
+    ):
+        reference_status = (
+            "not_available"
+        )
+
+    elif (
         not mapped_rule_ids
         or coverage_status
         not in {
@@ -369,7 +673,7 @@ for group in coverage_groups:
         }
     ):
         reference_status = (
-            "unavailable"
+            "not_available"
         )
 
     elif (
@@ -395,8 +699,11 @@ for group in coverage_groups:
     if reference_status == "available":
         groups_with_reference += 1
 
-    else:
+    elif reference_status == "not_available":
         groups_without_reference += 1
+
+    else:
+        groups_with_incomplete_reference += 1
 
 
     deterministic_statuses = unique(
@@ -404,7 +711,8 @@ for group in coverage_groups:
             "status"
         )
 
-        for row in deterministic_rows
+        for row
+        in deterministic_rows
     )
 
 
@@ -419,14 +727,6 @@ for group in coverage_groups:
     # --------------------------------------------------------
     # Dynamic result
     # --------------------------------------------------------
-
-    dynamic_row = dynamic_by_group.get(
-        comparison_key(
-            release_family,
-            heading,
-        )
-    )
-
 
     dynamic_status = (
         clean(
@@ -453,9 +753,11 @@ for group in coverage_groups:
     # --------------------------------------------------------
 
     relationship = relevance_relationship(
+        reference_status,
         deterministic_state,
         dynamic_state,
     )
+
 
     relationship_counts[
         relationship
@@ -463,20 +765,7 @@ for group in coverage_groups:
 
 
     # --------------------------------------------------------
-    # Evidence-depth comparison
-    #
-    # This is deliberately separate from local relevance.
-    #
-    # Example:
-    #
-    # Dynamic Vacuum:
-    #   relevant custom integration contains battery_level
-    #
-    # Deterministic Vacuum:
-    #   no affected Python-name usage found
-    #
-    # Both agree Vacuum is locally relevant, but the evidence
-    # precision differs.
+    # Alignment detail
     # --------------------------------------------------------
 
     precision_review = False
@@ -489,17 +778,21 @@ for group in coverage_groups:
             dynamic_status
             == "partial_local_evidence"
         ):
+
             alignment_detail = (
                 "aligned_with_dynamic_scope_limitation"
             )
+
 
         elif (
             dynamic_status
             == "local_surface_evidence"
         ):
+
             alignment_detail = (
                 "aligned_at_local_surface_level"
             )
+
 
         elif (
             dynamic_status
@@ -540,6 +833,7 @@ for group in coverage_groups:
                     "aligned_with_specific_dynamic_evidence"
                 )
 
+
         else:
 
             alignment_detail = (
@@ -568,10 +862,17 @@ for group in coverage_groups:
         )
 
 
-    elif reference_status != "available":
+    elif relationship == "no_deterministic_reference":
 
         alignment_detail = (
-            "reference_unavailable_or_incomplete"
+            "dynamic_only_no_deterministic_reference"
+        )
+
+
+    elif relationship == "deterministic_reference_incomplete":
+
+        alignment_detail = (
+            "deterministic_reference_incomplete"
         )
 
 
@@ -594,6 +895,10 @@ for group in coverage_groups:
     ] += 1
 
 
+    # --------------------------------------------------------
+    # Store comparison
+    # --------------------------------------------------------
+
     comparison = {
         "release_family":
             release_family,
@@ -602,9 +907,7 @@ for group in coverage_groups:
             heading,
 
         "release_notes_url":
-            group.get(
-                "release_notes_url"
-            ),
+            release_notes_url,
 
         "coverage": {
             "coverage_status":
@@ -743,8 +1046,9 @@ for group in coverage_groups:
 # ------------------------------------------------------------
 
 official_group_count = len(
-    coverage_groups
+    all_group_keys
 )
+
 
 aligned_local_count = (
     relationship_counts.get(
@@ -753,6 +1057,7 @@ aligned_local_count = (
     )
 )
 
+
 aligned_no_local_count = (
     relationship_counts.get(
         "aligned_no_local",
@@ -760,10 +1065,12 @@ aligned_no_local_count = (
     )
 )
 
+
 aligned_count = (
     aligned_local_count
     + aligned_no_local_count
 )
+
 
 dynamic_gap_count = (
     relationship_counts.get(
@@ -772,6 +1079,7 @@ dynamic_gap_count = (
     )
 )
 
+
 deterministic_gap_count = (
     relationship_counts.get(
         "deterministic_gap",
@@ -779,16 +1087,95 @@ deterministic_gap_count = (
     )
 )
 
+
 unresolved_count = (
     relationship_counts.get(
         "unresolved",
+        0,
+    )
+    + relationship_counts.get(
+        "deterministic_reference_incomplete",
+        0,
+    )
+)
+
+
+no_reference_count = (
+    relationship_counts.get(
+        "no_deterministic_reference",
         0,
     )
 )
 
 
 # ------------------------------------------------------------
+# Validation/reference state
+#
+# COMPLETE:
+#   every official group has a complete deterministic reference
+#
+# PARTIAL_REFERENCE:
+#   some groups have reference, some do not
+#
+# NO_REFERENCE:
+#   dynamic analysis exists but no deterministic rules exist yet
+#
+# INCOMPLETE:
+#   deterministic mappings are expected but outputs are missing
+# ------------------------------------------------------------
+
+if (
+    official_group_count
+    and groups_with_reference
+    == official_group_count
+    and groups_with_incomplete_reference
+    == 0
+):
+    validation_reference_status = (
+        "complete"
+    )
+
+elif (
+    official_group_count
+    and groups_with_reference == 0
+    and groups_without_reference
+    == official_group_count
+    and groups_with_incomplete_reference
+    == 0
+):
+    validation_reference_status = (
+        "no_reference"
+    )
+
+elif groups_with_incomplete_reference:
+    validation_reference_status = (
+        "incomplete"
+    )
+
+elif groups_with_reference:
+    validation_reference_status = (
+        "partial_reference"
+    )
+
+elif official_group_count:
+    validation_reference_status = (
+        "no_reference"
+    )
+
+else:
+    validation_reference_status = (
+        "not_applicable"
+    )
+
+
+# ------------------------------------------------------------
 # Collector status
+#
+# Lack of deterministic rules is no longer an execution error.
+#
+# Dynamic correlation is the critical input because this
+# validator's future-release purpose is to validate it when a
+# deterministic reference exists.
 # ------------------------------------------------------------
 
 input_status = {
@@ -815,30 +1202,31 @@ input_status = {
 }
 
 
-if (
-    not coverage
-    or not compatibility
-    or not correlation
-):
+if not correlation:
+
     overall_status = (
         "error"
     )
 
-elif (
-    coverage_collector.get(
-        "overall"
+elif correlation_collector.get(
+    "overall"
+) != "ok":
+
+    overall_status = (
+        "partial"
     )
-    != "ok"
-    or correlation_collector.get(
-        "overall"
-    )
-    != "ok"
-):
+
+elif groups_with_incomplete_reference:
+
     overall_status = (
         "partial"
     )
 
 else:
+
+    # COMPLETE reference, PARTIAL reference and NO reference are
+    # all valid executions. Reference availability is reported
+    # separately from collector health.
     overall_status = (
         "ok"
     )
@@ -864,6 +1252,9 @@ report = {
         "comparison_dimension":
             "local_relevance_alignment",
 
+        "reference_semantics_version":
+            2,
+
         "external_fetch_performed":
             False,
 
@@ -879,13 +1270,18 @@ report = {
         "mutates_source_results":
             False,
 
+        "supports_dynamic_only_release":
+            True,
+
         "note": (
             "This report compares dynamic correlation against "
             "available deterministic rule results at official "
-            "change-group level. It validates local-relevance "
-            "alignment only. It does not treat either path as "
-            "ground truth, does not score accuracy, and does not "
-            "produce a compatibility or update-safety verdict."
+            "change-group level. Deterministic reference "
+            "availability is optional. A future release with no "
+            "deterministic rule pack is a normal dynamic-only "
+            "state, not a scanner failure. The report does not "
+            "treat either path as ground truth, score accuracy, "
+            "or produce a compatibility or update-safety verdict."
         ),
     },
 
@@ -905,15 +1301,13 @@ report = {
             ),
 
         "deterministic_rule_pack":
-            compatibility_scope.get(
-                "rule_pack"
-            ),
+            rule_pack,
 
         "deterministic_rule_count":
-            compatibility_summary.get(
-                "rule_count",
-                0,
-            ),
+            reported_rule_count,
+
+        "deterministic_reference_mode":
+            deterministic_reference_mode,
 
         "dynamic_evidence_model_version":
             correlation_scope.get(
@@ -928,14 +1322,23 @@ report = {
     },
 
     "summary": {
-        "official_groups_compared":
+        "official_groups_observed":
             official_group_count,
+
+        "official_groups_compared":
+            groups_with_reference,
+
+        "validation_reference_status":
+            validation_reference_status,
 
         "groups_with_deterministic_reference":
             groups_with_reference,
 
-        "groups_without_complete_deterministic_reference":
+        "groups_without_deterministic_reference":
             groups_without_reference,
+
+        "groups_with_incomplete_deterministic_reference":
+            groups_with_incomplete_reference,
 
         "aligned_count":
             aligned_count,
@@ -951,6 +1354,9 @@ report = {
 
         "deterministic_gap_count":
             deterministic_gap_count,
+
+        "no_reference_count":
+            no_reference_count,
 
         "unresolved_count":
             unresolved_count,
@@ -995,6 +1401,12 @@ report = {
         ),
 
         (
+            "A dynamic-only future release with no deterministic "
+            "rule pack is reported as NO_REFERENCE rather than "
+            "an error or failed validation."
+        ),
+
+        (
             "Dynamic strong evidence can still be broader than "
             "a deterministic affected-usage test. A scoped "
             "literal source-code term match is not necessarily "
@@ -1009,9 +1421,10 @@ report = {
         ),
 
         (
-            "Release families without deterministic rule "
-            "coverage are expected to have unavailable reference "
-            "comparisons rather than being treated as failures."
+            "If a deterministic mapping exists but its expected "
+            "rule result is missing, that is an incomplete "
+            "reference and remains distinct from the normal "
+            "no-reference state."
         ),
     ],
 
@@ -1029,6 +1442,9 @@ report = {
                 "overall",
                 "unknown",
             ),
+
+        "deterministic_reference_availability":
+            validation_reference_status,
 
         "overall":
             overall_status,
@@ -1064,55 +1480,86 @@ print(
 )
 
 print(
-    f"Official groups compared:      "
+    f"Official groups observed:      "
     f"{official_group_count}"
 )
 
 print(
-    f"Deterministic references:      "
+    f"Groups with reference:         "
     f"{groups_with_reference}"
 )
 
 print(
-    f"Aligned:                       "
-    f"{aligned_count}"
+    f"Groups without reference:      "
+    f"{groups_without_reference}"
 )
 
 print(
-    f"  Aligned local:               "
-    f"{aligned_local_count}"
+    f"Incomplete references:         "
+    f"{groups_with_incomplete_reference}"
 )
 
 print(
-    f"  Aligned no local:            "
-    f"{aligned_no_local_count}"
-)
-
-print(
-    f"Dynamic gaps:                  "
-    f"{dynamic_gap_count}"
-)
-
-print(
-    f"Deterministic gaps:            "
-    f"{deterministic_gap_count}"
-)
-
-print(
-    f"Unresolved:                    "
-    f"{unresolved_count}"
-)
-
-print(
-    f"Precision reviews:             "
-    f"{len(precision_reviews)}"
+    f"Reference status:              "
+    f"{validation_reference_status.upper()}"
 )
 
 print("")
 
+if groups_with_reference:
+
+    print(
+        f"Aligned:                       "
+        f"{aligned_count}"
+    )
+
+    print(
+        f"  Aligned local:               "
+        f"{aligned_local_count}"
+    )
+
+    print(
+        f"  Aligned no local:            "
+        f"{aligned_no_local_count}"
+    )
+
+    print(
+        f"Dynamic gaps:                  "
+        f"{dynamic_gap_count}"
+    )
+
+    print(
+        f"Deterministic gaps:            "
+        f"{deterministic_gap_count}"
+    )
+
+    print(
+        f"Unresolved:                    "
+        f"{unresolved_count}"
+    )
+
+    print(
+        f"Precision reviews:             "
+        f"{len(precision_reviews)}"
+    )
+
+else:
+
+    print(
+        "Comparison result:            "
+        "NO DETERMINISTIC REFERENCE"
+    )
+
+print("")
+
 print(
-    "Important: alignment is reference validation, "
-    "not an accuracy score or compatibility verdict."
+    "Important: deterministic reference availability "
+    "is separate from collector health."
+)
+
+print(
+    "A dynamic-only release is valid and does not "
+    "produce an accuracy or compatibility verdict."
 )
 
 print("")
