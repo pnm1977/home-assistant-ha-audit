@@ -20,6 +20,7 @@ UPDATE_READINESS_FILE = "/config/update_readiness_audit.json"
 UPGRADE_IMPACT_FILE = "/config/upgrade_impact_audit.json"
 UPGRADE_COMPATIBILITY_FILE = "/config/upgrade_compatibility_audit.json"
 RELEASE_EVIDENCE_FILE = "/config/release_evidence_audit.json"
+COMPATIBILITY_COVERAGE_FILE = "/config/compatibility_coverage_audit.json"
 
 OUTPUT_FILE = "/config/ha_audit_latest.txt"
 
@@ -226,6 +227,27 @@ def format_rule_pack(rule_pack):
     return value
 
 
+def pluralise(count, singular, plural=None):
+    try:
+        value = int(
+            count
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        value = count
+
+    if plural is None:
+        plural = singular + "s"
+
+    return (
+        singular
+        if value == 1
+        else plural
+    )
+
+
 # ------------------------------------------------------------
 # Load reports
 # ------------------------------------------------------------
@@ -272,6 +294,10 @@ upgrade_compatibility = load_json_optional(
 
 release_evidence = load_json_optional(
     RELEASE_EVIDENCE_FILE
+)
+
+compatibility_coverage = load_json_optional(
+    COMPATIBILITY_COVERAGE_FILE
 )
 
 
@@ -1122,6 +1148,151 @@ else:
 
 
 # ------------------------------------------------------------
+# Compatibility coverage mapping data
+# ------------------------------------------------------------
+
+coverage_report_available = bool(
+    compatibility_coverage
+)
+
+coverage_scope = compatibility_coverage.get(
+    "scope",
+    {},
+)
+
+coverage_inputs = compatibility_coverage.get(
+    "inputs",
+    {},
+)
+
+coverage_summary = compatibility_coverage.get(
+    "summary",
+    {},
+)
+
+coverage_release_rows = compatibility_coverage.get(
+    "release_coverage",
+    [],
+)
+
+coverage_collector_status = compatibility_coverage.get(
+    "collector_status",
+    {},
+)
+
+for name, value in (
+    ("coverage_scope", coverage_scope),
+    ("coverage_inputs", coverage_inputs),
+    ("coverage_summary", coverage_summary),
+    ("coverage_collector_status", coverage_collector_status),
+):
+    if not isinstance(
+        value,
+        dict,
+    ):
+        if name == "coverage_scope":
+            coverage_scope = {}
+        elif name == "coverage_inputs":
+            coverage_inputs = {}
+        elif name == "coverage_summary":
+            coverage_summary = {}
+        elif name == "coverage_collector_status":
+            coverage_collector_status = {}
+
+if not isinstance(
+    coverage_release_rows,
+    list,
+):
+    coverage_release_rows = []
+
+coverage_status = str(
+    coverage_summary.get(
+        "coverage_status",
+        "unknown",
+    )
+)
+
+coverage_official_group_count = coverage_summary.get(
+    "official_crossed_group_count",
+    0,
+)
+
+coverage_covered_group_count = coverage_summary.get(
+    "covered_group_count",
+    0,
+)
+
+coverage_partial_group_count = coverage_summary.get(
+    "partial_group_count",
+    0,
+)
+
+coverage_unmapped_group_count = coverage_summary.get(
+    "unmapped_group_count",
+    0,
+)
+
+coverage_mapped_rule_count = coverage_summary.get(
+    "mapped_rule_count",
+    0,
+)
+
+coverage_present_linked_rule_count = coverage_summary.get(
+    "present_linked_rule_count",
+    0,
+)
+
+coverage_missing_mapped_rule_count = coverage_summary.get(
+    "missing_mapped_rule_count",
+    0,
+)
+
+coverage_unlinked_rule_count = coverage_summary.get(
+    "unlinked_compatibility_rule_count",
+    0,
+)
+
+coverage_reported_rule_count = coverage_inputs.get(
+    "compatibility_rule_count_reported",
+    0,
+)
+
+coverage_overall_collector_status = str(
+    coverage_collector_status.get(
+        "overall",
+        "unknown",
+    )
+)
+
+if not coverage_report_available:
+    coverage_status_label = "UNAVAILABLE"
+
+elif coverage_status == "complete":
+    coverage_status_label = "COMPLETE"
+
+elif coverage_status == "partial":
+    coverage_status_label = "PARTIAL"
+
+elif coverage_status == "none":
+    coverage_status_label = "NONE"
+
+elif coverage_status == "not_applicable":
+    coverage_status_label = "NOT APPLICABLE"
+
+elif coverage_overall_collector_status == "error":
+    coverage_status_label = "ERROR"
+
+else:
+    coverage_status_label = "UNKNOWN"
+
+coverage_complete = bool(
+    coverage_report_available
+    and coverage_status == "complete"
+    and coverage_overall_collector_status == "ok"
+)
+
+
+# ------------------------------------------------------------
 # General values
 # ------------------------------------------------------------
 
@@ -1554,9 +1725,19 @@ if update_readiness_available:
                 else "NOT YET ASSESSED"
             )
         )
+
+        add(
+            "Compatibility coverage:      "
+            f"{coverage_status_label}"
+        )
     else:
         add(
             "Compatibility rule pack:     "
+            "NOT APPLICABLE"
+        )
+
+        add(
+            "Compatibility coverage:      "
             "NOT APPLICABLE"
         )
 
@@ -1578,8 +1759,8 @@ if update_readiness_available:
 
     add(
         "Update and Repair evidence is local. "
-        "Official release evidence and compatibility "
-        "results are shown separately below."
+        "Official release evidence, compatibility coverage, "
+        "and compatibility results are shown separately below."
     )
 
 else:
@@ -1735,6 +1916,131 @@ if release_evidence_available:
 else:
     add(
         "Official release evidence report unavailable."
+    )
+
+
+# ------------------------------------------------------------
+# Compatibility coverage
+# ------------------------------------------------------------
+
+add("")
+add("COMPATIBILITY COVERAGE")
+add("-" * 58)
+
+if coverage_report_available:
+
+    add(
+        f"Official crossed groups:      "
+        f"{coverage_official_group_count}"
+    )
+
+    add(
+        f"Groups with rule coverage:    "
+        f"{coverage_covered_group_count}"
+    )
+
+    add(
+        f"Partially covered groups:     "
+        f"{coverage_partial_group_count}"
+    )
+
+    add(
+        f"Unmapped groups:              "
+        f"{coverage_unmapped_group_count}"
+    )
+
+    add("")
+
+    add(
+        f"Deterministic rules:          "
+        f"{coverage_reported_rule_count}"
+    )
+
+    add(
+        f"Mapped rules:                 "
+        f"{coverage_mapped_rule_count}"
+    )
+
+    add(
+        f"Linked rules present:         "
+        f"{coverage_present_linked_rule_count}"
+    )
+
+    add(
+        f"Missing mapped rules:         "
+        f"{coverage_missing_mapped_rule_count}"
+    )
+
+    add(
+        f"Unlinked rules:               "
+        f"{coverage_unlinked_rule_count}"
+    )
+
+    if coverage_release_rows:
+        add("")
+        add("Release coverage:")
+
+        for item in coverage_release_rows:
+            if not isinstance(
+                item,
+                dict,
+            ):
+                continue
+
+            release_family = item.get(
+                "release_family",
+                "unknown",
+            )
+
+            covered = item.get(
+                "covered_group_count",
+                0,
+            )
+
+            total = item.get(
+                "official_group_count",
+                0,
+            )
+
+            item_status = str(
+                item.get(
+                    "coverage_status",
+                    "unknown",
+                )
+            ).upper()
+
+            add(
+                f"  {release_family}: "
+                f"{covered} / {total} "
+                f"({item_status})"
+            )
+
+    add("")
+
+    add(
+        f"Coverage status:              "
+        f"{coverage_status_label}"
+    )
+
+    add(
+        "Readiness verdict:            NOT PRODUCED"
+    )
+
+    add("")
+
+    add(
+        "Coverage shows whether official backward-incompatible "
+        "change groups have deterministic HA Audit rules."
+    )
+
+    add(
+        "It does not mean every configuration path was inspected "
+        "or that the installation is safe to update."
+    )
+
+else:
+    add(
+        "Compatibility coverage report unavailable."
     )
 
 
@@ -2444,6 +2750,28 @@ if update_readiness_available:
                 "treating upgrade evidence as complete."
             )
 
+        if coverage_status_label != "COMPLETE":
+
+            actions += 1
+
+            add(
+                f"[!] Compatibility coverage is "
+                f"{coverage_status_label.lower()}."
+            )
+
+            add(
+                f"    Covered official groups: "
+                f"{coverage_covered_group_count}/"
+                f"{coverage_official_group_count}; "
+                f"partial: {coverage_partial_group_count}; "
+                f"unmapped: {coverage_unmapped_group_count}."
+            )
+
+            add(
+                "    Review compatibility_coverage_audit.json "
+                "before treating the upgrade window as fully covered."
+            )
+
         if compatibility_assessed:
 
             actions += 1
@@ -2483,10 +2811,23 @@ if update_readiness_available:
                 )
 
                 if release_collection_complete:
+                    family_word = pluralise(
+                        release_family_count,
+                        "release family",
+                        "release families",
+                    )
+
                     add(
                         f"    Official release evidence was collected "
-                        f"for {release_family_count} release "
-                        "family/families."
+                        f"for {release_family_count} {family_word}."
+                    )
+
+                if coverage_complete:
+                    add(
+                        f"    Compatibility coverage links "
+                        f"{coverage_covered_group_count}/"
+                        f"{coverage_official_group_count} official "
+                        "crossed change groups to deterministic rules."
                     )
 
                 add(
@@ -2494,12 +2835,11 @@ if update_readiness_available:
                     "review was detected by this rule pack."
                 )
 
-                if release_family_count > 1:
+                if not coverage_complete:
                     add(
-                        f"    Official evidence spans "
-                        f"{release_family_count} release families; "
-                        "local compatibility matching does not yet "
-                        "cover every fetched family."
+                        "    Compatibility coverage is incomplete; "
+                        "some official changes may not have "
+                        "deterministic rule coverage."
                     )
 
                 add(
@@ -2850,9 +3190,8 @@ if actions == 0:
 
     add(
         "No immediate configuration, availability, "
-        "update-readiness, release-evidence, or "
-        "compatibility-review actions were identified "
-        "by this audit."
+        "update-readiness, release-evidence, compatibility-coverage, "
+        "or compatibility-review actions were identified by this audit."
     )
 
 
@@ -2923,6 +3262,7 @@ for report_file in (
     "upgrade_impact_audit.json",
     "upgrade_compatibility_audit.json",
     "release_evidence_audit.json",
+    "compatibility_coverage_audit.json",
     "ha_audit_latest.txt",
 ):
 
