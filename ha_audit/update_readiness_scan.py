@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -78,6 +79,285 @@ def safe_collect(function):
             "status": "error",
             "error": str(error),
         }
+
+
+def normalise_version(version):
+    if version is None:
+        return None
+
+    text = str(version).strip()
+
+    if not text:
+        return None
+
+    match = re.match(
+        r"^[vV]?(\d+(?:\.\d+)*)",
+        text,
+    )
+
+    if not match:
+        return None
+
+    try:
+        return tuple(
+            int(part)
+            for part
+            in match.group(1).split(".")
+        )
+    except Exception:
+        return None
+
+
+def compare_versions(
+    left,
+    right,
+):
+    left_parts = normalise_version(
+        left
+    )
+
+    right_parts = normalise_version(
+        right
+    )
+
+    if (
+        left_parts is None
+        or right_parts is None
+    ):
+        return None
+
+    width = max(
+        len(left_parts),
+        len(right_parts),
+    )
+
+    left_parts = left_parts + (
+        0,
+    ) * (
+        width - len(left_parts)
+    )
+
+    right_parts = right_parts + (
+        0,
+    ) * (
+        width - len(right_parts)
+    )
+
+    if left_parts < right_parts:
+        return -1
+
+    if left_parts > right_parts:
+        return 1
+
+    return 0
+
+
+# ------------------------------------------------------------
+# Update classification
+# ------------------------------------------------------------
+
+def classify_update_entity(
+    entity_id,
+    platform,
+    device_class,
+    title,
+    device,
+    model,
+):
+    entity_id = str(
+        entity_id
+        or ""
+    ).lower()
+
+    platform = str(
+        platform
+        or ""
+    ).lower()
+
+    device_class = str(
+        device_class
+        or ""
+    ).lower()
+
+    title_text = str(
+        title
+        or ""
+    ).lower()
+
+    device_text = str(
+        device
+        or ""
+    ).lower()
+
+    model_text = str(
+        model
+        or ""
+    ).lower()
+
+    if (
+        entity_id
+        == "update.home_assistant_core_update"
+    ):
+        return "core"
+
+    if (
+        entity_id
+        == "update.home_assistant_operating_system_update"
+    ):
+        return "os"
+
+    if (
+        entity_id
+        == "update.home_assistant_supervisor_update"
+    ):
+        return "supervisor"
+
+    if device_class == "firmware":
+        return "firmware"
+
+    if platform == "hacs":
+        return "hacs"
+
+    if platform == "hassio":
+        combined = " ".join(
+            [
+                title_text,
+                device_text,
+                model_text,
+            ]
+        )
+
+        if (
+            "home assistant core"
+            in combined
+        ):
+            return "core"
+
+        if (
+            "operating system"
+            in combined
+        ):
+            return "os"
+
+        if (
+            "supervisor"
+            in combined
+        ):
+            return "supervisor"
+
+        return "app"
+
+    return "other"
+
+
+# ------------------------------------------------------------
+# Repair relevance
+# ------------------------------------------------------------
+
+def classify_repair_relevance(
+    breaks_in_version,
+    installed_core_version,
+    target_core_version,
+):
+    if not breaks_in_version:
+        return {
+            "classification":
+                "no_break_version",
+            "reason": (
+                "Repair does not provide "
+                "breaks_in_ha_version."
+            ),
+        }
+
+    if not installed_core_version:
+        return {
+            "classification":
+                "core_version_unavailable",
+            "reason": (
+                "Installed Home Assistant Core "
+                "version is unavailable."
+            ),
+        }
+
+    break_vs_installed = (
+        compare_versions(
+            breaks_in_version,
+            installed_core_version,
+        )
+    )
+
+    if break_vs_installed is None:
+        return {
+            "classification":
+                "unclassified_break_version",
+            "reason": (
+                "breaks_in_ha_version could not "
+                "be compared with the installed "
+                "Core version."
+            ),
+        }
+
+    if break_vs_installed <= 0:
+        return {
+            "classification":
+                "already_crossed",
+            "reason": (
+                "The reported breaking version "
+                "is at or below the currently "
+                "installed Core version."
+            ),
+        }
+
+    if not target_core_version:
+        return {
+            "classification":
+                "future_break_no_pending_core_target",
+            "reason": (
+                "The Repair refers to a future "
+                "Core version, but there is no "
+                "pending Core target available "
+                "for comparison."
+            ),
+        }
+
+    break_vs_target = (
+        compare_versions(
+            breaks_in_version,
+            target_core_version,
+        )
+    )
+
+    if break_vs_target is None:
+        return {
+            "classification":
+                "unclassified_target_version",
+            "reason": (
+                "breaks_in_ha_version could not "
+                "be compared with the pending "
+                "Core target version."
+            ),
+        }
+
+    if break_vs_target <= 0:
+        return {
+            "classification":
+                "relevant_to_pending_upgrade",
+            "reason": (
+                "The breaking version is newer "
+                "than the installed Core version "
+                "and at or below the pending "
+                "Core target."
+            ),
+        }
+
+    return {
+        "classification":
+            "beyond_pending_target",
+        "reason": (
+            "The breaking version is newer "
+            "than the pending Core target."
+        ),
+    }
 
 
 # ------------------------------------------------------------
@@ -446,8 +726,24 @@ for state_entry in states:
         )
     )
 
+    category = classify_update_entity(
+        entity_id=entity_id,
+        platform=platform,
+        device_class=attributes.get(
+            "device_class"
+        ),
+        title=attributes.get(
+            "title"
+        ),
+        device=device_name,
+        model=device.get(
+            "model"
+        ),
+    )
+
     item = {
         "entity_id": entity_id,
+        "category": category,
         "state": state,
         "update_available": (
             state == "on"
@@ -548,6 +844,12 @@ def update_sort_key(item):
     return (
         str(
             item.get(
+                "category"
+            )
+            or ""
+        ).lower(),
+        str(
+            item.get(
                 "platform"
             )
             or ""
@@ -593,6 +895,14 @@ updates_by_platform = Counter(
     for item in available_updates
 )
 
+updates_by_category = Counter(
+    str(
+        item.get("category")
+        or "other"
+    )
+    for item in available_updates
+)
+
 updates_by_device_class = Counter(
     str(
         item.get("device_class")
@@ -600,6 +910,41 @@ updates_by_device_class = Counter(
     )
     for item in available_updates
 )
+
+
+# ------------------------------------------------------------
+# Pending Core upgrade window
+# ------------------------------------------------------------
+
+pending_core_updates = [
+    item
+    for item in available_updates
+    if item.get(
+        "category"
+    ) == "core"
+]
+
+pending_core_update = (
+    pending_core_updates[0]
+    if pending_core_updates
+    else None
+)
+
+installed_core_version = None
+target_core_version = None
+
+if pending_core_update:
+    installed_core_version = (
+        pending_core_update.get(
+            "installed_version"
+        )
+    )
+
+    target_core_version = (
+        pending_core_update.get(
+            "latest_version"
+        )
+    )
 
 
 # ------------------------------------------------------------
@@ -638,61 +983,82 @@ for issue in repairs:
     ):
         continue
 
+    breaks_in_version = issue.get(
+        "breaks_in_ha_version"
+    )
+
+    relevance = classify_repair_relevance(
+        breaks_in_version=
+            breaks_in_version,
+        installed_core_version=
+            installed_core_version,
+        target_core_version=
+            target_core_version,
+    )
+
+    item = {
+        "domain":
+            issue.get(
+                "domain"
+            ),
+        "issue_domain":
+            issue.get(
+                "issue_domain"
+            ),
+        "issue_id":
+            issue.get(
+                "issue_id"
+            ),
+        "severity":
+            issue.get(
+                "severity"
+            ),
+        "breaks_in_ha_version":
+            breaks_in_version,
+        "is_fixable":
+            bool(
+                issue.get(
+                    "is_fixable"
+                )
+            ),
+        "ignored":
+            bool(
+                issue.get(
+                    "ignored"
+                )
+            ),
+        "dismissed_version":
+            issue.get(
+                "dismissed_version"
+            ),
+        "created":
+            issue.get(
+                "created"
+            ),
+        "learn_more_url":
+            issue.get(
+                "learn_more_url"
+            ),
+        "translation_key":
+            issue.get(
+                "translation_key"
+            ),
+        "translation_placeholders":
+            issue.get(
+                "translation_placeholders"
+            ),
+        "upgrade_relevance":
+            relevance.get(
+                "classification"
+            ),
+        "upgrade_relevance_reason":
+            relevance.get(
+                "reason"
+            ),
+    }
+
     normalised_repairs.append(
-        {
-            "domain":
-                issue.get(
-                    "domain"
-                ),
-            "issue_domain":
-                issue.get(
-                    "issue_domain"
-                ),
-            "issue_id":
-                issue.get(
-                    "issue_id"
-                ),
-            "severity":
-                issue.get(
-                    "severity"
-                ),
-            "breaks_in_ha_version":
-                issue.get(
-                    "breaks_in_ha_version"
-                ),
-            "is_fixable":
-                bool(
-                    issue.get(
-                        "is_fixable"
-                    )
-                ),
-            "ignored":
-                bool(
-                    issue.get(
-                        "ignored"
-                    )
-                ),
-            "dismissed_version":
-                issue.get(
-                    "dismissed_version"
-                ),
-            "created":
-                issue.get(
-                    "created"
-                ),
-            "learn_more_url":
-                issue.get(
-                    "learn_more_url"
-                ),
-            "translation_key":
-                issue.get(
-                    "translation_key"
-                ),
-            "translation_placeholders":
-                issue.get(
-                    "translation_placeholders"
-                ),
-        }
+        item
     )
 
 
@@ -723,6 +1089,12 @@ def repair_sort_key(item):
         ),
         str(
             item.get(
+                "upgrade_relevance"
+            )
+            or ""
+        ),
+        str(
+            item.get(
                 "domain"
             )
             or ""
@@ -748,6 +1120,16 @@ repairs_by_severity = Counter(
         )
         or "unknown"
     ).lower()
+    for item in normalised_repairs
+)
+
+repairs_by_relevance = Counter(
+    str(
+        item.get(
+            "upgrade_relevance"
+        )
+        or "unknown"
+    )
     for item in normalised_repairs
 )
 
@@ -781,6 +1163,51 @@ fixable_repairs = [
     if item.get(
         "is_fixable"
     )
+]
+
+relevant_to_pending_upgrade = [
+    item
+    for item in normalised_repairs
+    if item.get(
+        "upgrade_relevance"
+    )
+    == "relevant_to_pending_upgrade"
+]
+
+relevant_unignored_repairs = [
+    item
+    for item
+    in relevant_to_pending_upgrade
+    if not item.get(
+        "ignored"
+    )
+]
+
+relevant_ignored_repairs = [
+    item
+    for item
+    in relevant_to_pending_upgrade
+    if item.get(
+        "ignored"
+    )
+]
+
+already_crossed_repairs = [
+    item
+    for item in normalised_repairs
+    if item.get(
+        "upgrade_relevance"
+    )
+    == "already_crossed"
+]
+
+beyond_pending_target_repairs = [
+    item
+    for item in normalised_repairs
+    if item.get(
+        "upgrade_relevance"
+    )
+    == "beyond_pending_target"
 ]
 
 
@@ -986,6 +1413,28 @@ report = {
             ),
     },
 
+    "core_upgrade_window": {
+        "pending":
+            bool(
+                pending_core_update
+            ),
+
+        "installed_version":
+            installed_core_version,
+
+        "target_version":
+            target_core_version,
+
+        "entity_id":
+            (
+                pending_core_update.get(
+                    "entity_id"
+                )
+                if pending_core_update
+                else None
+            ),
+    },
+
     "updates": {
         "entity_count":
             len(
@@ -1005,6 +1454,13 @@ report = {
         "in_progress_count":
             len(
                 updates_in_progress
+            ),
+
+        "available_by_category":
+            dict(
+                sorted(
+                    updates_by_category.items()
+                )
             ),
 
         "available_by_platform":
@@ -1035,7 +1491,7 @@ report = {
     },
 
     "repairs": {
-        "active_count":
+        "issue_count":
             len(
                 normalised_repairs
             ),
@@ -1060,6 +1516,31 @@ report = {
                 fixable_repairs
             ),
 
+        "relevant_to_pending_upgrade_count":
+            len(
+                relevant_to_pending_upgrade
+            ),
+
+        "relevant_unignored_count":
+            len(
+                relevant_unignored_repairs
+            ),
+
+        "relevant_ignored_count":
+            len(
+                relevant_ignored_repairs
+            ),
+
+        "already_crossed_count":
+            len(
+                already_crossed_repairs
+            ),
+
+        "beyond_pending_target_count":
+            len(
+                beyond_pending_target_repairs
+            ),
+
         "by_severity":
             dict(
                 sorted(
@@ -1067,7 +1548,14 @@ report = {
                 )
             ),
 
-        "active":
+        "by_upgrade_relevance":
+            dict(
+                sorted(
+                    repairs_by_relevance.items()
+                )
+            ),
+
+        "issues":
             normalised_repairs,
 
         "unignored":
@@ -1078,6 +1566,21 @@ report = {
 
         "with_breaks_in_ha_version":
             breaking_repairs,
+
+        "relevant_to_pending_upgrade":
+            relevant_to_pending_upgrade,
+
+        "relevant_unignored":
+            relevant_unignored_repairs,
+
+        "relevant_ignored":
+            relevant_ignored_repairs,
+
+        "already_crossed":
+            already_crossed_repairs,
+
+        "beyond_pending_target":
+            beyond_pending_target_repairs,
 
         "fixable":
             fixable_repairs,
@@ -1182,8 +1685,61 @@ print(
     f"{len(updates_in_progress)}"
 )
 
+print("")
 print(
-    f"Active Repairs:               "
+    "Pending update categories:"
+)
+print(
+    "------------------------------------------"
+)
+
+if updates_by_category:
+    for category, count in sorted(
+        updates_by_category.items()
+    ):
+        print(
+            f"{category}: {count}"
+        )
+else:
+    print(
+        "None"
+    )
+
+
+print("")
+print(
+    "Core upgrade window:"
+)
+print(
+    "------------------------------------------"
+)
+
+if pending_core_update:
+    print(
+        f"Installed: "
+        f"{installed_core_version}"
+    )
+
+    print(
+        f"Target:    "
+        f"{target_core_version}"
+    )
+else:
+    print(
+        "No pending Core update"
+    )
+
+
+print("")
+print(
+    "Repairs:"
+)
+print(
+    "------------------------------------------"
+)
+
+print(
+    f"Repair issues:                "
     f"{len(normalised_repairs)}"
 )
 
@@ -1193,8 +1749,33 @@ print(
 )
 
 print(
-    f"Repairs with breaking version:"
-    f" {len(breaking_repairs)}"
+    f"Ignored Repairs:              "
+    f"{len(ignored_repairs)}"
+)
+
+print(
+    f"Relevant to pending Core:     "
+    f"{len(relevant_to_pending_upgrade)}"
+)
+
+print(
+    f"Relevant + unignored:         "
+    f"{len(relevant_unignored_repairs)}"
+)
+
+print(
+    f"Relevant + ignored:           "
+    f"{len(relevant_ignored_repairs)}"
+)
+
+print(
+    f"Already-crossed Repairs:      "
+    f"{len(already_crossed_repairs)}"
+)
+
+print(
+    f"Beyond pending target:        "
+    f"{len(beyond_pending_target_repairs)}"
 )
 
 print(
@@ -1211,6 +1792,7 @@ print(
     f"Existing collector errors:    "
     f"{len(existing_collector_errors)}"
 )
+
 
 print("")
 print(
@@ -1242,6 +1824,13 @@ if available_updates:
             or "unknown"
         )
 
+        category = (
+            item.get(
+                "category"
+            )
+            or "other"
+        )
+
         platform = (
             item.get(
                 "platform"
@@ -1252,7 +1841,7 @@ if available_updates:
         print(
             f"{name}: "
             f"{installed} -> {latest} "
-            f"[{platform}]"
+            f"[{category}/{platform}]"
         )
 else:
     print(
@@ -1262,14 +1851,14 @@ else:
 
 print("")
 print(
-    "Active unignored Repairs:"
+    "Repair issues:"
 )
 print(
     "------------------------------------------"
 )
 
-if unignored_repairs:
-    for issue in unignored_repairs:
+if normalised_repairs:
+    for issue in normalised_repairs:
         severity = (
             issue.get(
                 "severity"
@@ -1291,13 +1880,30 @@ if unignored_repairs:
             or "unknown"
         )
 
-        breaks = issue.get(
-            "breaks_in_ha_version"
+        ignored = (
+            "ignored"
+            if issue.get(
+                "ignored"
+            )
+            else "unignored"
+        )
+
+        relevance = (
+            issue.get(
+                "upgrade_relevance"
+            )
+            or "unknown"
         )
 
         line = (
             f"[{severity}] "
-            f"{domain}.{issue_id}"
+            f"{domain}.{issue_id} "
+            f"[{ignored}] "
+            f"[{relevance}]"
+        )
+
+        breaks = issue.get(
+            "breaks_in_ha_version"
         )
 
         if breaks:
