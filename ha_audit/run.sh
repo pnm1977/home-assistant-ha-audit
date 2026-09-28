@@ -30,53 +30,19 @@ run_quiet_python() {
     return 1
 }
 
-run_quiet_python \
-    "audit.py" \
-    "Core HA audit"
-
-run_quiet_python \
-    "config_scan.py" \
-    "Configuration inventory"
-
-run_quiet_python \
-    "quality_scan.py" \
-    "Configuration quality audit"
-
-run_quiet_python \
-    "not_provided_reference_scan.py" \
-    "Not-provided entity reference audit"
-
-run_quiet_python \
-    "recorder_health_scan.py" \
-    "Recorder history availability audit"
-
-run_quiet_python \
-    "not_provided_history_scan.py" \
-    "Not-provided entity history audit"
-
-run_quiet_python \
-    "availability_scan.py" \
-    "Unavailable entity availability audit"
-
-run_quiet_python \
-    "unavailable_history_scan.py" \
-    "Unavailable entity history audit"
-
-run_quiet_python \
-    "update_readiness_scan.py" \
-    "Update readiness foundation audit"
-
-run_quiet_python \
-    "upgrade_impact_scan.py" \
-    "Upgrade impact inventory audit"
-
-run_quiet_python \
-    "upgrade_compatibility_scan.py" \
-    "Upgrade compatibility audit"
-
-run_quiet_python \
-    "release_evidence_scan.py" \
-    "Official release evidence audit"
+run_quiet_python "audit.py" "Core HA audit"
+run_quiet_python "config_scan.py" "Configuration inventory"
+run_quiet_python "quality_scan.py" "Configuration quality audit"
+run_quiet_python "not_provided_reference_scan.py" "Not-provided entity reference audit"
+run_quiet_python "recorder_health_scan.py" "Recorder history availability audit"
+run_quiet_python "not_provided_history_scan.py" "Not-provided entity history audit"
+run_quiet_python "availability_scan.py" "Unavailable entity availability audit"
+run_quiet_python "unavailable_history_scan.py" "Unavailable entity history audit"
+run_quiet_python "update_readiness_scan.py" "Update readiness foundation audit"
+run_quiet_python "upgrade_impact_scan.py" "Upgrade impact inventory audit"
+run_quiet_python "upgrade_compatibility_scan.py" "Upgrade compatibility audit"
+run_quiet_python "release_evidence_scan.py" "Official release evidence audit"
+run_quiet_python "compatibility_coverage_scan.py" "Compatibility coverage mapping audit"
 
 if ! python3 /summary_report.py; then
     bashio::log.error "Latest-run summary generation failed"
