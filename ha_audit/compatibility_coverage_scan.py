@@ -35,6 +35,10 @@ OUTPUT_FILE = (
 #
 # One official group can map to multiple deterministic rules
 # when the release note contains separately testable changes.
+#
+# A release family being absent from this registry is now a
+# supported state. It means HA Audit has no deterministic
+# reference for that family yet; it is NOT a collector failure.
 # ------------------------------------------------------------
 
 RULE_GROUP_REGISTRY = {
@@ -482,6 +486,23 @@ except (
 
 # ------------------------------------------------------------
 # Group-to-rule coverage
+#
+# Four deterministic-reference states are distinguished:
+#
+# covered
+#   Registry mapping exists and all mapped rule results exist.
+#
+# partial
+#   Registry mapping exists but one or more expected rule
+#   results are missing.
+#
+# unmapped
+#   The release family has a registry, but this official group
+#   has no registry entry. This is an incomplete reference.
+#
+# no_reference
+#   The release family itself has no deterministic registry yet.
+#   This is normal for a new dynamically supported release.
 # ------------------------------------------------------------
 
 group_results = []
@@ -499,6 +520,8 @@ partial_group_count = 0
 
 unmapped_group_count = 0
 
+no_reference_group_count = 0
+
 
 for group in crossed_groups:
 
@@ -512,6 +535,12 @@ for group in crossed_groups:
         group.get(
             "heading"
         )
+    )
+
+
+    family_registry_available = (
+        release_family
+        in REGISTRY_INDEX
     )
 
 
@@ -584,10 +613,27 @@ for group in crossed_groups:
     )
 
 
-    if not expected_rule_ids:
+    if not family_registry_available:
+
+        coverage_status = (
+            "no_reference"
+        )
+
+        reference_status = (
+            "not_available"
+        )
+
+        no_reference_group_count += 1
+
+
+    elif not expected_rule_ids:
 
         coverage_status = (
             "unmapped"
+        )
+
+        reference_status = (
+            "incomplete"
         )
 
         unmapped_group_count += 1
@@ -599,6 +645,10 @@ for group in crossed_groups:
             "partial"
         )
 
+        reference_status = (
+            "incomplete"
+        )
+
         partial_group_count += 1
 
 
@@ -606,6 +656,10 @@ for group in crossed_groups:
 
         coverage_status = (
             "covered"
+        )
+
+        reference_status = (
+            "available"
         )
 
         covered_group_count += 1
@@ -626,6 +680,12 @@ for group in crossed_groups:
                 group.get(
                     "release_notes_url"
                 ),
+
+            "registry_available":
+                family_registry_available,
+
+            "reference_status":
+                reference_status,
 
             "coverage_status":
                 coverage_status,
@@ -672,6 +732,27 @@ unlinked_compatibility_rule_ids = [
 
 
 # ------------------------------------------------------------
+# Derived reference counts
+# ------------------------------------------------------------
+
+crossed_group_count = len(
+    crossed_groups
+)
+
+
+registry_group_count = (
+    crossed_group_count
+    - no_reference_group_count
+)
+
+
+incomplete_reference_group_count = (
+    partial_group_count
+    + unmapped_group_count
+)
+
+
+# ------------------------------------------------------------
 # Per-release coverage
 # ------------------------------------------------------------
 
@@ -689,6 +770,12 @@ for release_family in crossed_release_families:
         )
         == release_family
     ]
+
+
+    family_registry_available = (
+        release_family
+        in RULE_GROUP_REGISTRY
+    )
 
 
     family_covered = sum(
@@ -724,10 +811,36 @@ for release_family in crossed_release_families:
     )
 
 
+    family_no_reference = sum(
+        1
+        for item
+        in family_groups
+        if item.get(
+            "coverage_status"
+        )
+        == "no_reference"
+    )
+
+
     if not family_groups:
 
         family_status = (
             "no_official_groups"
+        )
+
+        family_reference_status = (
+            "not_applicable"
+        )
+
+
+    elif not family_registry_available:
+
+        family_status = (
+            "no_reference"
+        )
+
+        family_reference_status = (
+            "not_available"
         )
 
 
@@ -742,21 +855,19 @@ for release_family in crossed_release_families:
             "covered"
         )
 
-
-    elif (
-        family_covered
-        or family_partial
-    ):
-
-        family_status = (
-            "partial"
+        family_reference_status = (
+            "complete"
         )
 
 
     else:
 
         family_status = (
-            "uncovered"
+            "incomplete"
+        )
+
+        family_reference_status = (
+            "incomplete"
         )
 
 
@@ -779,12 +890,17 @@ for release_family in crossed_release_families:
             "unmapped_group_count":
                 family_unmapped,
 
+            "no_reference_group_count":
+                family_no_reference,
+
             "coverage_status":
                 family_status,
 
+            "reference_status":
+                family_reference_status,
+
             "registry_available":
-                release_family
-                in RULE_GROUP_REGISTRY,
+                family_registry_available,
 
             "is_compatibility_rule_pack_family":
                 release_family
@@ -794,7 +910,27 @@ for release_family in crossed_release_families:
 
 
 # ------------------------------------------------------------
-# Overall coverage classification
+# Overall coverage/reference classification
+#
+# complete
+#   All official crossed groups have complete deterministic
+#   reference coverage.
+#
+# partial_reference
+#   At least one crossed family has complete deterministic
+#   reference coverage and at least one crossed family has no
+#   deterministic registry yet.
+#
+# no_reference
+#   Official crossed groups exist, but none belongs to a release
+#   family with deterministic registry coverage.
+#
+# incomplete
+#   A deterministic registry exists for one or more relevant
+#   groups, but mappings or expected rule results are missing.
+#
+# not_applicable
+#   No newly crossed official groups exist.
 # ------------------------------------------------------------
 
 release_report_available = bool(
@@ -815,22 +951,10 @@ release_evidence_ok = (
 )
 
 
-crossed_group_count = len(
-    crossed_groups
-)
-
-
 if not release_report_available:
 
     coverage_status = (
         "unavailable_release_evidence"
-    )
-
-
-elif not compatibility_report_available:
-
-    coverage_status = (
-        "unavailable_compatibility_report"
     )
 
 
@@ -849,12 +973,51 @@ elif crossed_group_count == 0:
 
 
 elif (
+    registry_group_count == 0
+    and no_reference_group_count
+    == crossed_group_count
+):
+
+    coverage_status = (
+        "no_reference"
+    )
+
+
+elif (
+    registry_group_count > 0
+    and not compatibility_report_available
+):
+
+    coverage_status = (
+        "unavailable_compatibility_report"
+    )
+
+
+elif (
+    incomplete_reference_group_count
+    or missing_mapped_rule_ids
+    or unlinked_compatibility_rule_ids
+):
+
+    coverage_status = (
+        "incomplete"
+    )
+
+
+elif (
+    no_reference_group_count
+    and covered_group_count
+    == registry_group_count
+):
+
+    coverage_status = (
+        "partial_reference"
+    )
+
+
+elif (
     covered_group_count
     == crossed_group_count
-    and not partial_group_count
-    and not unmapped_group_count
-    and not missing_mapped_rule_ids
-    and not unlinked_compatibility_rule_ids
 ):
 
     coverage_status = (
@@ -862,20 +1025,124 @@ elif (
     )
 
 
-elif (
-    covered_group_count
-    or partial_group_count
-):
+else:
 
     coverage_status = (
+        "incomplete"
+    )
+
+
+# ------------------------------------------------------------
+# Overall deterministic reference status
+# ------------------------------------------------------------
+
+if coverage_status == "complete":
+
+    deterministic_reference_status = (
+        "complete"
+    )
+
+
+elif coverage_status == "partial_reference":
+
+    deterministic_reference_status = (
+        "partial"
+    )
+
+
+elif coverage_status == "no_reference":
+
+    deterministic_reference_status = (
+        "not_available"
+    )
+
+
+elif coverage_status == "incomplete":
+
+    deterministic_reference_status = (
+        "incomplete"
+    )
+
+
+elif coverage_status == "not_applicable":
+
+    deterministic_reference_status = (
+        "not_applicable"
+    )
+
+
+else:
+
+    deterministic_reference_status = (
+        "unknown"
+    )
+
+
+# ------------------------------------------------------------
+# Collector health
+#
+# Deterministic reference availability is intentionally separate
+# from collector execution health.
+#
+# complete, partial_reference and no_reference can all be valid
+# successful executions.
+# ------------------------------------------------------------
+
+if registry_group_count == 0:
+
+    compatibility_input_status = (
+        "not_required"
+    )
+
+    rule_id_discovery_status = (
+        "not_required"
+    )
+
+
+else:
+
+    compatibility_input_status = (
+        "ok"
+        if compatibility_report_available
+        else "unavailable"
+    )
+
+    if compatibility_rule_ids:
+
+        rule_id_discovery_status = (
+            "ok"
+        )
+
+    else:
+
+        rule_id_discovery_status = (
+            "no_rule_ids_found"
+        )
+
+
+if coverage_status in (
+    "complete",
+    "partial_reference",
+    "no_reference",
+    "not_applicable",
+):
+
+    overall_collector_status = (
+        "ok"
+    )
+
+
+elif coverage_status == "incomplete":
+
+    overall_collector_status = (
         "partial"
     )
 
 
 else:
 
-    coverage_status = (
-        "none"
+    overall_collector_status = (
+        "error"
     )
 
 
@@ -896,6 +1163,12 @@ report = {
         "phase":
             "compatibility_coverage_mapping",
 
+        "reference_semantics_version":
+            2,
+
+        "supports_release_without_registry":
+            True,
+
         "local_evidence_only":
             False,
 
@@ -914,10 +1187,13 @@ report = {
         "note": (
             "This report links official Home Assistant Core "
             "backward-incompatible-change groups to deterministic "
-            "HA Audit compatibility rules. It measures rule "
-            "coverage only. It does not decide whether a change "
-            "affects this installation and does not produce a "
-            "safe-to-update verdict."
+            "HA Audit compatibility rules when a deterministic "
+            "registry exists. A release family without a registry "
+            "is reported as no_reference rather than as failed or "
+            "unmapped coverage. The report measures deterministic "
+            "reference availability only. It does not decide whether "
+            "a change affects this installation and does not produce "
+            "a safe-to-update verdict."
         ),
     },
 
@@ -944,6 +1220,11 @@ report = {
 
         "compatibility_rule_ids_discovered":
             compatibility_rule_ids,
+
+        "registry_release_families":
+            sorted(
+                RULE_GROUP_REGISTRY
+            ),
     },
 
     "release_range": {
@@ -965,8 +1246,14 @@ report = {
         "coverage_status":
             coverage_status,
 
+        "deterministic_reference_status":
+            deterministic_reference_status,
+
         "official_crossed_group_count":
             crossed_group_count,
+
+        "registry_group_count":
+            registry_group_count,
 
         "covered_group_count":
             covered_group_count,
@@ -976,6 +1263,12 @@ report = {
 
         "unmapped_group_count":
             unmapped_group_count,
+
+        "no_reference_group_count":
+            no_reference_group_count,
+
+        "incomplete_reference_group_count":
+            incomplete_reference_group_count,
 
         "mapped_rule_count":
             len(
@@ -1020,8 +1313,9 @@ report = {
 
     "limitations": [
         (
-            "Coverage mappings are deterministic and must be "
-            "defined explicitly for each supported release family."
+            "Deterministic coverage mappings are defined explicitly "
+            "for selected release families. A release family without "
+            "a mapping registry is a supported no-reference state."
         ),
 
         (
@@ -1035,6 +1329,18 @@ report = {
             "A rule being linked does not mean the affected feature "
             "is present or affected on this installation."
         ),
+
+        (
+            "An unmapped group inside a release family that does have "
+            "a deterministic registry is treated as incomplete "
+            "reference coverage, not as the normal no-reference state."
+        ),
+
+        (
+            "Collector health and deterministic reference availability "
+            "are separate. no_reference and partial_reference can both "
+            "be successful collector outcomes."
+        ),
     ],
 
     "collector_status": {
@@ -1046,39 +1352,16 @@ report = {
             ),
 
         "upgrade_compatibility_input":
-            (
-                "ok"
-                if compatibility_report_available
-                else "unavailable"
-            ),
+            compatibility_input_status,
 
         "rule_id_discovery":
-            (
-                "ok"
-                if (
-                    compatibility_rule_ids
-                    or compatibility_rule_count
-                    == 0
-                )
-                else "no_rule_ids_found"
-            ),
+            rule_id_discovery_status,
+
+        "deterministic_reference_availability":
+            deterministic_reference_status,
 
         "overall":
-            (
-                "ok"
-                if coverage_status
-                in (
-                    "complete",
-                    "not_applicable",
-                )
-                else "partial"
-                if coverage_status
-                in (
-                    "partial",
-                    "none",
-                )
-                else "error"
-            ),
+            overall_collector_status,
     },
 }
 
@@ -1120,8 +1403,18 @@ print(
 )
 
 print(
+    f"Reference status:              "
+    f"{deterministic_reference_status}"
+)
+
+print(
     f"Official crossed groups:       "
     f"{crossed_group_count}"
+)
+
+print(
+    f"Registry-backed groups:        "
+    f"{registry_group_count}"
 )
 
 print(
@@ -1135,8 +1428,13 @@ print(
 )
 
 print(
-    f"Unmapped groups:               "
+    f"Unmapped registry groups:      "
     f"{unmapped_group_count}"
+)
+
+print(
+    f"No-reference groups:           "
+    f"{no_reference_group_count}"
 )
 
 print(
@@ -1182,11 +1480,20 @@ if release_results:
         print(
             f"{release.get('release_family')}: "
             f"{release.get('coverage_status')}; "
+            f"reference="
+            f"{release.get('reference_status')}; "
             f"{release.get('covered_group_count', 0)}/"
             f"{release.get('official_group_count', 0)} "
             "group(s) covered"
         )
 
+
+print("")
+
+print(
+    "Important: no deterministic reference is a valid "
+    "dynamic-only state, not a collector failure."
+)
 
 print("")
 
