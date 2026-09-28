@@ -481,6 +481,24 @@ quality = load_json_optional(
 )
 
 
+system = audit.get(
+    "system",
+    {},
+)
+
+if not isinstance(
+    system,
+    dict,
+):
+    system = {}
+
+audit_snapshot_core_version = (
+    system.get(
+        "core_version"
+    )
+)
+
+
 # ------------------------------------------------------------
 # Current Home Assistant data
 # ------------------------------------------------------------
@@ -930,21 +948,55 @@ pending_core_update = (
     else None
 )
 
-installed_core_version = None
-target_core_version = None
+pending_update_installed_core_version = (
+    pending_core_update.get(
+        "installed_version"
+    )
+    if pending_core_update
+    else None
+)
 
-if pending_core_update:
-    installed_core_version = (
-        pending_core_update.get(
-            "installed_version"
+target_core_version = (
+    pending_core_update.get(
+        "latest_version"
+    )
+    if pending_core_update
+    else None
+)
+
+installed_core_version = (
+    audit_snapshot_core_version
+    or pending_update_installed_core_version
+)
+
+installed_core_version_source = None
+
+if audit_snapshot_core_version:
+    installed_core_version_source = (
+        "audit_snapshot"
+    )
+elif pending_update_installed_core_version:
+    installed_core_version_source = (
+        "pending_update_entity"
+    )
+
+core_version_sources_agree = None
+
+if (
+    audit_snapshot_core_version
+    and pending_update_installed_core_version
+):
+    source_version_comparison = (
+        compare_versions(
+            audit_snapshot_core_version,
+            pending_update_installed_core_version,
         )
     )
 
-    target_core_version = (
-        pending_core_update.get(
-            "latest_version"
+    if source_version_comparison is not None:
+        core_version_sources_agree = (
+            source_version_comparison == 0
         )
-    )
 
 
 # ------------------------------------------------------------
@@ -1215,18 +1267,6 @@ beyond_pending_target_repairs = [
 # Existing audit/configuration foundation
 # ------------------------------------------------------------
 
-system = audit.get(
-    "system",
-    {},
-)
-
-if not isinstance(
-    system,
-    dict,
-):
-    system = {}
-
-
 configuration_check = audit.get(
     "configuration_check",
     {},
@@ -1421,6 +1461,18 @@ report = {
 
         "installed_version":
             installed_core_version,
+
+        "installed_version_source":
+            installed_core_version_source,
+
+        "audit_snapshot_installed_version":
+            audit_snapshot_core_version,
+
+        "update_entity_installed_version":
+            pending_update_installed_core_version,
+
+        "installed_version_sources_agree":
+            core_version_sources_agree,
 
         "target_version":
             target_core_version,
