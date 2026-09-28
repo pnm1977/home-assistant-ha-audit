@@ -296,7 +296,7 @@ release_evidence = load_json_optional(
     RELEASE_EVIDENCE_FILE
 )
 
-compatibility_coverage = load_json_optional(
+compatibility_coverage_report = load_json_optional(
     COMPATIBILITY_COVERAGE_FILE
 )
 
@@ -750,7 +750,7 @@ compatibility_window = upgrade_compatibility.get(
     {},
 )
 
-compatibility_coverage = upgrade_compatibility.get(
+compatibility_scan_coverage = upgrade_compatibility.get(
     "coverage",
     {},
 )
@@ -773,10 +773,10 @@ if not isinstance(
     compatibility_window = {}
 
 if not isinstance(
-    compatibility_coverage,
+    compatibility_scan_coverage,
     dict,
 ):
-    compatibility_coverage = {}
+    compatibility_scan_coverage = {}
 
 if not isinstance(
     compatibility_summary,
@@ -868,12 +868,12 @@ compatibility_verdict_produced = bool(
     or readiness_verdict_produced
 )
 
-compatibility_active_yaml_count = compatibility_coverage.get(
+compatibility_active_yaml_count = compatibility_scan_coverage.get(
     "active_yaml_file_count",
     0,
 )
 
-compatibility_yaml_failures = compatibility_coverage.get(
+compatibility_yaml_failures = compatibility_scan_coverage.get(
     "active_yaml_read_failures",
     [],
 )
@@ -885,7 +885,7 @@ if not isinstance(
     compatibility_yaml_failures = []
 
 compatibility_ui_prompts_inspected = bool(
-    compatibility_coverage.get(
+    compatibility_scan_coverage.get(
         "ui_managed_prompt_content_inspected",
         False,
     )
@@ -1152,30 +1152,30 @@ else:
 # ------------------------------------------------------------
 
 coverage_report_available = bool(
-    compatibility_coverage
+    compatibility_coverage_report
 )
 
-coverage_scope = compatibility_coverage.get(
+coverage_scope = compatibility_coverage_report.get(
     "scope",
     {},
 )
 
-coverage_inputs = compatibility_coverage.get(
+coverage_inputs = compatibility_coverage_report.get(
     "inputs",
     {},
 )
 
-coverage_summary = compatibility_coverage.get(
+coverage_summary = compatibility_coverage_report.get(
     "summary",
     {},
 )
 
-coverage_release_rows = compatibility_coverage.get(
+coverage_release_rows = compatibility_coverage_report.get(
     "release_coverage",
     [],
 )
 
-coverage_collector_status = compatibility_coverage.get(
+coverage_collector_status = compatibility_coverage_report.get(
     "collector_status",
     {},
 )
