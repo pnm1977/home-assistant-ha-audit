@@ -24,6 +24,7 @@ RELEASE_CATEGORY_URL = (
 )
 
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+MAX_RELEASE_FAMILIES = 24
 
 HEADERS = {
     "User-Agent": (
@@ -110,6 +111,9 @@ def normalise_core_version(value):
         match.group(2)
     )
 
+    if month < 1 or month > 12:
+        return None
+
     patch = match.group(
         3
     )
@@ -144,6 +148,280 @@ def major_minor(value):
     )
 
 
+def parse_year_month(value):
+    value = major_minor(
+        value
+    )
+
+    if not value:
+        return None
+
+    year_text, month_text = value.split(
+        ".",
+        1,
+    )
+
+    try:
+        year = int(
+            year_text
+        )
+
+        month = int(
+            month_text
+        )
+
+    except ValueError:
+        return None
+
+    if month < 1 or month > 12:
+        return None
+
+    return (
+        year,
+        month,
+    )
+
+
+def month_index(year_month):
+    if not year_month:
+        return None
+
+    year, month = year_month
+
+    return (
+        year * 12
+        + month
+        - 1
+    )
+
+
+def month_from_index(index):
+    year = index // 12
+
+    month = (
+        index % 12
+    ) + 1
+
+    return (
+        year,
+        month,
+    )
+
+
+def format_year_month(year_month):
+    if not year_month:
+        return None
+
+    year, month = year_month
+
+    return (
+        f"{year}.{month}"
+    )
+
+
+def calculate_release_range(
+    installed_version,
+    target_version,
+):
+    installed_year_month = parse_year_month(
+        installed_version
+    )
+
+    target_year_month = parse_year_month(
+        target_version
+    )
+
+    result = {
+        "status": "unknown",
+        "complete": False,
+        "installed_major_minor": major_minor(
+            installed_version
+        ),
+        "target_major_minor": major_minor(
+            target_version
+        ),
+        "same_release_family": False,
+        "crossed_release_families": [],
+        "release_families_to_fetch": [],
+        "crossed_release_family_count": 0,
+        "release_family_fetch_count": 0,
+        "note": None,
+    }
+
+    if not target_year_month:
+        result[
+            "status"
+        ] = "target_version_unavailable"
+
+        result[
+            "note"
+        ] = (
+            "The pending Core target could not be normalised "
+            "to a year.month release family."
+        )
+
+        return result
+
+    target_family = format_year_month(
+        target_year_month
+    )
+
+    if not installed_year_month:
+        result[
+            "status"
+        ] = "installed_version_unavailable"
+
+        result[
+            "release_families_to_fetch"
+        ] = [
+            target_family
+        ]
+
+        result[
+            "release_family_fetch_count"
+        ] = 1
+
+        result[
+            "note"
+        ] = (
+            "The installed Core release family is unavailable, "
+            "so only the target release family can be fetched. "
+            "Coverage of intermediate releases is incomplete."
+        )
+
+        return result
+
+    installed_index = month_index(
+        installed_year_month
+    )
+
+    target_index = month_index(
+        target_year_month
+    )
+
+    if target_index < installed_index:
+        result[
+            "status"
+        ] = "target_precedes_installed"
+
+        result[
+            "note"
+        ] = (
+            "The pending Core target release family precedes "
+            "the installed release family."
+        )
+
+        return result
+
+    if target_index == installed_index:
+        result[
+            "status"
+        ] = "same_release_family"
+
+        result[
+            "complete"
+        ] = True
+
+        result[
+            "same_release_family"
+        ] = True
+
+        result[
+            "release_families_to_fetch"
+        ] = [
+            target_family
+        ]
+
+        result[
+            "release_family_fetch_count"
+        ] = 1
+
+        result[
+            "note"
+        ] = (
+            "The update stays within one monthly Core release "
+            "family. The target family is fetched for exact "
+            "patch/changelog evidence, but its monthly backward-"
+            "incompatible changes are not classified as newly crossed."
+        )
+
+        return result
+
+    crossed_count = (
+        target_index
+        - installed_index
+    )
+
+    if crossed_count > MAX_RELEASE_FAMILIES:
+        result[
+            "status"
+        ] = "range_too_large"
+
+        result[
+            "note"
+        ] = (
+            "The Core release range crosses more than "
+            f"{MAX_RELEASE_FAMILIES} monthly release families. "
+            "Automatic release evidence collection is intentionally "
+            "bounded and coverage is incomplete."
+        )
+
+        return result
+
+    crossed = []
+
+    for index in range(
+        installed_index + 1,
+        target_index + 1,
+    ):
+        crossed.append(
+            format_year_month(
+                month_from_index(
+                    index
+                )
+            )
+        )
+
+    result[
+        "status"
+    ] = "crosses_release_families"
+
+    result[
+        "complete"
+    ] = True
+
+    result[
+        "crossed_release_families"
+    ] = crossed
+
+    result[
+        "release_families_to_fetch"
+    ] = list(
+        crossed
+    )
+
+    result[
+        "crossed_release_family_count"
+    ] = len(
+        crossed
+    )
+
+    result[
+        "release_family_fetch_count"
+    ] = len(
+        crossed
+    )
+
+    result[
+        "note"
+    ] = (
+        "Every monthly Core release family crossed by the "
+        "installed-to-target upgrade window will be fetched."
+    )
+
+    return result
+
+
 def is_official_url(url):
     try:
         parsed = urlparse(
@@ -163,30 +441,21 @@ def is_official_url(url):
 def fetch_html(
     purpose,
     url,
+    release_family=None,
 ):
     result = {
-        "purpose":
-            purpose,
-        "url":
-            url,
-        "status":
-            "not_started",
-        "final_url":
-            None,
-        "http_status":
-            None,
-        "content_type":
-            None,
-        "etag":
-            None,
-        "last_modified":
-            None,
-        "content_sha256":
-            None,
-        "response_bytes":
-            None,
-        "error":
-            None,
+        "purpose": purpose,
+        "release_family": release_family,
+        "url": url,
+        "status": "not_started",
+        "final_url": None,
+        "http_status": None,
+        "content_type": None,
+        "etag": None,
+        "last_modified": None,
+        "content_sha256": None,
+        "response_bytes": None,
+        "error": None,
     }
 
     if not is_official_url(
@@ -896,8 +1165,6 @@ class ReleaseParser(
         if self._current:
             self._finish_item()
 
-        # Fallback for heading-based pages where developer notes
-        # might remain attached to the final h3 block.
         marker = (
             "If you are a custom integration developer"
         )
@@ -954,7 +1221,7 @@ class ReleaseParser(
 def score_release_link(
     link,
     base_url,
-    target_major_minor,
+    release_family,
 ):
     href = link.get(
         "href"
@@ -987,7 +1254,7 @@ def score_release_link(
         return None
 
     token = (
-        target_major_minor.replace(
+        release_family.replace(
             ".",
             "",
         )
@@ -1004,7 +1271,7 @@ def score_release_link(
     ):
         score += 50
 
-    if target_major_minor in text:
+    if release_family in text:
         score += 30
 
     if "release notes" in text:
@@ -1022,7 +1289,7 @@ def score_release_link(
 def choose_release_link(
     links,
     base_url,
-    target_major_minor,
+    release_family,
 ):
     candidates = []
 
@@ -1030,7 +1297,7 @@ def choose_release_link(
         scored = score_release_link(
             link,
             base_url,
-            target_major_minor,
+            release_family,
         )
 
         if scored:
@@ -1063,17 +1330,18 @@ def choose_release_link(
 
 
 def discover_release_url(
-    target_major_minor,
+    release_family,
     attempts,
 ):
     changelog_url = (
         "https://www.home-assistant.io/"
-        f"changelogs/core-{target_major_minor}/"
+        f"changelogs/core-{release_family}/"
     )
 
     html, attempt = fetch_html(
         "core_changelog",
         changelog_url,
+        release_family=release_family,
     )
 
     attempts.append(
@@ -1097,7 +1365,7 @@ def discover_release_url(
                 )
                 or changelog_url
             ),
-            target_major_minor,
+            release_family,
         )
 
         if found:
@@ -1117,6 +1385,7 @@ def discover_release_url(
     html, attempt = fetch_html(
         "release_notes_category_fallback",
         RELEASE_CATEGORY_URL,
+        release_family=release_family,
     )
 
     attempts.append(
@@ -1140,7 +1409,7 @@ def discover_release_url(
                 )
                 or RELEASE_CATEGORY_URL
             ),
-            target_major_minor,
+            release_family,
         )
 
         if found:
@@ -1169,7 +1438,7 @@ def discover_release_url(
         "error": (
             "Could not discover the official "
             "release-notes page for Core "
-            f"{target_major_minor}."
+            f"{release_family}."
         ),
     }
 
@@ -1194,7 +1463,8 @@ def absolute_links(
 def parse_release_notes(
     html,
     release_url,
-    target_version,
+    release_family,
+    target_version=None,
 ):
     parser = ReleaseParser()
 
@@ -1209,6 +1479,8 @@ def parse_release_notes(
     for item in parser.items:
         items.append(
             {
+                "release_family":
+                    release_family,
                 "heading":
                     item.get(
                         "heading"
@@ -1270,6 +1542,17 @@ def parse_release_notes(
         ]
     )
 
+    page_text = clean(
+        " ".join(
+            parser.page_text
+        )
+    )
+
+    section_phrase_present = (
+        "backward-incompatible changes"
+        in page_text.lower()
+    )
+
     if (
         parser.section_found
         and items
@@ -1278,25 +1561,24 @@ def parse_release_notes(
             "structured"
         )
 
-    elif parser.section_found:
+    elif (
+        parser.section_found
+        or section_phrase_present
+    ):
         segmentation_status = (
             "unstructured"
         )
 
     else:
         segmentation_status = (
-            "section_not_found"
+            "no_section"
         )
-
-    page_text = clean(
-        " ".join(
-            parser.page_text
-        )
-    )
 
     return {
         "status":
             "ok",
+        "release_family":
+            release_family,
         "url":
             release_url,
         "title":
@@ -1305,6 +1587,12 @@ def parse_release_notes(
             parser.published_at,
         "target_version":
             target_version,
+        "release_family_mentioned":
+            bool(
+                release_family
+                and release_family
+                in page_text
+            ),
         "target_version_mentioned":
             bool(
                 target_version
@@ -1314,6 +1602,8 @@ def parse_release_notes(
         "backward_incompatible_changes": {
             "section_found":
                 parser.section_found,
+            "section_phrase_present":
+                section_phrase_present,
             "item_count":
                 len(
                     items
@@ -1336,6 +1626,25 @@ def parse_release_notes(
                 parser.trailing_notes,
         },
     }
+
+
+def classify_parse_status(release_notes):
+    backward = release_notes.get(
+        "backward_incompatible_changes",
+        {},
+    )
+
+    segmentation_status = backward.get(
+        "segmentation_status"
+    )
+
+    if segmentation_status == "structured":
+        return "ok"
+
+    if segmentation_status == "no_section":
+        return "ok_no_backward_incompatible_section"
+
+    return "partial"
 
 
 # ------------------------------------------------------------
@@ -1379,11 +1688,38 @@ target_major_minor = major_minor(
     target_version
 )
 
+release_range = calculate_release_range(
+    installed_version,
+    target_version,
+)
+
+release_families_to_fetch = release_range.get(
+    "release_families_to_fetch",
+    [],
+)
+
+if not isinstance(
+    release_families_to_fetch,
+    list,
+):
+    release_families_to_fetch = []
+
+crossed_release_families = release_range.get(
+    "crossed_release_families",
+    [],
+)
+
+if not isinstance(
+    crossed_release_families,
+    list,
+):
+    crossed_release_families = []
+
 applicable = bool(
     update_readiness
     and pending
     and target_version
-    and target_major_minor
+    and release_families_to_fetch
 )
 
 reason = None
@@ -1406,10 +1742,15 @@ elif not target_version:
         "provide a target version."
     )
 
-elif not target_major_minor:
+elif not release_families_to_fetch:
     reason = (
-        "The pending Core target could not "
-        "be normalised to a year.month release."
+        release_range.get(
+            "note"
+        )
+        or (
+            "No Core release family could be "
+            "selected for official evidence collection."
+        )
     )
 
 
@@ -1435,17 +1776,22 @@ report = {
             False,
         "official_sources_only":
             True,
+        "multi_release_range_supported":
+            True,
         "compatibility_assessed":
             False,
         "readiness_verdict_produced":
             False,
         "note": (
             "This report retrieves official Home Assistant "
-            "release evidence for a pending Core target. "
-            "It records source material for later matching; "
-            "it does not decide whether the upgrade affects "
-            "this installation and does not produce a "
-            "safe-to-update verdict."
+            "release evidence for every monthly Core release "
+            "family crossed by a pending upgrade window. "
+            "For a same-family patch update, the target family "
+            "is fetched for patch/changelog evidence but its "
+            "monthly backward-incompatible changes are not "
+            "classified as newly crossed. The report records "
+            "source material for later matching; it does not "
+            "produce a safe-to-update verdict."
         ),
     },
 
@@ -1464,6 +1810,9 @@ report = {
             target_major_minor,
     },
 
+    "release_range":
+        release_range,
+
     "applicability": {
         "applicable":
             applicable,
@@ -1480,6 +1829,8 @@ report = {
             "Predictable official Core changelog page",
             "Official release-notes category fallback",
         ],
+        "maximum_release_families":
+            MAX_RELEASE_FAMILIES,
         "maximum_response_bytes":
             MAX_RESPONSE_BYTES,
         "request_timeout_seconds": {
@@ -1488,53 +1839,43 @@ report = {
         },
     },
 
-    "source_discovery": {
-        "status":
-            "not_started",
-        "method":
-            None,
-        "changelog_url":
-            None,
-        "release_notes_url":
-            None,
-        "error":
-            None,
-    },
-
     "fetch_attempts":
         [],
 
-    "release_notes": {
-        "status":
-            "not_fetched",
-        "url":
-            None,
-        "title":
-            None,
-        "published_at":
-            None,
-        "target_version":
-            target_version,
-        "target_version_mentioned":
-            False,
-        "backward_incompatible_changes": {
-            "section_found":
-                False,
-            "item_count":
-                0,
-            "segmentation_status":
-                "not_run",
-            "intro":
-                "",
-            "section_code_terms":
-                [],
-            "section_links":
-                [],
-            "items":
-                [],
-            "trailing_notes":
-                "",
-        },
+    "releases":
+        [],
+
+    "aggregate": {
+        "release_family_count":
+            len(
+                release_families_to_fetch
+            ),
+        "crossed_release_family_count":
+            len(
+                crossed_release_families
+            ),
+        "release_families_requested":
+            release_families_to_fetch,
+        "crossed_release_families":
+            crossed_release_families,
+        "release_family_success_count":
+            0,
+        "release_family_partial_count":
+            0,
+        "release_family_failure_count":
+            0,
+        "backward_incompatible_section_count":
+            0,
+        "breaking_change_group_count":
+            0,
+        "breaking_change_group_count_crossed_only":
+            0,
+        "breaking_change_groups":
+            [],
+        "section_code_terms":
+            [],
+        "section_links":
+            [],
     },
 
     "collector_status": {
@@ -1544,11 +1885,11 @@ report = {
                 if update_readiness
                 else "unavailable"
             ),
-        "source_discovery":
-            "not_started",
-        "release_notes_fetch":
-            "not_started",
-        "release_notes_parse":
+        "release_range":
+            release_range.get(
+                "status"
+            ),
+        "overall":
             "not_started",
     },
 }
@@ -1563,10 +1904,235 @@ if applicable:
         "fetch_attempts"
     ]
 
-    discovery = discover_release_url(
-        target_major_minor,
-        attempts,
-    )
+    releases = report[
+        "releases"
+    ]
+
+    for release_family in release_families_to_fetch:
+        crossed_from_installed = (
+            release_family
+            in crossed_release_families
+        )
+
+        release_result = {
+            "release_family":
+                release_family,
+            "crossed_from_installed":
+                crossed_from_installed,
+            "is_target_release_family":
+                release_family
+                == target_major_minor,
+            "source_discovery": {
+                "status":
+                    "not_started",
+                "method":
+                    None,
+                "changelog_url":
+                    None,
+                "release_notes_url":
+                    None,
+                "error":
+                    None,
+            },
+            "release_notes": {
+                "status":
+                    "not_fetched",
+                "release_family":
+                    release_family,
+                "url":
+                    None,
+                "title":
+                    None,
+                "published_at":
+                    None,
+                "target_version":
+                    (
+                        target_version
+                        if release_family
+                        == target_major_minor
+                        else None
+                    ),
+                "release_family_mentioned":
+                    False,
+                "target_version_mentioned":
+                    False,
+                "backward_incompatible_changes": {
+                    "section_found":
+                        False,
+                    "section_phrase_present":
+                        False,
+                    "item_count":
+                        0,
+                    "segmentation_status":
+                        "not_run",
+                    "intro":
+                        "",
+                    "section_code_terms":
+                        [],
+                    "section_links":
+                        [],
+                    "items":
+                        [],
+                    "trailing_notes":
+                        "",
+                },
+            },
+            "collector_status": {
+                "source_discovery":
+                    "not_started",
+                "release_notes_fetch":
+                    "not_started",
+                "release_notes_parse":
+                    "not_started",
+            },
+        }
+
+        discovery = discover_release_url(
+            release_family,
+            attempts,
+        )
+
+        release_result[
+            "source_discovery"
+        ] = discovery
+
+        release_result[
+            "collector_status"
+        ][
+            "source_discovery"
+        ] = discovery.get(
+            "status"
+        )
+
+        release_url = discovery.get(
+            "release_notes_url"
+        )
+
+        if release_url:
+            html, attempt = fetch_html(
+                "release_notes",
+                release_url,
+                release_family=release_family,
+            )
+
+            attempts.append(
+                attempt
+            )
+
+            release_result[
+                "collector_status"
+            ][
+                "release_notes_fetch"
+            ] = attempt.get(
+                "status"
+            )
+
+            if html:
+                try:
+                    parsed = parse_release_notes(
+                        html,
+                        (
+                            attempt.get(
+                                "final_url"
+                            )
+                            or release_url
+                        ),
+                        release_family,
+                        target_version=(
+                            target_version
+                            if release_family
+                            == target_major_minor
+                            else None
+                        ),
+                    )
+
+                    release_result[
+                        "release_notes"
+                    ] = parsed
+
+                    release_result[
+                        "collector_status"
+                    ][
+                        "release_notes_parse"
+                    ] = classify_parse_status(
+                        parsed
+                    )
+
+                except Exception as error:
+                    release_result[
+                        "release_notes"
+                    ][
+                        "status"
+                    ] = "parse_error"
+
+                    release_result[
+                        "release_notes"
+                    ][
+                        "url"
+                    ] = (
+                        attempt.get(
+                            "final_url"
+                        )
+                        or release_url
+                    )
+
+                    release_result[
+                        "release_notes"
+                    ][
+                        "error"
+                    ] = str(
+                        error
+                    )
+
+                    release_result[
+                        "collector_status"
+                    ][
+                        "release_notes_parse"
+                    ] = "error"
+
+            else:
+                release_result[
+                    "release_notes"
+                ][
+                    "status"
+                ] = "fetch_error"
+
+                release_result[
+                    "release_notes"
+                ][
+                    "url"
+                ] = release_url
+
+                release_result[
+                    "release_notes"
+                ][
+                    "error"
+                ] = attempt.get(
+                    "error"
+                )
+
+                release_result[
+                    "collector_status"
+                ][
+                    "release_notes_parse"
+                ] = "not_run"
+
+        else:
+            release_result[
+                "collector_status"
+            ][
+                "release_notes_fetch"
+            ] = "not_run"
+
+            release_result[
+                "collector_status"
+            ][
+                "release_notes_parse"
+            ] = "not_run"
+
+        releases.append(
+            release_result
+        )
 
     report[
         "scope"
@@ -1576,152 +2142,197 @@ if applicable:
         attempts
     )
 
-    report[
-        "source_discovery"
-    ] = discovery
 
-    report[
-        "collector_status"
-    ][
-        "source_discovery"
-    ] = discovery[
-        "status"
-    ]
+# ------------------------------------------------------------
+# Aggregate release evidence
+# ------------------------------------------------------------
 
-    release_url = discovery.get(
-        "release_notes_url"
+release_success_count = 0
+release_partial_count = 0
+release_failure_count = 0
+
+backward_section_count = 0
+
+breaking_groups = []
+
+all_code_terms = []
+all_links = []
+
+for release in report[
+    "releases"
+]:
+    statuses = release.get(
+        "collector_status",
+        {},
     )
 
-    if release_url:
-        html, attempt = fetch_html(
-            "release_notes",
-            release_url,
-        )
+    parse_status = statuses.get(
+        "release_notes_parse"
+    )
 
-        attempts.append(
-            attempt
-        )
+    if parse_status in (
+        "ok",
+        "ok_no_backward_incompatible_section",
+    ):
+        release_success_count += 1
 
-        report[
-            "collector_status"
-        ][
-            "release_notes_fetch"
-        ] = attempt[
-            "status"
-        ]
-
-        if html:
-            try:
-                report[
-                    "release_notes"
-                ] = parse_release_notes(
-                    html,
-                    (
-                        attempt.get(
-                            "final_url"
-                        )
-                        or release_url
-                    ),
-                    target_version,
-                )
-
-                backward = (
-                    report[
-                        "release_notes"
-                    ][
-                        "backward_incompatible_changes"
-                    ]
-                )
-
-                report[
-                    "collector_status"
-                ][
-                    "release_notes_parse"
-                ] = (
-                    "ok"
-                    if (
-                        backward.get(
-                            "section_found"
-                        )
-                        and backward.get(
-                            "item_count",
-                            0,
-                        ) > 0
-                    )
-                    else "partial"
-                )
-
-            except Exception as error:
-                report[
-                    "release_notes"
-                ][
-                    "status"
-                ] = "parse_error"
-
-                report[
-                    "release_notes"
-                ][
-                    "url"
-                ] = (
-                    attempt.get(
-                        "final_url"
-                    )
-                    or release_url
-                )
-
-                report[
-                    "release_notes"
-                ][
-                    "error"
-                ] = str(
-                    error
-                )
-
-                report[
-                    "collector_status"
-                ][
-                    "release_notes_parse"
-                ] = "error"
-
-        else:
-            report[
-                "release_notes"
-            ][
-                "status"
-            ] = "fetch_error"
-
-            report[
-                "release_notes"
-            ][
-                "url"
-            ] = release_url
-
-            report[
-                "release_notes"
-            ][
-                "error"
-            ] = attempt.get(
-                "error"
-            )
-
-            report[
-                "collector_status"
-            ][
-                "release_notes_parse"
-            ] = "not_run"
+    elif parse_status == "partial":
+        release_partial_count += 1
 
     else:
-        report[
-            "collector_status"
-        ][
-            "release_notes_fetch"
-        ] = "not_run"
+        release_failure_count += 1
 
-        report[
-            "collector_status"
-        ][
-            "release_notes_parse"
-        ] = "not_run"
+    release_notes = release.get(
+        "release_notes",
+        {},
+    )
+
+    backward = release_notes.get(
+        "backward_incompatible_changes",
+        {},
+    )
+
+    if backward.get(
+        "section_found"
+    ):
+        backward_section_count += 1
+
+    all_code_terms.extend(
+        backward.get(
+            "section_code_terms",
+            [],
+        )
+    )
+
+    all_links.extend(
+        backward.get(
+            "section_links",
+            [],
+        )
+    )
+
+    for item in backward.get(
+        "items",
+        [],
+    ):
+        if not isinstance(
+            item,
+            dict,
+        ):
+            continue
+
+        aggregate_item = dict(
+            item
+        )
+
+        aggregate_item[
+            "crossed_from_installed"
+        ] = bool(
+            release.get(
+                "crossed_from_installed"
+            )
+        )
+
+        aggregate_item[
+            "release_notes_url"
+        ] = release_notes.get(
+            "url"
+        )
+
+        breaking_groups.append(
+            aggregate_item
+        )
+
+report[
+    "aggregate"
+][
+    "release_family_success_count"
+] = release_success_count
+
+report[
+    "aggregate"
+][
+    "release_family_partial_count"
+] = release_partial_count
+
+report[
+    "aggregate"
+][
+    "release_family_failure_count"
+] = release_failure_count
+
+report[
+    "aggregate"
+][
+    "backward_incompatible_section_count"
+] = backward_section_count
+
+report[
+    "aggregate"
+][
+    "breaking_change_group_count"
+] = len(
+    breaking_groups
+)
+
+report[
+    "aggregate"
+][
+    "breaking_change_group_count_crossed_only"
+] = sum(
+    1
+    for item in breaking_groups
+    if item.get(
+        "crossed_from_installed"
+    )
+)
+
+report[
+    "aggregate"
+][
+    "breaking_change_groups"
+] = breaking_groups
+
+report[
+    "aggregate"
+][
+    "section_code_terms"
+] = unique(
+    all_code_terms
+)
+
+report[
+    "aggregate"
+][
+    "section_links"
+] = unique(
+    all_links
+)
+
+if not applicable:
+    overall_status = "not_applicable"
+
+elif release_failure_count:
+    if (
+        release_success_count
+        or release_partial_count
+    ):
+        overall_status = "partial"
+
+    else:
+        overall_status = "error"
+
+elif release_partial_count:
+    overall_status = "partial"
+
+else:
+    overall_status = "ok"
+
+report[
+    "collector_status"
+][
+    "overall"
+] = overall_status
 
 
 # ------------------------------------------------------------
@@ -1774,49 +2385,105 @@ print(
     f"{target_major_minor}"
 )
 
+print(
+    f"Release-range status:          "
+    f"{release_range.get('status')}"
+)
+
+print(
+    f"Crossed release families:      "
+    f"{len(crossed_release_families)}"
+)
+
+if crossed_release_families:
+    print(
+        "Crossed releases:              "
+        + ", ".join(
+            crossed_release_families
+        )
+    )
+
+print(
+    f"Release families fetched:      "
+    f"{len(release_families_to_fetch)}"
+)
+
 if applicable:
-    backward = (
-        report[
-            "release_notes"
-        ][
-            "backward_incompatible_changes"
-        ]
+    print(
+        f"Successful release parses:     "
+        f"{release_success_count}"
     )
 
     print(
-        "Source discovery:              "
-        f"{report['collector_status']['source_discovery']}"
+        f"Partial release parses:        "
+        f"{release_partial_count}"
     )
 
     print(
-        "Release notes fetch:           "
-        f"{report['collector_status']['release_notes_fetch']}"
+        f"Failed release parses:         "
+        f"{release_failure_count}"
     )
 
     print(
-        "Release notes parse:           "
-        f"{report['collector_status']['release_notes_parse']}"
+        f"Breaking-change groups:        "
+        f"{len(breaking_groups)}"
     )
 
     print(
-        "Backward-incompatible section: "
-        f"{backward.get('section_found', False)}"
+        "Crossed-only change groups:    "
+        f"{report['aggregate']['breaking_change_group_count_crossed_only']}"
     )
 
     print(
-        "Breaking-change headings:      "
-        f"{backward.get('item_count', 0)}"
+        f"Overall collection status:     "
+        f"{overall_status}"
+    )
+
+    print("")
+    print(
+        "Per-release evidence:"
     )
 
     print(
-        "Segmentation status:           "
-        f"{backward.get('segmentation_status', 'unknown')}"
+        "------------------------------------------"
     )
 
-    print(
-        "Target patch mentioned:        "
-        f"{report['release_notes'].get('target_version_mentioned', False)}"
-    )
+    for release in report[
+        "releases"
+    ]:
+        family = release.get(
+            "release_family"
+        )
+
+        parse_status = release.get(
+            "collector_status",
+            {},
+        ).get(
+            "release_notes_parse"
+        )
+
+        backward = release.get(
+            "release_notes",
+            {},
+        ).get(
+            "backward_incompatible_changes",
+            {},
+        )
+
+        crossed_label = (
+            "crossed"
+            if release.get(
+                "crossed_from_installed"
+            )
+            else "same-family evidence"
+        )
+
+        print(
+            f"{family}: "
+            f"{parse_status}; "
+            f"{backward.get('item_count', 0)} group(s); "
+            f"{crossed_label}"
+        )
 
 else:
     print(
