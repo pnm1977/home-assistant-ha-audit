@@ -16,6 +16,7 @@ RECORDER_FILE = "/config/recorder_health_audit.json"
 HISTORY_FILE = "/config/not_provided_history_audit.json"
 AVAILABILITY_FILE = "/config/availability_audit.json"
 UNAVAILABLE_HISTORY_FILE = "/config/unavailable_history_audit.json"
+UPDATE_READINESS_FILE = "/config/update_readiness_audit.json"
 
 OUTPUT_FILE = "/config/ha_audit_latest.txt"
 
@@ -163,6 +164,44 @@ def format_days(value):
     )
 
 
+def format_update_category(category):
+    labels = {
+        "core": "Core",
+        "os": "OS",
+        "supervisor": "Supervisor",
+        "app": "App",
+        "hacs": "HACS",
+        "firmware": "Firmware",
+        "other": "Other",
+    }
+
+    return labels.get(
+        str(
+            category
+            or "other"
+        ).lower(),
+        str(
+            category
+            or "Other"
+        ),
+    )
+
+
+def format_update_name(item):
+    return (
+        item.get(
+            "title"
+        )
+        or item.get(
+            "name"
+        )
+        or item.get(
+            "entity_id"
+        )
+        or "Unknown update"
+    )
+
+
 # ------------------------------------------------------------
 # Load reports
 # ------------------------------------------------------------
@@ -193,6 +232,10 @@ availability = load_json_optional(
 
 unavailable_history = load_json_optional(
     UNAVAILABLE_HISTORY_FILE
+)
+
+update_readiness = load_json_optional(
+    UPDATE_READINESS_FILE
 )
 
 
@@ -333,56 +376,9 @@ availability_device_counts = (
     )
 )
 
-
 availability_available = bool(
     availability
 )
-
-
-expected_label = (
-    availability_labels.get(
-        "expected_offline",
-        {},
-    )
-)
-
-maintenance_label = (
-    availability_labels.get(
-        "maintenance",
-        {},
-    )
-)
-
-
-expected_label_name = (
-    expected_label.get(
-        "name"
-    )
-    or "HA Audit - Expected Offline"
-)
-
-maintenance_label_name = (
-    maintenance_label.get(
-        "name"
-    )
-    or "HA Audit - Maintenance"
-)
-
-
-expected_label_exists = bool(
-    expected_label.get(
-        "exists",
-        False,
-    )
-)
-
-maintenance_label_exists = bool(
-    maintenance_label.get(
-        "exists",
-        False,
-    )
-)
-
 
 availability_classified = (
     availability_summary.get(
@@ -397,7 +393,6 @@ availability_excluded = (
         0,
     )
 )
-
 
 expected_offline_entities = (
     availability_entity_counts.get(
@@ -433,7 +428,6 @@ ungrouped_entities = (
         0,
     )
 )
-
 
 expected_offline_devices = (
     availability_device_counts.get(
@@ -557,6 +551,122 @@ unavailable_history_retry_failures = (
 
 
 # ------------------------------------------------------------
+# Update readiness data
+# ------------------------------------------------------------
+
+update_readiness_available = bool(
+    update_readiness
+)
+
+readiness_scope = update_readiness.get(
+    "scope",
+    {},
+)
+
+readiness_updates = update_readiness.get(
+    "updates",
+    {},
+)
+
+readiness_repairs = update_readiness.get(
+    "repairs",
+    {},
+)
+
+core_upgrade_window = update_readiness.get(
+    "core_upgrade_window",
+    {},
+)
+
+readiness_available_updates = readiness_updates.get(
+    "available",
+    [],
+)
+
+if not isinstance(
+    readiness_available_updates,
+    list,
+):
+    readiness_available_updates = []
+
+readiness_pending_count = readiness_updates.get(
+    "available_count",
+    0,
+)
+
+readiness_unavailable_count = readiness_updates.get(
+    "unavailable_count",
+    0,
+)
+
+readiness_in_progress_count = readiness_updates.get(
+    "in_progress_count",
+    0,
+)
+
+readiness_issue_count = readiness_repairs.get(
+    "issue_count",
+    0,
+)
+
+readiness_unignored_count = readiness_repairs.get(
+    "unignored_count",
+    0,
+)
+
+readiness_ignored_count = readiness_repairs.get(
+    "ignored_count",
+    0,
+)
+
+readiness_relevant_count = readiness_repairs.get(
+    "relevant_to_pending_upgrade_count",
+    0,
+)
+
+readiness_relevant_unignored_count = readiness_repairs.get(
+    "relevant_unignored_count",
+    0,
+)
+
+readiness_relevant_ignored_count = readiness_repairs.get(
+    "relevant_ignored_count",
+    0,
+)
+
+readiness_already_crossed_count = readiness_repairs.get(
+    "already_crossed_count",
+    0,
+)
+
+readiness_beyond_target_count = readiness_repairs.get(
+    "beyond_pending_target_count",
+    0,
+)
+
+readiness_compatibility_assessed = bool(
+    readiness_scope.get(
+        "compatibility_assessed",
+        False,
+    )
+)
+
+readiness_external_release_notes = bool(
+    readiness_scope.get(
+        "external_release_notes_fetched",
+        False,
+    )
+)
+
+readiness_verdict_produced = bool(
+    readiness_scope.get(
+        "readiness_verdict_produced",
+        False,
+    )
+)
+
+
+# ------------------------------------------------------------
 # General values
 # ------------------------------------------------------------
 
@@ -566,7 +676,6 @@ timezone_name = (
     )
     or "UTC"
 )
-
 
 config_check = audit.get(
     "configuration_check",
@@ -590,14 +699,12 @@ if config_check.get(
 else:
     config_result = "ERROR"
 
-
 collector_errors = [
     name
     for name, status
     in collectors.items()
     if status != "ok"
 ]
-
 
 missing_includes = (
     configuration_tree.get(
@@ -620,19 +727,10 @@ missing_entities = (
     )
 )
 
-
 duplicate_automation_ids = (
     count_mapping(
         automations.get(
             "duplicate_ids"
-        )
-    )
-)
-
-all_duplicate_automation_names = (
-    count_mapping(
-        automations.get(
-            "duplicate_aliases"
         )
     )
 )
@@ -660,7 +758,6 @@ duplicate_script_names = (
         )
     )
 )
-
 
 unavailable = (
     entities.get(
@@ -692,7 +789,6 @@ not_provided = (
     )
 )
 
-
 referenced_not_provided = (
     reference_summary.get(
         "referenced_in_active_yaml",
@@ -707,11 +803,9 @@ template_review = (
     )
 )
 
-
 history_available = bool(
     history
 )
-
 
 requested_lookback_days = (
     history_policy.get(
@@ -745,7 +839,6 @@ history_window_source = (
     )
 )
 
-
 recorder_oldest_run = (
     history_policy.get(
         "recorder_oldest_run"
@@ -760,7 +853,6 @@ available_history_days = (
         "available_history_days"
     )
 )
-
 
 history_recent = (
     history_summary.get(
@@ -867,6 +959,173 @@ add(
     f"Collector errors:           "
     f"{len(collector_errors)}"
 )
+
+
+# ------------------------------------------------------------
+# Update readiness
+# ------------------------------------------------------------
+
+add("")
+add("UPDATE READINESS")
+add("-" * 58)
+
+if update_readiness_available:
+
+    add(
+        f"Pending updates:             "
+        f"{readiness_pending_count}"
+    )
+
+    if readiness_available_updates:
+        add("")
+
+        for item in readiness_available_updates:
+            category = format_update_category(
+                item.get(
+                    "category"
+                )
+            )
+
+            name = format_update_name(
+                item
+            )
+
+            installed = (
+                item.get(
+                    "installed_version"
+                )
+                or "unknown"
+            )
+
+            latest = (
+                item.get(
+                    "latest_version"
+                )
+                or "unknown"
+            )
+
+            if category in (
+                "Core",
+                "OS",
+                "Supervisor",
+            ):
+                add(
+                    f"{category}: "
+                    f"{installed} -> {latest}"
+                )
+            else:
+                add(
+                    f"{category}: "
+                    f"{name} "
+                    f"{installed} -> {latest}"
+                )
+
+    if core_upgrade_window.get(
+        "pending"
+    ):
+        add("")
+        add(
+            "Core upgrade window:         "
+            f"{core_upgrade_window.get('installed_version')}"
+            " -> "
+            f"{core_upgrade_window.get('target_version')}"
+        )
+
+    add("")
+    add(
+        f"Repair issues:               "
+        f"{readiness_issue_count}"
+    )
+
+    add(
+        f"Unignored Repairs:           "
+        f"{readiness_unignored_count}"
+    )
+
+    add(
+        f"Ignored Repairs:             "
+        f"{readiness_ignored_count}"
+    )
+
+    add(
+        f"Relevant to Core upgrade:    "
+        f"{readiness_relevant_count}"
+    )
+
+    add(
+        f"Relevant + unignored:        "
+        f"{readiness_relevant_unignored_count}"
+    )
+
+    add(
+        f"Relevant + ignored:          "
+        f"{readiness_relevant_ignored_count}"
+    )
+
+    add(
+        f"Already-crossed Repairs:     "
+        f"{readiness_already_crossed_count}"
+    )
+
+    if readiness_beyond_target_count:
+        add(
+            f"Beyond pending target:       "
+            f"{readiness_beyond_target_count}"
+        )
+
+    if readiness_unavailable_count:
+        add(
+            f"Unavailable update entities: "
+            f"{readiness_unavailable_count}"
+        )
+
+    if readiness_in_progress_count:
+        add(
+            f"Updates in progress:         "
+            f"{readiness_in_progress_count}"
+        )
+
+    add("")
+
+    add(
+        "Compatibility research:      "
+        + (
+            "ASSESSED"
+            if readiness_compatibility_assessed
+            else "NOT YET ASSESSED"
+        )
+    )
+
+    add(
+        "External release notes:      "
+        + (
+            "FETCHED"
+            if readiness_external_release_notes
+            else "NOT YET FETCHED"
+        )
+    )
+
+    add(
+        "Readiness verdict:           "
+        + (
+            "PRODUCED"
+            if readiness_verdict_produced
+            else "NOT PRODUCED"
+        )
+    )
+
+    add("")
+
+    add(
+        "This section is local evidence only unless "
+        "compatibility research is explicitly shown as assessed."
+    )
+
+else:
+
+    add(
+        "Update readiness report unavailable."
+    )
 
 
 # ------------------------------------------------------------
@@ -1045,7 +1304,6 @@ if unavailable_history_available:
     )
 
     if unavailable_history_observed_at:
-
         add(
             "Availability snapshot:       "
             + format_local_time(
@@ -1413,6 +1671,67 @@ if referenced_not_provided:
     )
 
 
+if update_readiness_available:
+
+    if readiness_relevant_unignored_count:
+
+        actions += 1
+
+        add(
+            f"[!] {readiness_relevant_unignored_count} "
+            "unignored Repair issue(s) are relevant "
+            "to the pending Core upgrade window."
+        )
+
+        add(
+            "    Review update_readiness_audit.json > "
+            "repairs > relevant_unignored before "
+            "installing the Core update."
+        )
+
+    if (
+        readiness_pending_count
+        and not readiness_compatibility_assessed
+    ):
+
+        actions += 1
+
+        add(
+            f"[i] {readiness_pending_count} update(s) "
+            "are pending."
+        )
+
+        add(
+            "    Local update and Repair evidence has "
+            "been collected, but external release-note "
+            "and compatibility analysis is not yet assessed."
+        )
+
+        add(
+            "    Do not interpret this local-only result "
+            "as a safe-to-update verdict."
+        )
+
+else:
+
+    if updates.get(
+        "available_count",
+        0,
+    ):
+
+        actions += 1
+
+        add(
+            "[!] Update readiness context was not "
+            "available for pending updates."
+        )
+
+        add(
+            "    Check the HA Audit log for an "
+            "update readiness scanner failure."
+        )
+
+
 if availability_available:
 
     if whole_device_devices:
@@ -1436,7 +1755,6 @@ if availability_available:
             "if more context is needed."
         )
 
-
     if partial_devices:
 
         actions += 1
@@ -1456,7 +1774,6 @@ if availability_available:
             "availability context rather than a "
             "whole-device fault verdict."
         )
-
 
     if ungrouped_entities:
 
@@ -1708,9 +2025,8 @@ if orphan_yaml:
 if actions == 0:
 
     add(
-        "No immediate "
-        "configuration or availability "
-        "actions were identified "
+        "No immediate configuration, availability, "
+        "or update-readiness actions were identified "
         "by this audit."
     )
 
@@ -1768,45 +2084,23 @@ add("")
 
 add("Files:")
 
-add(
-    "  audit_snapshot.json"
-)
+for report_file in (
+    "audit_snapshot.json",
+    "audit_snapshot_previous.json",
+    "config_inventory.json",
+    "quality_audit.json",
+    "not_provided_reference_audit.json",
+    "recorder_health_audit.json",
+    "not_provided_history_audit.json",
+    "availability_audit.json",
+    "unavailable_history_audit.json",
+    "update_readiness_audit.json",
+    "ha_audit_latest.txt",
+):
 
-add(
-    "  audit_snapshot_previous.json"
-)
-
-add(
-    "  config_inventory.json"
-)
-
-add(
-    "  quality_audit.json"
-)
-
-add(
-    "  not_provided_reference_audit.json"
-)
-
-add(
-    "  recorder_health_audit.json"
-)
-
-add(
-    "  not_provided_history_audit.json"
-)
-
-add(
-    "  availability_audit.json"
-)
-
-add(
-    "  unavailable_history_audit.json"
-)
-
-add(
-    "  ha_audit_latest.txt"
-)
+    add(
+        f"  {report_file}"
+    )
 
 add("")
 
