@@ -277,8 +277,8 @@ def scanworthy_code_terms(values):
         #
         # switch.<device>_fireplace_mode
         #
-        # are useful official evidence but should not be
-        # treated as literal local-search terms.
+        # are useful official evidence but are not safe
+        # literal local-search terms.
         if (
             "<" in term
             and ">" in term
@@ -498,11 +498,23 @@ def scan_files_for_terms(
 
     if not terms:
         return {
-            "files_checked": 0,
-            "failures": [],
-            "term_matches": {},
-            "matched_term_count": 0,
-            "matched_file_count": 0,
+            "requested_term_count":
+                0,
+
+            "files_checked":
+                0,
+
+            "failures":
+                [],
+
+            "term_matches":
+                {},
+
+            "matched_term_count":
+                0,
+
+            "matched_file_count":
+                0,
         }
 
     for path in unique(
@@ -568,6 +580,11 @@ def scan_files_for_terms(
     }
 
     return {
+        "requested_term_count":
+            len(
+                terms
+            ),
+
         "files_checked":
             files_checked,
 
@@ -931,7 +948,7 @@ active_yaml_paths = (
 
 
 # ------------------------------------------------------------
-# Select crossed official backward-incompatible change groups
+# Select crossed official backward-incompatible-change groups
 # ------------------------------------------------------------
 
 official_groups = [
@@ -1005,7 +1022,7 @@ for group in official_groups:
 
 
     # --------------------------------------------------------
-    # Direct local integration/platform evidence
+    # Direct local surfaces
     # --------------------------------------------------------
 
     configured_domain_matches = [
@@ -1052,8 +1069,25 @@ for group in official_groups:
     ]
 
 
+    component_only_matches = [
+        domain
+
+        for domain
+        in loaded_component_matches
+
+        if (
+            domain
+            not in configured_domain_matches
+            and domain
+            not in platform_matches
+            and domain
+            not in active_custom_matches
+        )
+    ]
+
+
     # --------------------------------------------------------
-    # Weaker heading-based relationship
+    # Weaker heading relationship
     # --------------------------------------------------------
 
     heading_matches = (
@@ -1077,7 +1111,15 @@ for group in official_groups:
 
 
     # --------------------------------------------------------
-    # Active YAML code-term evidence
+    # Active YAML term evidence
+    #
+    # This is deliberately GLOBAL / UNSCOPED evidence.
+    #
+    # A term such as battery_level may appear in YAML for
+    # reasons completely unrelated to the official change.
+    # Therefore a global YAML literal match is supporting
+    # evidence only and cannot by itself create a strong
+    # correlation.
     # --------------------------------------------------------
 
     yaml_scan = scan_files_for_terms(
@@ -1094,16 +1136,7 @@ for group in official_groups:
 
 
     # --------------------------------------------------------
-    # Determine which active custom integrations are relevant
-    # enough to inspect.
-    #
-    # Example:
-    #
-    # official Vacuum change
-    #   -> local vacuum platform
-    #   -> integrations matter / robovac / tuya
-    #   -> robovac is active custom integration
-    #   -> inspect robovac source for official code terms
+    # Relevant custom integration discovery
     # --------------------------------------------------------
 
     relevant_custom_domains = set(
@@ -1148,7 +1181,13 @@ for group in official_groups:
 
 
     # --------------------------------------------------------
-    # Relevant custom-source code-term evidence
+    # Relevant custom-source code evidence
+    #
+    # Unlike global YAML matching, this is scoped to a custom
+    # integration already connected to the official local
+    # platform/domain relationship.
+    #
+    # This can therefore provide strong correlation evidence.
     # --------------------------------------------------------
 
     custom_source_scans = []
@@ -1156,94 +1195,91 @@ for group in official_groups:
     custom_source_matched_terms = set()
 
 
-    for domain in sorted(
-        relevant_custom_domains
-    ):
-        (
-            source_paths,
-            discovery_error,
-        ) = collect_custom_source_paths(
-            domain,
-            custom_components_root,
-        )
+    if scan_terms:
+        for domain in sorted(
+            relevant_custom_domains
+        ):
+            (
+                source_paths,
+                discovery_error,
+            ) = collect_custom_source_paths(
+                domain,
+                custom_components_root,
+            )
 
-        source_scan = scan_files_for_terms(
-            source_paths,
-            scan_terms,
-        )
+            source_scan = scan_files_for_terms(
+                source_paths,
+                scan_terms,
+            )
 
-        if discovery_error:
-            custom_source_scan_failures.append(
+            if discovery_error:
+                custom_source_scan_failures.append(
+                    {
+                        "domain":
+                            domain,
+
+                        "error":
+                            discovery_error,
+                    }
+                )
+
+            custom_source_matched_terms.update(
+                source_scan.get(
+                    "term_matches",
+                    {},
+                )
+            )
+
+            custom_source_scans.append(
                 {
                     "domain":
                         domain,
 
-                    "error":
+                    "source_file_count":
+                        len(
+                            source_paths
+                        ),
+
+                    "source_discovery_error":
                         discovery_error,
+
+                    "files_checked":
+                        source_scan.get(
+                            "files_checked",
+                            0,
+                        ),
+
+                    "matched_term_count":
+                        source_scan.get(
+                            "matched_term_count",
+                            0,
+                        ),
+
+                    "term_matches":
+                        source_scan.get(
+                            "term_matches",
+                            {},
+                        ),
+
+                    "read_failures":
+                        source_scan.get(
+                            "failures",
+                            [],
+                        ),
                 }
             )
 
-        custom_source_matched_terms.update(
-            source_scan.get(
-                "term_matches",
-                {},
-            )
-        )
-
-        custom_source_scans.append(
-            {
-                "domain":
-                    domain,
-
-                "source_file_count":
-                    len(
-                        source_paths
-                    ),
-
-                "source_discovery_error":
-                    discovery_error,
-
-                "files_checked":
-                    source_scan.get(
-                        "files_checked",
-                        0,
-                    ),
-
-                "matched_term_count":
-                    source_scan.get(
-                        "matched_term_count",
-                        0,
-                    ),
-
-                "term_matches":
-                    source_scan.get(
-                        "term_matches",
-                        {},
-                    ),
-
-                "read_failures":
-                    source_scan.get(
-                        "failures",
-                        [],
-                    ),
-            }
-        )
-
 
     # --------------------------------------------------------
-    # Evidence classification
-    #
-    # These are correlation statuses only.
-    #
-    # They do NOT mean:
-    #   affected
-    #   unaffected
-    #   compatible
-    #   incompatible
-    #   safe to update
+    # Evidence dimensions
     # --------------------------------------------------------
 
-    direct_evidence_present = bool(
+    specific_custom_source_evidence = bool(
+        custom_source_matched_terms
+    )
+
+
+    local_surface_evidence = bool(
         configured_domain_matches
         or loaded_component_matches
         or platform_matches
@@ -1251,46 +1287,60 @@ for group in official_groups:
     )
 
 
-    literal_code_evidence_present = bool(
+    unscoped_yaml_evidence = bool(
         yaml_scan.get(
             "matched_term_count"
         )
-        or custom_source_matched_terms
     )
 
 
-    heading_evidence_present = bool(
+    heading_evidence = bool(
         heading_matches
     )
 
 
-    if (
-        direct_evidence_present
-        or literal_code_evidence_present
-    ):
+    # --------------------------------------------------------
+    # Correlation classification
+    #
+    # IMPORTANT:
+    #
+    # strong_local_evidence
+    #   = specific code-term evidence inside a relevant
+    #     active custom integration.
+    #
+    # local_surface_evidence
+    #   = the relevant component/integration/platform exists,
+    #     but the affected usage has not been demonstrated.
+    #
+    # partial_local_evidence
+    #   = weaker heading relationship or global/unscoped
+    #     YAML code-term occurrence.
+    #
+    # None of these mean "affected".
+    # --------------------------------------------------------
+
+    if specific_custom_source_evidence:
         correlation_status = (
             "strong_local_evidence"
         )
 
-    elif heading_evidence_present:
+    elif local_surface_evidence:
+        correlation_status = (
+            "local_surface_evidence"
+        )
+
+    elif (
+        unscoped_yaml_evidence
+        or heading_evidence
+    ):
         correlation_status = (
             "partial_local_evidence"
         )
 
-    elif official_domains:
-        correlation_status = (
-            "no_local_evidence"
-        )
-
     elif (
-        scan_terms
-        and not active_yaml_paths
+        official_domains
+        or scan_terms
     ):
-        correlation_status = (
-            "insufficient_evidence"
-        )
-
-    elif scan_terms:
         correlation_status = (
             "no_local_evidence"
         )
@@ -1306,14 +1356,29 @@ for group in official_groups:
     ] += 1
 
 
+    # --------------------------------------------------------
+    # Human-readable interpretation
+    # --------------------------------------------------------
+
     if (
         correlation_status
         == "strong_local_evidence"
     ):
         interpretation = (
-            "Local evidence relevant to the official "
-            "change was found. This does not mean the "
-            "installation is affected."
+            "Specific official code-term evidence was found "
+            "inside a relevant active custom integration. "
+            "This is strong correlation evidence but does not "
+            "mean the installation is affected."
+        )
+
+    elif (
+        correlation_status
+        == "local_surface_evidence"
+    ):
+        interpretation = (
+            "A directly relevant local component, integration, "
+            "or entity platform exists, but this scanner has not "
+            "demonstrated that the affected usage is present."
         )
 
     elif (
@@ -1321,9 +1386,9 @@ for group in official_groups:
         == "partial_local_evidence"
     ):
         interpretation = (
-            "A weaker local identifier relationship was "
-            "found, but no direct official-domain or "
-            "literal code-term evidence was confirmed."
+            "Only weaker heading or global unscoped YAML-term "
+            "evidence was found. This is supporting evidence "
+            "only."
         )
 
     elif (
@@ -1331,9 +1396,9 @@ for group in official_groups:
         == "no_local_evidence"
     ):
         interpretation = (
-            "No local evidence was found for the official "
-            "integration or platform identifiers available "
-            "for this change."
+            "No relevant local evidence was found in the "
+            "evidence classes inspected for this official "
+            "change."
         )
 
     else:
@@ -1343,6 +1408,10 @@ for group in official_groups:
             "classification."
         )
 
+
+    # --------------------------------------------------------
+    # Store result
+    # --------------------------------------------------------
 
     results.append(
         {
@@ -1371,12 +1440,29 @@ for group in official_groups:
             "scanworthy_code_terms":
                 scan_terms,
 
+            "evidence_dimensions": {
+                "specific_custom_source_code":
+                    specific_custom_source_evidence,
+
+                "direct_local_surface":
+                    local_surface_evidence,
+
+                "global_unscoped_yaml_term":
+                    unscoped_yaml_evidence,
+
+                "heading_identifier":
+                    heading_evidence,
+            },
+
             "local_evidence": {
                 "configured_domain_matches":
                     configured_domain_matches,
 
                 "loaded_component_matches":
                     loaded_component_matches,
+
+                "component_only_matches":
+                    component_only_matches,
 
                 "platform_matches":
                     platform_matches,
@@ -1396,6 +1482,12 @@ for group in official_groups:
                             active_yaml_paths
                         ),
 
+                    "scope":
+                        "global_active_yaml_unscoped",
+
+                    "classification_role":
+                        "supporting_only",
+
                     "files_checked":
                         yaml_scan.get(
                             "files_checked",
@@ -1405,6 +1497,12 @@ for group in official_groups:
                     "matched_term_count":
                         yaml_scan.get(
                             "matched_term_count",
+                            0,
+                        ),
+
+                    "matched_file_count":
+                        yaml_scan.get(
+                            "matched_file_count",
                             0,
                         ),
 
@@ -1422,6 +1520,12 @@ for group in official_groups:
                 },
 
                 "custom_source": {
+                    "scope":
+                        "relevant_active_custom_integrations",
+
+                    "classification_role":
+                        "specific_evidence",
+
                     "relevant_domains":
                         sorted(
                             relevant_custom_domains
@@ -1487,11 +1591,16 @@ reference_validation = {
 
 
 # ------------------------------------------------------------
-# Report
+# Summary counts
 # ------------------------------------------------------------
 
 strong_count = status_counts.get(
     "strong_local_evidence",
+    0,
+)
+
+surface_count = status_counts.get(
+    "local_surface_evidence",
     0,
 )
 
@@ -1510,6 +1619,17 @@ insufficient_count = status_counts.get(
     0,
 )
 
+
+groups_with_any_evidence = (
+    strong_count
+    + surface_count
+    + partial_count
+)
+
+
+# ------------------------------------------------------------
+# Collector status
+# ------------------------------------------------------------
 
 input_status = {
     "release_evidence":
@@ -1558,6 +1678,7 @@ elif (
         "overall"
     )
     != "ok"
+    or not quality
 ):
     overall_status = (
         "partial"
@@ -1568,6 +1689,10 @@ else:
         "ok"
     )
 
+
+# ------------------------------------------------------------
+# Final report
+# ------------------------------------------------------------
 
 report = {
     "audit_version":
@@ -1581,6 +1706,9 @@ report = {
     "scope": {
         "phase":
             "dynamic_upgrade_correlation_foundation",
+
+        "evidence_model_version":
+            2,
 
         "external_fetch_performed":
             False,
@@ -1610,6 +1738,47 @@ report = {
             "and custom-source evidence. Correlation is not "
             "proof of impact, compatibility, incompatibility, "
             "or update safety."
+        ),
+    },
+
+    "evidence_model": {
+        "strong_local_evidence": (
+            "Specific official code-term evidence was found "
+            "inside a relevant active custom integration."
+        ),
+
+        "local_surface_evidence": (
+            "A directly relevant local integration, component, "
+            "or entity platform exists, but affected usage has "
+            "not been demonstrated."
+        ),
+
+        "partial_local_evidence": (
+            "Only weaker heading or global unscoped YAML-term "
+            "evidence was found."
+        ),
+
+        "no_local_evidence": (
+            "No relevant evidence was found in the evidence "
+            "classes inspected."
+        ),
+
+        "insufficient_evidence": (
+            "Available evidence was insufficient for a useful "
+            "correlation classification."
+        ),
+
+        "global_yaml_policy": (
+            "Global active-YAML literal matches are supporting "
+            "evidence only because a term may occur for reasons "
+            "unrelated to the official change."
+        ),
+
+        "custom_source_policy": (
+            "A code-term match inside a relevant active custom "
+            "integration is treated as specific correlation "
+            "evidence because the source scan is scoped through "
+            "an established local platform/domain relationship."
         ),
     },
 
@@ -1693,6 +1862,9 @@ report = {
         "strong_local_evidence_count":
             strong_count,
 
+        "local_surface_evidence_count":
+            surface_count,
+
         "partial_local_evidence_count":
             partial_count,
 
@@ -1703,13 +1875,13 @@ report = {
             insufficient_count,
 
         "groups_with_any_local_evidence_count":
-            (
-                strong_count
-                + partial_count
-            ),
+            groups_with_any_evidence,
 
         "groups_without_local_evidence_count":
             no_local_count,
+
+        "groups_with_specific_code_evidence_count":
+            strong_count,
     },
 
     "correlations":
@@ -1720,16 +1892,28 @@ report = {
 
     "limitations": [
         (
-            "Strong local evidence means the official change "
-            "has a direct local integration/platform match or "
-            "literal code-term evidence. It does not mean the "
-            "installation is affected."
+            "Strong local evidence is still correlation "
+            "evidence only. A relevant custom integration may "
+            "contain a code term without exercising the affected "
+            "behaviour."
         ),
 
         (
-            "Partial local evidence is intentionally weaker "
-            "and must not be treated as proof that a feature "
-            "is configured or affected."
+            "Local surface evidence means a relevant local "
+            "component, integration, or platform exists. It does "
+            "not demonstrate that the affected feature is used."
+        ),
+
+        (
+            "Global YAML code-term matches are deliberately "
+            "unscoped and cannot by themselves produce strong "
+            "correlation."
+        ),
+
+        (
+            "Partial local evidence is intentionally weak and "
+            "must not be treated as proof that a feature is "
+            "configured or affected."
         ),
 
         (
@@ -1745,6 +1929,14 @@ report = {
             "may remain uninspected."
         ),
     ],
+
+    "scan_diagnostics": {
+        "active_yaml_read_failures":
+            all_yaml_failures,
+
+        "custom_source_scan_failures":
+            custom_source_scan_failures,
+    },
 
     "collector_status": {
         **input_status,
@@ -1804,8 +1996,13 @@ print(
 )
 
 print(
-    f"Strong local evidence:        "
+    f"Strong specific evidence:     "
     f"{strong_count}"
+)
+
+print(
+    f"Local surface evidence:       "
+    f"{surface_count}"
 )
 
 print(
@@ -1824,6 +2021,11 @@ print(
 )
 
 print("")
+
+print(
+    f"Groups with any evidence:     "
+    f"{groups_with_any_evidence}"
+)
 
 print(
     f"Active YAML paths found:      "
