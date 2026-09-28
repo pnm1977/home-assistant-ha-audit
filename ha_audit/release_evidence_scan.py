@@ -20,8 +20,7 @@ OFFICIAL_HOSTS = {
 }
 
 RELEASE_CATEGORY_URL = (
-    "https://www.home-assistant.io/"
-    "blog/categories/release-notes/"
+    "https://www.home-assistant.io/blog/categories/release-notes/"
 )
 
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
@@ -46,7 +45,9 @@ def load_json_optional(path):
             "r",
             encoding="utf-8",
         ) as handle:
-            return json.load(handle)
+            return json.load(
+                handle
+            )
 
     except Exception:
         return {}
@@ -164,17 +165,28 @@ def fetch_html(
     url,
 ):
     result = {
-        "purpose": purpose,
-        "url": url,
-        "status": "not_started",
-        "final_url": None,
-        "http_status": None,
-        "content_type": None,
-        "etag": None,
-        "last_modified": None,
-        "content_sha256": None,
-        "response_bytes": None,
-        "error": None,
+        "purpose":
+            purpose,
+        "url":
+            url,
+        "status":
+            "not_started",
+        "final_url":
+            None,
+        "http_status":
+            None,
+        "content_type":
+            None,
+        "etag":
+            None,
+        "last_modified":
+            None,
+        "content_sha256":
+            None,
+        "response_bytes":
+            None,
+        "error":
+            None,
     }
 
     if not is_official_url(
@@ -378,18 +390,20 @@ class LinkParser(
         self,
         data,
     ):
-        if self._skip:
+        if (
+            self._skip
+            or self._href is None
+        ):
             return
 
-        if self._href is not None:
-            text = clean(
-                data
-            )
+        text = clean(
+            data
+        )
 
-            if text:
-                self._text.append(
-                    text
-                )
+        if text:
+            self._text.append(
+                text
+            )
 
 
 # ------------------------------------------------------------
@@ -399,6 +413,13 @@ class LinkParser(
 class ReleaseParser(
     HTMLParser
 ):
+    """
+    Parses the Backward-incompatible changes section.
+
+    Home Assistant currently renders each change from a details block,
+    producing HTML details/summary elements. h3 headings remain supported
+    as a fallback for older or future page structures.
+    """
 
     def __init__(
         self,
@@ -421,16 +442,50 @@ class ReleaseParser(
         self.trailing_notes = ""
 
         self._skip = 0
+        self._in_section = False
 
         self._heading_level = None
         self._heading_id = None
         self._heading_text = []
 
-        self._in_section = False
         self._current = None
+        self._current_structure = None
+        self._seen_item = False
+
+        self._in_summary = False
+        self._summary_text = []
 
         self._code = False
         self._code_text = []
+
+        self._trailing = []
+
+    def _start_item(
+        self,
+        heading=None,
+        structure=None,
+    ):
+        if self._current:
+            self._finish_item()
+
+        self._current = {
+            "heading":
+                clean(
+                    heading
+                )
+                or None,
+            "_text":
+                [],
+            "links":
+                [],
+            "code_terms":
+                [],
+            "source_structure":
+                structure,
+        }
+
+        self._current_structure = structure
+        self._seen_item = True
 
     def _finish_item(
         self,
@@ -467,11 +522,23 @@ class ReleaseParser(
             )
         )
 
-        self.items.append(
-            self._current
-        )
+        if (
+            self._current.get(
+                "heading"
+            )
+            or self._current.get(
+                "text"
+            )
+        ):
+            self.items.append(
+                self._current
+            )
 
         self._current = None
+        self._current_structure = None
+
+        self._in_summary = False
+        self._summary_text = []
 
     def _finish_heading(
         self,
@@ -517,15 +584,12 @@ class ReleaseParser(
         if (
             level == 3
             and self._in_section
+            and not self._current
         ):
-            self._finish_item()
-
-            self._current = {
-                "heading": text,
-                "_text": [],
-                "links": [],
-                "code_terms": [],
-            }
+            self._start_item(
+                heading=text,
+                structure="h3",
+            )
 
     def handle_starttag(
         self,
@@ -608,6 +672,14 @@ class ReleaseParser(
                 self._finish_item()
                 self._in_section = False
 
+            elif (
+                level == 3
+                and self._in_section
+                and self._current_structure
+                == "h3"
+            ):
+                self._finish_item()
+
             self._heading_level = level
 
             self._heading_id = attrs.get(
@@ -615,6 +687,26 @@ class ReleaseParser(
             )
 
             self._heading_text = []
+
+            return
+
+        if (
+            tag == "details"
+            and self._in_section
+        ):
+            self._start_item(
+                structure="details",
+            )
+
+            return
+
+        if (
+            tag == "summary"
+            and self._in_section
+            and self._current
+        ):
+            self._in_summary = True
+            self._summary_text = []
 
             return
 
@@ -633,6 +725,7 @@ class ReleaseParser(
                         "href"
                     ]
                 )
+
             else:
                 self.section_links.append(
                     attrs[
@@ -664,7 +757,8 @@ class ReleaseParser(
             return
 
         if (
-            tag in (
+            tag
+            in (
                 "h1",
                 "h2",
                 "h3",
@@ -677,6 +771,38 @@ class ReleaseParser(
             )
         ):
             self._finish_heading()
+            return
+
+        if (
+            tag == "summary"
+            and self._in_summary
+        ):
+            heading = clean(
+                " ".join(
+                    self._summary_text
+                )
+            )
+
+            if (
+                self._current
+                and heading
+            ):
+                self._current[
+                    "heading"
+                ] = heading
+
+            self._in_summary = False
+            self._summary_text = []
+
+            return
+
+        if (
+            tag == "details"
+            and self._in_section
+            and self._current_structure
+            == "details"
+        ):
+            self._finish_item()
             return
 
         if (
@@ -696,6 +822,7 @@ class ReleaseParser(
                     ].append(
                         term
                     )
+
                 else:
                     self.section_code_terms.append(
                         term
@@ -732,6 +859,13 @@ class ReleaseParser(
         if not self._in_section:
             return
 
+        if self._in_summary:
+            self._summary_text.append(
+                text
+            )
+
+            return
+
         if self._code:
             self._code_text.append(
                 text
@@ -743,6 +877,12 @@ class ReleaseParser(
             ].append(
                 text
             )
+
+        elif self._seen_item:
+            self._trailing.append(
+                text
+            )
+
         else:
             self.intro.append(
                 text
@@ -753,10 +893,11 @@ class ReleaseParser(
     ):
         super().close()
 
-        if self._in_section:
+        if self._current:
             self._finish_item()
-            self._in_section = False
 
+        # Fallback for heading-based pages where developer notes
+        # might remain attached to the final h3 block.
         marker = (
             "If you are a custom integration developer"
         )
@@ -776,12 +917,15 @@ class ReleaseParser(
             )
 
             if position >= 0:
-                self.trailing_notes = clean(
-                    last[
-                        "text"
-                    ][
-                        position:
-                    ]
+                self._trailing.insert(
+                    0,
+                    clean(
+                        last[
+                            "text"
+                        ][
+                            position:
+                        ]
+                    ),
                 )
 
                 last[
@@ -794,9 +938,17 @@ class ReleaseParser(
                     ]
                 )
 
+        self.trailing_notes = clean(
+            " ".join(
+                self._trailing
+            )
+        )
+
+        self._in_section = False
+
 
 # ------------------------------------------------------------
-# Release notes discovery
+# Release-note discovery
 # ------------------------------------------------------------
 
 def score_release_link(
@@ -1023,7 +1175,7 @@ def discover_release_url(
 
 
 # ------------------------------------------------------------
-# Release notes extraction
+# Release-note extraction
 # ------------------------------------------------------------
 
 def absolute_links(
@@ -1080,7 +1232,60 @@ def parse_release_notes(
                         ),
                         release_url,
                     ),
+                "source_structure":
+                    item.get(
+                        "source_structure"
+                    ),
             }
+        )
+
+    all_section_code_terms = unique(
+        list(
+            parser.section_code_terms
+        )
+        + [
+            term
+            for item in items
+            for term
+            in item.get(
+                "code_terms",
+                [],
+            )
+        ]
+    )
+
+    all_section_links = unique(
+        absolute_links(
+            parser.section_links,
+            release_url,
+        )
+        + [
+            link
+            for item in items
+            for link
+            in item.get(
+                "links",
+                [],
+            )
+        ]
+    )
+
+    if (
+        parser.section_found
+        and items
+    ):
+        segmentation_status = (
+            "structured"
+        )
+
+    elif parser.section_found:
+        segmentation_status = (
+            "unstructured"
+        )
+
+    else:
+        segmentation_status = (
+            "section_not_found"
         )
 
     page_text = clean(
@@ -1113,6 +1318,8 @@ def parse_release_notes(
                 len(
                     items
                 ),
+            "segmentation_status":
+                segmentation_status,
             "intro":
                 clean(
                     " ".join(
@@ -1120,14 +1327,9 @@ def parse_release_notes(
                     )
                 ),
             "section_code_terms":
-                unique(
-                    parser.section_code_terms
-                ),
+                all_section_code_terms,
             "section_links":
-                absolute_links(
-                    parser.section_links,
-                    release_url,
-                ),
+                all_section_links,
             "items":
                 items,
             "trailing_notes":
@@ -1320,6 +1522,8 @@ report = {
                 False,
             "item_count":
                 0,
+            "segmentation_status":
+                "not_run",
             "intro":
                 "",
             "section_code_terms":
@@ -1421,11 +1625,31 @@ if applicable:
                     target_version,
                 )
 
+                backward = (
+                    report[
+                        "release_notes"
+                    ][
+                        "backward_incompatible_changes"
+                    ]
+                )
+
                 report[
                     "collector_status"
                 ][
                     "release_notes_parse"
-                ] = "ok"
+                ] = (
+                    "ok"
+                    if (
+                        backward.get(
+                            "section_found"
+                        )
+                        and backward.get(
+                            "item_count",
+                            0,
+                        ) > 0
+                    )
+                    else "partial"
+                )
 
             except Exception as error:
                 report[
@@ -1521,6 +1745,7 @@ with open(
 # ------------------------------------------------------------
 
 print("")
+
 print(
     "Official release evidence"
 )
@@ -1581,6 +1806,11 @@ if applicable:
     print(
         "Breaking-change headings:      "
         f"{backward.get('item_count', 0)}"
+    )
+
+    print(
+        "Segmentation status:           "
+        f"{backward.get('segmentation_status', 'unknown')}"
     )
 
     print(
