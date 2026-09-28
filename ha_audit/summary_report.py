@@ -17,6 +17,8 @@ HISTORY_FILE = "/config/not_provided_history_audit.json"
 AVAILABILITY_FILE = "/config/availability_audit.json"
 UNAVAILABLE_HISTORY_FILE = "/config/unavailable_history_audit.json"
 UPDATE_READINESS_FILE = "/config/update_readiness_audit.json"
+UPGRADE_IMPACT_FILE = "/config/upgrade_impact_audit.json"
+UPGRADE_COMPATIBILITY_FILE = "/config/upgrade_compatibility_audit.json"
 
 OUTPUT_FILE = "/config/ha_audit_latest.txt"
 
@@ -202,6 +204,27 @@ def format_update_name(item):
     )
 
 
+def format_rule_pack(rule_pack):
+    value = str(
+        rule_pack
+        or "unknown"
+    )
+
+    prefix = "home_assistant_core_"
+
+    if value.startswith(
+        prefix
+    ):
+        return value[
+            len(prefix):
+        ].replace(
+            "_",
+            ".",
+        )
+
+    return value
+
+
 # ------------------------------------------------------------
 # Load reports
 # ------------------------------------------------------------
@@ -236,6 +259,14 @@ unavailable_history = load_json_optional(
 
 update_readiness = load_json_optional(
     UPDATE_READINESS_FILE
+)
+
+upgrade_impact = load_json_optional(
+    UPGRADE_IMPACT_FILE
+)
+
+upgrade_compatibility = load_json_optional(
+    UPGRADE_COMPATIBILITY_FILE
 )
 
 
@@ -667,6 +698,170 @@ readiness_verdict_produced = bool(
 
 
 # ------------------------------------------------------------
+# Upgrade compatibility data
+# ------------------------------------------------------------
+
+upgrade_impact_available = bool(
+    upgrade_impact
+)
+
+upgrade_compatibility_available = bool(
+    upgrade_compatibility
+)
+
+compatibility_scope = upgrade_compatibility.get(
+    "scope",
+    {},
+)
+
+compatibility_window = upgrade_compatibility.get(
+    "core_upgrade_window",
+    {},
+)
+
+compatibility_coverage = upgrade_compatibility.get(
+    "coverage",
+    {},
+)
+
+compatibility_summary = upgrade_compatibility.get(
+    "summary",
+    {},
+)
+
+if not isinstance(
+    compatibility_scope,
+    dict,
+):
+    compatibility_scope = {}
+
+if not isinstance(
+    compatibility_window,
+    dict,
+):
+    compatibility_window = {}
+
+if not isinstance(
+    compatibility_coverage,
+    dict,
+):
+    compatibility_coverage = {}
+
+if not isinstance(
+    compatibility_summary,
+    dict,
+):
+    compatibility_summary = {}
+
+compatibility_status_counts = compatibility_summary.get(
+    "status_counts",
+    {},
+)
+
+if not isinstance(
+    compatibility_status_counts,
+    dict,
+):
+    compatibility_status_counts = {}
+
+compatibility_rule_count = compatibility_summary.get(
+    "rule_count",
+    0,
+)
+
+compatibility_review_required_count = compatibility_summary.get(
+    "review_required_count",
+    0,
+)
+
+compatibility_manual_review_count = compatibility_summary.get(
+    "manual_review_count",
+    0,
+)
+
+compatibility_no_local_match_count = compatibility_status_counts.get(
+    "no_local_match",
+    0,
+)
+
+compatibility_no_affected_statuses = (
+    "local_match_no_active_yaml_usage_found",
+    "local_match_no_affected_custom_usage_found",
+    "local_match_no_affected_usage_found",
+    "local_match_core_integrations_only",
+)
+
+compatibility_no_affected_count = sum(
+    compatibility_status_counts.get(
+        status,
+        0,
+    )
+    for status
+    in compatibility_no_affected_statuses
+)
+
+compatibility_other_outcome_count = max(
+    0,
+    compatibility_rule_count
+    - compatibility_no_local_match_count
+    - compatibility_no_affected_count
+    - compatibility_review_required_count
+    - compatibility_manual_review_count,
+)
+
+compatibility_rule_pack = compatibility_scope.get(
+    "rule_pack"
+)
+
+compatibility_rule_pack_label = format_rule_pack(
+    compatibility_rule_pack
+)
+
+compatibility_assessed = bool(
+    upgrade_compatibility_available
+    and compatibility_rule_count
+)
+
+compatibility_runtime_fetch = bool(
+    compatibility_scope.get(
+        "external_fetch_performed",
+        False,
+    )
+)
+
+compatibility_verdict_produced = bool(
+    compatibility_scope.get(
+        "readiness_verdict_produced",
+        False,
+    )
+    or readiness_verdict_produced
+)
+
+compatibility_active_yaml_count = compatibility_coverage.get(
+    "active_yaml_file_count",
+    0,
+)
+
+compatibility_yaml_failures = compatibility_coverage.get(
+    "active_yaml_read_failures",
+    [],
+)
+
+if not isinstance(
+    compatibility_yaml_failures,
+    list,
+):
+    compatibility_yaml_failures = []
+
+compatibility_ui_prompts_inspected = bool(
+    compatibility_coverage.get(
+        "ui_managed_prompt_content_inspected",
+        False,
+    )
+)
+
+
+# ------------------------------------------------------------
 # General values
 # ------------------------------------------------------------
 
@@ -1087,21 +1282,29 @@ if update_readiness_available:
 
     add("")
 
-    add(
-        "Compatibility research:      "
-        + (
-            "ASSESSED"
-            if readiness_compatibility_assessed
-            else "NOT YET ASSESSED"
+    if core_upgrade_window.get(
+        "pending"
+    ):
+        add(
+            "Compatibility rules:         "
+            + (
+                "ASSESSED"
+                if compatibility_assessed
+                else "NOT YET ASSESSED"
+            )
         )
-    )
+    else:
+        add(
+            "Compatibility rules:         "
+            "NOT APPLICABLE"
+        )
 
     add(
-        "External release notes:      "
+        "Runtime release-note fetch:  "
         + (
-            "FETCHED"
-            if readiness_external_release_notes
-            else "NOT YET FETCHED"
+            "PERFORMED"
+            if compatibility_runtime_fetch
+            else "NOT PERFORMED"
         )
     )
 
@@ -1109,7 +1312,7 @@ if update_readiness_available:
         "Readiness verdict:           "
         + (
             "PRODUCED"
-            if readiness_verdict_produced
+            if compatibility_verdict_produced
             else "NOT PRODUCED"
         )
     )
@@ -1117,14 +1320,137 @@ if update_readiness_available:
     add("")
 
     add(
-        "This section is local evidence only unless "
-        "compatibility research is explicitly shown as assessed."
+        "Update and Repair evidence is local. "
+        "When compatibility rules are assessed, "
+        "they are shown separately below."
     )
 
 else:
 
     add(
         "Update readiness report unavailable."
+    )
+
+
+# ------------------------------------------------------------
+# Upgrade compatibility
+# ------------------------------------------------------------
+
+add("")
+add("UPGRADE COMPATIBILITY")
+add("-" * 58)
+
+if upgrade_compatibility_available:
+
+    if compatibility_rule_count:
+        add(
+            f"Core rule pack:              "
+            f"{compatibility_rule_pack_label}"
+        )
+
+        add(
+            "Upgrade window:              "
+            f"{compatibility_window.get('installed_version')}"
+            " -> "
+            f"{compatibility_window.get('target_version')}"
+        )
+
+        add(
+            f"Rules assessed:              "
+            f"{compatibility_rule_count}"
+        )
+
+        add("")
+
+        add(
+            f"No local match:              "
+            f"{compatibility_no_local_match_count}"
+        )
+
+        add(
+            f"Local match, no affected use: "
+            f"{compatibility_no_affected_count}"
+        )
+
+        add(
+            f"Review required:             "
+            f"{compatibility_review_required_count}"
+        )
+
+        add(
+            f"Manual review:               "
+            f"{compatibility_manual_review_count}"
+        )
+
+        if compatibility_other_outcome_count:
+            add(
+                f"Other local outcomes:        "
+                f"{compatibility_other_outcome_count}"
+            )
+
+        add("")
+
+        add(
+            f"Active YAML checked:         "
+            f"{compatibility_active_yaml_count}"
+        )
+
+        add(
+            f"YAML scan failures:          "
+            f"{len(compatibility_yaml_failures)}"
+        )
+
+        add("")
+
+        add(
+            "LLM UI-managed prompts:      "
+            + (
+                "INSPECTED"
+                if compatibility_ui_prompts_inspected
+                else "NOT INSPECTED"
+            )
+        )
+
+        add(
+            "Runtime release-note fetch:  "
+            + (
+                "PERFORMED"
+                if compatibility_runtime_fetch
+                else "NOT PERFORMED"
+            )
+        )
+
+        add(
+            "Readiness verdict:           "
+            + (
+                "PRODUCED"
+                if compatibility_verdict_produced
+                else "NOT PRODUCED"
+            )
+        )
+
+        add("")
+
+        add(
+            "Rule results are evidence for review, not a "
+            "safe-to-update verdict."
+        )
+
+        if not compatibility_ui_prompts_inspected:
+            add(
+                "UI-managed LLM prompt content is outside "
+                "the current local scan scope."
+            )
+
+    else:
+        add(
+            "No version-specific Core compatibility "
+            "rule pack is applicable to this run."
+        )
+
+else:
+    add(
+        "Upgrade compatibility report unavailable."
     )
 
 
@@ -1689,27 +2015,85 @@ if update_readiness_available:
             "installing the Core update."
         )
 
-    if (
-        readiness_pending_count
-        and not readiness_compatibility_assessed
+    if core_upgrade_window.get(
+        "pending"
     ):
+
+        if compatibility_assessed:
+
+            actions += 1
+
+            if (
+                compatibility_review_required_count
+                or compatibility_manual_review_count
+            ):
+                add(
+                    f"[!] Core {compatibility_rule_pack_label} "
+                    "compatibility rules found items that "
+                    "need review."
+                )
+
+                add(
+                    f"    Review required: "
+                    f"{compatibility_review_required_count}; "
+                    f"manual review: "
+                    f"{compatibility_manual_review_count}."
+                )
+
+                add(
+                    "    Review upgrade_compatibility_audit.json "
+                    "before installing the Core update."
+                )
+
+            else:
+                add(
+                    f"[i] Core {compatibility_rule_pack_label} "
+                    "compatibility rules were assessed "
+                    "against this installation."
+                )
+
+                add(
+                    f"    {compatibility_rule_count} documented "
+                    "change rule(s) were checked."
+                )
+
+                add(
+                    "    No affected local usage requiring "
+                    "review was detected."
+                )
+
+                add(
+                    "    Coverage has limitations; this is not "
+                    "a safe-to-update verdict."
+                )
+
+        else:
+
+            actions += 1
+
+            add(
+                f"[i] {readiness_pending_count} update(s) "
+                "are pending."
+            )
+
+            add(
+                "    Local update and Repair evidence has "
+                "been collected, but version-specific Core "
+                "compatibility rules are not yet assessed."
+            )
+
+            add(
+                "    Do not interpret this local-only result "
+                "as a safe-to-update verdict."
+            )
+
+    elif readiness_pending_count:
 
         actions += 1
 
         add(
-            f"[i] {readiness_pending_count} update(s) "
-            "are pending."
-        )
-
-        add(
-            "    Local update and Repair evidence has "
-            "been collected, but external release-note "
-            "and compatibility analysis is not yet assessed."
-        )
-
-        add(
-            "    Do not interpret this local-only result "
-            "as a safe-to-update verdict."
+            f"[i] {readiness_pending_count} non-Core "
+            "update(s) are pending."
         )
 
 else:
@@ -2026,8 +2410,8 @@ if actions == 0:
 
     add(
         "No immediate configuration, availability, "
-        "or update-readiness actions were identified "
-        "by this audit."
+        "update-readiness, or compatibility-review "
+        "actions were identified by this audit."
     )
 
 
@@ -2095,6 +2479,8 @@ for report_file in (
     "availability_audit.json",
     "unavailable_history_audit.json",
     "update_readiness_audit.json",
+    "upgrade_impact_audit.json",
+    "upgrade_compatibility_audit.json",
     "ha_audit_latest.txt",
 ):
 
