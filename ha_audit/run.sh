@@ -66,6 +66,10 @@ run_quiet_python \
     "update_readiness_scan.py" \
     "Update readiness foundation audit"
 
+run_quiet_python \
+    "upgrade_impact_scan.py" \
+    "Upgrade impact inventory audit"
+
 if ! python3 /summary_report.py; then
     bashio::log.error "Latest-run summary generation failed"
 fi
