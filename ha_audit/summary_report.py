@@ -1818,6 +1818,10 @@ health_guidance_status = health_guidance.get(
     "status",
     "ASSESSMENT INCOMPLETE",
 )
+health_guidance_reasons = health_guidance.get(
+    "reason_codes",
+    [],
+)
 
 # ------------------------------------------------------------
 # Build summary
@@ -1846,6 +1850,14 @@ add("=" * 58)
 render_overview(
     add,
     health_guidance_status=health_guidance_status,
+    health_guidance_reasons=health_guidance_reasons,
+    collector_error_count=len(collector_errors),
+    missing_include_count=missing_includes,
+    missing_entity_count=missing_entities,
+    duplicate_automation_id_count=duplicate_automation_ids,
+    referenced_not_provided_count=referenced_not_provided,
+    whole_device_unavailable_count=whole_device_devices,
+    ungrouped_unavailable_count=ungrouped_entities,
     core_guidance_status=core_guidance_status,
     core_assessment_complete=core_assessment_complete,
     os_update_pending=os_update_pending,
