@@ -12,6 +12,43 @@ SUMMARY_FILE = "/config/ha_audit_latest.txt"
 OUTPUT_FILE = "/config/ha_audit_ai_handoff.md"
 
 
+ALL_SUMMARY_SECTIONS = (
+    "OVERVIEW",
+    "WHY THIS RESULT",
+    "SYSTEM",
+    "UPDATE READINESS",
+    "OFFICIAL RELEASE EVIDENCE",
+    "COMPATIBILITY COVERAGE",
+    "DYNAMIC UPGRADE CORRELATION",
+    "CORRELATION VALIDATION",
+    "UPGRADE COMPATIBILITY",
+    "CONFIGURATION",
+    "ENTITY HEALTH",
+    "AVAILABILITY CONTEXT",
+    "UNAVAILABLE HISTORY CONTEXT",
+    "REVIEW",
+    "NOT-PROVIDED HISTORY SAFETY",
+    "NEXT ACTIONS",
+    "DETAILED REPORTS",
+)
+
+
+HANDOFF_SECTIONS = (
+    "OVERVIEW",
+    "WHY THIS RESULT",
+    "SYSTEM",
+    "UPDATE READINESS",
+    "OFFICIAL RELEASE EVIDENCE",
+    "UPGRADE COMPATIBILITY",
+    "CONFIGURATION",
+    "AVAILABILITY CONTEXT",
+    "UNAVAILABLE HISTORY CONTEXT",
+    "REVIEW",
+    "NOT-PROVIDED HISTORY SAFETY",
+    "NEXT ACTIONS",
+)
+
+
 def load_summary():
     try:
         with open(
@@ -27,10 +64,72 @@ def load_summary():
         ) from exc
 
 
+def extract_handoff_evidence(summary):
+    """Return the concise section set used for AI handoff."""
+
+    sections = {}
+    current_heading = None
+    current_lines = []
+
+    for line in summary.splitlines():
+        heading = line.strip()
+
+        if heading in ALL_SUMMARY_SECTIONS:
+            if current_heading is not None:
+                sections[
+                    current_heading
+                ] = current_lines
+
+            current_heading = heading
+            current_lines = [line]
+            continue
+
+        if current_heading is not None:
+            current_lines.append(line)
+
+    if current_heading is not None:
+        sections[
+            current_heading
+        ] = current_lines
+
+    evidence_lines = []
+
+    for heading in HANDOFF_SECTIONS:
+        block = sections.get(
+            heading
+        )
+
+        if not block:
+            continue
+
+        block = list(block)
+
+        while (
+            block
+            and not block[-1].strip()
+        ):
+            block.pop()
+
+        if evidence_lines:
+            evidence_lines.append("")
+
+        evidence_lines.extend(
+            block
+        )
+
+    return "\n".join(
+        evidence_lines
+    ).strip()
+
+
 def build_handoff(summary):
     generated_at = datetime.now(
         timezone.utc
     ).isoformat()
+
+    evidence = extract_handoff_evidence(
+        summary
+    )
 
     lines = [
         "# HA Audit AI / LLM Handoff",
@@ -56,8 +155,8 @@ def build_handoff(summary):
         ),
         "",
         (
-            "The evidence below comes from HA Audit's "
-            "current-run summary."
+            "The evidence below is a concise selection from "
+            "HA Audit's current-run summary."
         ),
         "",
         "## Instructions for the receiving AI",
@@ -132,10 +231,14 @@ def build_handoff(summary):
             "scope."
         ),
         (
-            "- The detailed JSON reports contain more evidence "
-            "than this handoff. If the summary is insufficient, "
-            "request the relevant detailed report rather than "
-            "inventing missing information."
+            "- Lower-level technical evidence and detailed "
+            "JSON reports contain more information than this "
+            "handoff."
+        ),
+        (
+            "- If this handoff is insufficient, request the "
+            "relevant detailed report rather than inventing "
+            "missing information."
         ),
         "",
         "## Requested analysis",
@@ -155,7 +258,7 @@ def build_handoff(summary):
         "## HA Audit evidence",
         "",
         "```text",
-        summary,
+        evidence,
         "```",
         "",
     ]
