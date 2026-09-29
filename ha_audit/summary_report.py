@@ -3,15 +3,12 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from health_guidance import evaluate_health_guidance
 from readiness_guidance import (
-    STATE_BLOCKER,
-    STATE_CLEAR,
     STATE_INCOMPLETE,
-    STATE_NO_UPDATE,
-    STATE_REVIEW,
     evaluate_core_update_guidance,
 )
-
+from summary_overview import render_overview
 from summary_upgrade import render_upgrade_sections
 VERSION = os.environ.get(
     "HA_AUDIT_VERSION",
@@ -1796,6 +1793,32 @@ core_assessment_complete = bool(
     )
 )
 
+health_guidance = evaluate_health_guidance(
+    configuration_check_state=config_result,
+    collector_error_count=len(
+        collector_errors
+    ),
+    missing_include_count=missing_includes,
+    missing_entity_count=missing_entities,
+    duplicate_automation_id_count=(
+        duplicate_automation_ids
+    ),
+    referenced_not_provided_count=(
+        referenced_not_provided
+    ),
+    whole_device_unavailable_count=(
+        whole_device_devices
+    ),
+    ungrouped_unavailable_count=(
+        ungrouped_entities
+    ),
+)
+
+health_guidance_status = health_guidance.get(
+    "status",
+    "ASSESSMENT INCOMPLETE",
+)
+
 # ------------------------------------------------------------
 # Build summary
 # ------------------------------------------------------------
@@ -1820,110 +1843,19 @@ add("=" * 58)
 # Overview
 # ------------------------------------------------------------
 
-add("")
-add("OVERVIEW")
-add("-" * 58)
-add(
-    f"Core update:                 "
-    f"{core_guidance_status}"
-)
-add(
-    "OS update:                   "
-    + (
-        "UPDATE AVAILABLE"
-        if os_update_pending
-        else "NO OS UPDATE PENDING"
-    )
-)
-
-if core_guidance_status == STATE_NO_UPDATE:
-    core_evidence_label = "NOT APPLICABLE"
-else:
-    core_evidence_label = (
-        "COMPLETE"
-        if core_assessment_complete
-        else "INCOMPLETE"
-    )
-
-add(
-    f"Core evidence collection:    "
-    f"{core_evidence_label}"
-)
-add(
-    f"Config check:                "
-    f"{str(config_result).upper()}"
-)
-
-if core_update_pending:
-    add(
-        f"Core:                        "
-        f"{core_installed_version or 'unknown'}"
-        " -> "
-        f"{core_target_version or 'unknown'}"
-    )
-else:
-    add(
-        f"Core:                        "
-        f"{system.get('core_version') or 'unknown'}"
-    )
-
-if os_update_pending:
-    add(
-        f"OS:                          "
-        f"{os_installed_version or 'unknown'}"
-        " -> "
-        f"{os_target_version or 'unknown'}"
-    )
-else:
-    add(
-        f"OS:                          "
-        f"{system.get('os_version') or 'unknown'}"
-    )
-
-add("")
-
-if core_guidance_status == STATE_CLEAR:
-    add(
-        "No known blockers were found in the evidence "
-        "HA Audit inspected."
-    )
-    add(
-        "This is not a guarantee that the update cannot "
-        "cause a problem."
-    )
-elif core_guidance_status == STATE_REVIEW:
-    add(
-        "One or more findings should be reviewed before "
-        "installing the Core update."
-    )
-    add(
-        "See NEXT ACTIONS for the specific evidence."
-    )
-elif core_guidance_status == STATE_INCOMPLETE:
-    add(
-        "HA Audit could not complete every part of the "
-        "Core update assessment."
-    )
-    add(
-        "Review the evidence sections and NEXT ACTIONS "
-        "before updating."
-    )
-elif core_guidance_status == STATE_BLOCKER:
-    add(
-        "HA Audit found explicit blocker evidence for "
-        "this Core update."
-    )
-    add(
-        "Review NEXT ACTIONS before updating."
-    )
-else:
-    add(
-        "No pending Home Assistant Core update was found."
-    )
-
-add(
-    "Core update guidance is conservative evidence-based "
-    "guidance, not a safe-to-update guarantee."
+render_overview(
+    add,
+    health_guidance_status=health_guidance_status,
+    core_guidance_status=core_guidance_status,
+    core_assessment_complete=core_assessment_complete,
+    os_update_pending=os_update_pending,
+    config_result=config_result,
+    core_update_pending=core_update_pending,
+    core_installed_version=core_installed_version,
+    core_target_version=core_target_version,
+    os_installed_version=os_installed_version,
+    os_target_version=os_target_version,
+    system=system,
 )
 
 # ------------------------------------------------------------
