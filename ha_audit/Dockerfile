@@ -32,6 +32,7 @@ COPY health_guidance.py /
 COPY summary_overview.py /
 COPY summary_upgrade.py /
 COPY summary_report.py /
+COPY ai_handoff.py /
 
 RUN chmod a+x /run.sh
 
