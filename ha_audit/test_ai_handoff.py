@@ -12,16 +12,72 @@ OVERVIEW
 Home Assistant health:       NEEDS ATTENTION
 Core update:                 NO KNOWN BLOCKERS FOUND
 OS update:                   UPDATE AVAILABLE
-Core evidence collection:    COMPLETE
-Config check:                VALID
 
 WHY THIS RESULT
 ----------------------------------------------------------
 Home Assistant health:
   2 device(s) currently have no healthy state entities.
 
-Core update:
-  No known blockers were found in the evidence HA Audit inspected.
+SYSTEM
+----------------------------------------------------------
+Core:                        2026.8.3
+OS:                          18.2
+
+UPDATE READINESS
+----------------------------------------------------------
+Pending updates:             2
+
+OFFICIAL RELEASE EVIDENCE
+----------------------------------------------------------
+Evidence collection:         COMPLETE
+
+COMPATIBILITY COVERAGE
+----------------------------------------------------------
+Coverage/reference state:    COMPLETE
+
+DYNAMIC UPGRADE CORRELATION
+----------------------------------------------------------
+Correlation collection:      COMPLETE
+
+CORRELATION VALIDATION
+----------------------------------------------------------
+Reference validation:        COMPLETE
+
+UPGRADE COMPATIBILITY
+----------------------------------------------------------
+Review required:             0
+
+CONFIGURATION
+----------------------------------------------------------
+Missing active includes:     0
+
+ENTITY HEALTH
+----------------------------------------------------------
+Unavailable:                 10
+
+AVAILABILITY CONTEXT
+----------------------------------------------------------
+Whole device unavailable:    2 entities / 2 devices
+
+UNAVAILABLE HISTORY CONTEXT
+----------------------------------------------------------
+History query failures:      0
+
+REVIEW
+----------------------------------------------------------
+Not provided + active YAML:  0
+
+NOT-PROVIDED HISTORY SAFETY
+----------------------------------------------------------
+History query failures:      0
+
+NEXT ACTIONS
+----------------------------------------------------------
+[i] Review 2 unavailable devices.
+
+DETAILED REPORTS
+----------------------------------------------------------
+audit_snapshot.json
 """
 
 
@@ -70,7 +126,6 @@ def main():
             "Generated: "
             "2026-09-29T10:30:00+00:00"
         ),
-        "## Purpose",
         "vendor-neutral handoff",
         "ChatGPT",
         "Claude",
@@ -85,23 +140,22 @@ def main():
             "Do not claim that a Home Assistant "
             "update is guaranteed safe."
         ),
-        (
-            "Do not recommend deleting entities"
-        ),
-        (
-            "general Home Assistant health and "
-            "Core update guidance"
-        ),
+        "Do not recommend deleting entities",
         "## Important limitations",
-        (
-            "request the relevant detailed report "
-            "rather than inventing missing information"
-        ),
         "## Requested analysis",
         "## HA Audit evidence",
-        "Home Assistant health:       NEEDS ATTENTION",
-        "Core update:                 NO KNOWN BLOCKERS FOUND",
-        "OS update:                   UPDATE AVAILABLE",
+        "OVERVIEW",
+        "WHY THIS RESULT",
+        "SYSTEM",
+        "UPDATE READINESS",
+        "OFFICIAL RELEASE EVIDENCE",
+        "UPGRADE COMPATIBILITY",
+        "CONFIGURATION",
+        "AVAILABILITY CONTEXT",
+        "UNAVAILABLE HISTORY CONTEXT",
+        "REVIEW",
+        "NOT-PROVIDED HISTORY SAFETY",
+        "NEXT ACTIONS",
     )
 
     missing = [
@@ -114,6 +168,26 @@ def main():
         raise AssertionError(
             "Missing expected handoff text: "
             + ", ".join(missing)
+        )
+
+    excluded_text = (
+        "COMPATIBILITY COVERAGE",
+        "DYNAMIC UPGRADE CORRELATION",
+        "CORRELATION VALIDATION",
+        "ENTITY HEALTH",
+        "DETAILED REPORTS",
+    )
+
+    unexpected = [
+        text
+        for text in excluded_text
+        if text in handoff
+    ]
+
+    if unexpected:
+        raise AssertionError(
+            "Unexpected verbose section in handoff: "
+            + ", ".join(unexpected)
         )
 
     if not handoff.endswith(
@@ -139,10 +213,10 @@ def main():
         "Safety limitations:           PASS"
     )
     print(
-        "Requested analysis:           PASS"
+        "Selected evidence sections:   PASS"
     )
     print(
-        "Audit evidence embedded:      PASS"
+        "Verbose sections excluded:    PASS"
     )
 
     print("")
