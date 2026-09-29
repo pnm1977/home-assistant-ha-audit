@@ -1591,6 +1591,74 @@ audit_core_update_item = next(
     None,
 )
 
+readiness_os_update_item = next(
+    (
+        item
+        for item in readiness_available_updates
+        if isinstance(
+            item,
+            dict,
+        )
+        and str(
+            item.get(
+                "category",
+                "",
+            )
+        ).lower()
+        == "os"
+    ),
+    None,
+)
+
+audit_os_update_item = next(
+    (
+        item
+        for item in audit_available_updates
+        if isinstance(
+            item,
+            dict,
+        )
+        and item.get(
+            "entity_id"
+        )
+        in (
+            "update.home_assistant_operating_system_update",
+            "update.home_assistant_os_update",
+        )
+    ),
+    None,
+)
+
+os_update_item = (
+    readiness_os_update_item
+    or audit_os_update_item
+)
+
+os_update_pending = bool(
+    os_update_item
+)
+
+os_installed_version = (
+    (
+        os_update_item.get(
+            "installed_version"
+        )
+        if os_update_item
+        else None
+    )
+    or system.get(
+        "os_version"
+    )
+)
+
+os_target_version = (
+    os_update_item.get(
+        "latest_version"
+    )
+    if os_update_item
+    else None
+)
+
 core_update_pending = bool(
     core_upgrade_window.get(
         "pending"
@@ -1757,19 +1825,27 @@ add(
     f"Core update:                 "
     f"{core_guidance_status}"
 )
+add(
+    "OS update:                   "
+    + (
+        "UPDATE AVAILABLE"
+        if os_update_pending
+        else "NO OS UPDATE PENDING"
+    )
+)
 
 if core_guidance_status == STATE_NO_UPDATE:
-    assessment_label = "NOT APPLICABLE"
+    core_evidence_label = "NOT APPLICABLE"
 else:
-    assessment_label = (
+    core_evidence_label = (
         "COMPLETE"
         if core_assessment_complete
         else "INCOMPLETE"
     )
 
 add(
-    f"Assessment completeness:     "
-    f"{assessment_label}"
+    f"Core evidence collection:    "
+    f"{core_evidence_label}"
 )
 add(
     f"Config check:                "
@@ -1787,6 +1863,19 @@ else:
     add(
         f"Core:                        "
         f"{system.get('core_version') or 'unknown'}"
+    )
+
+if os_update_pending:
+    add(
+        f"OS:                          "
+        f"{os_installed_version or 'unknown'}"
+        " -> "
+        f"{os_target_version or 'unknown'}"
+    )
+else:
+    add(
+        f"OS:                          "
+        f"{system.get('os_version') or 'unknown'}"
     )
 
 add("")
