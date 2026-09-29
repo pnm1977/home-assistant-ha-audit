@@ -6,6 +6,7 @@ on:
   push:
     paths:
       - "ha_audit/summary_report.py"
+      - "ha_audit/summary_upgrade.py"
       - "ha_audit/readiness_guidance.py"
       - "ha_audit/test_summary_output.py"
       - ".github/workflows/summary-output-test.yml"
@@ -13,6 +14,7 @@ on:
   pull_request:
     paths:
       - "ha_audit/summary_report.py"
+      - "ha_audit/summary_upgrade.py"
       - "ha_audit/readiness_guidance.py"
       - "ha_audit/test_summary_output.py"
       - ".github/workflows/summary-output-test.yml"
