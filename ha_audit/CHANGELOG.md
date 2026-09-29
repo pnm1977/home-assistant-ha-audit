@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.18
+## 0.7.x
 
 * Added the Core upgrade-readiness evidence foundation.
 * Added `update_readiness_scan.py` for installed, target, and pending Core update context.
@@ -175,7 +175,7 @@
 * Added read-only Home Assistant configuration scanning.
 * Added documentation and branding.
 
-## 0.5.1
+## 0.5.x
 
 * Added YAML configuration inventory.
 * Added YAML file and line counts.
@@ -183,22 +183,22 @@
 * Added exact duplicate file detection.
 * Excluded secrets and private Home Assistant storage.
 
-## 0.4.0
+## 0.4.x
 
 * Added unavailable and unknown entity grouping by device.
 * Added comparison against the previous audit.
 
-## 0.3.0
+## 0.3.x
 
 * Added Home Assistant registry access.
 * Added platform and device mapping.
 
-## 0.2.1
+## 0.2.x
 
 * Added entity health and configuration validation.
 * Improved collector fault isolation.
 
-## 0.1.0
+## 0.1.x
 
 * Initial HA Audit app.
 * Added Core, Supervisor, and OS information.
