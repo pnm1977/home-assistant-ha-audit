@@ -28,6 +28,8 @@ COPY compatibility_coverage_scan.py /
 COPY upgrade_correlation_scan.py /
 COPY correlation_validation_scan.py /
 COPY readiness_guidance.py /
+COPY health_guidance.py /
+COPY summary_overview.py /
 COPY summary_upgrade.py /
 COPY summary_report.py /
 
