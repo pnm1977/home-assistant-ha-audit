@@ -238,8 +238,8 @@ REPORTS = {
     },
 }
 
-EXPECTED_SHA256 = "a7da1569c1c4b2c22198a953d8fbcd305072a0772a20372f0ab325773a8a9be4"
-EXPECTED_LINE_COUNT = 257
+EXPECTED_SHA256 = "46f96a098dda8a58e14f0caf0128b66f33ef751564aa5066e543b026105fefbd"
+EXPECTED_LINE_COUNT = 262
 
 
 class NonClosingStringIO(io.StringIO):
@@ -317,6 +317,8 @@ def main():
         "Core update:                 NO KNOWN BLOCKERS FOUND",
         "OS update:                   UPDATE AVAILABLE",
         "Core evidence collection:    COMPLETE",
+        "WHY THIS RESULT",
+        "No priority health findings were identified by current checks.",
         "OFFICIAL RELEASE EVIDENCE",
         "COMPATIBILITY COVERAGE",
         "DYNAMIC UPGRADE CORRELATION",
