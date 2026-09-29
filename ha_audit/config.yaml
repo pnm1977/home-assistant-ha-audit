@@ -1,7 +1,7 @@
 name: "HA Audit"
 version: "0.7.18"
 slug: "ha_audit"
-description: "Read-only Home Assistant health and configuration auditor"
+description: "Read-only Home Assistant health, configuration and Core upgrade-readiness auditor"
 
 arch:
   - amd64
