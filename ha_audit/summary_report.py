@@ -2,6 +2,15 @@ import json
 import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+from readiness_guidance import (
+    STATE_BLOCKER,
+    STATE_CLEAR,
+    STATE_INCOMPLETE,
+    STATE_NO_UPDATE,
+    STATE_REVIEW,
+    evaluate_core_update_guidance,
+)
 VERSION = os.environ.get(
     "HA_AUDIT_VERSION",
     "unknown",
@@ -1553,6 +1562,171 @@ history_failed = history_summary.get(
 )
 
 # ------------------------------------------------------------
+# Top-level Core update guidance
+# ------------------------------------------------------------
+
+audit_available_updates = updates.get(
+    "available",
+    [],
+)
+if not isinstance(
+    audit_available_updates,
+    list,
+):
+    audit_available_updates = []
+
+audit_core_update_item = next(
+    (
+        item
+        for item in audit_available_updates
+        if isinstance(
+            item,
+            dict,
+        )
+        and item.get(
+            "entity_id"
+        )
+        == "update.home_assistant_core_update"
+    ),
+    None,
+)
+
+core_update_pending = bool(
+    core_upgrade_window.get(
+        "pending"
+    )
+    or audit_core_update_item
+)
+
+core_installed_version = (
+    core_upgrade_window.get(
+        "installed_version"
+    )
+    or (
+        audit_core_update_item.get(
+            "installed_version"
+        )
+        if audit_core_update_item
+        else None
+    )
+    or system.get(
+        "core_version"
+    )
+)
+
+core_target_version = (
+    core_upgrade_window.get(
+        "target_version"
+    )
+    or (
+        audit_core_update_item.get(
+            "latest_version"
+        )
+        if audit_core_update_item
+        else None
+    )
+)
+
+core_window_complete = bool(
+    core_update_pending
+    and core_installed_version
+    and core_target_version
+)
+
+coverage_usable = bool(
+    coverage_report_available
+    and coverage_overall_collector_status
+    in (
+        "ok",
+        "partial",
+    )
+    and coverage_status
+    in (
+        "complete",
+        "partial_reference",
+        "no_reference",
+        "not_applicable",
+    )
+)
+
+correlation_complete = bool(
+    correlation_report_available
+    and correlation_overall_status
+    == "ok"
+)
+
+validation_usable = bool(
+    validation_report_available
+    and validation_overall_status
+    in (
+        "ok",
+        "partial",
+    )
+    and validation_reference_status
+    in (
+        "complete",
+        "partial_reference",
+        "no_reference",
+        "not_applicable",
+    )
+)
+
+deterministic_compatibility_required = (
+    coverage_reference_status
+    in (
+        "complete",
+        "partial",
+        "incomplete",
+    )
+)
+
+core_guidance = evaluate_core_update_guidance(
+    core_update_pending=core_update_pending,
+    update_readiness_available=update_readiness_available,
+    core_window_complete=core_window_complete,
+    collector_error_count=len(
+        collector_errors
+    ),
+    configuration_check_state=config_result,
+    release_evidence_complete=release_collection_complete,
+    compatibility_coverage_usable=coverage_usable,
+    dynamic_correlation_complete=correlation_complete,
+    dynamic_correlation_insufficient_count=(
+        correlation_insufficient_count
+    ),
+    correlation_validation_usable=validation_usable,
+    deterministic_compatibility_required=(
+        deterministic_compatibility_required
+    ),
+    deterministic_compatibility_available=(
+        compatibility_assessed
+    ),
+    deterministic_yaml_failure_count=len(
+        compatibility_yaml_failures
+    ),
+    relevant_unignored_repair_count=(
+        readiness_relevant_unignored_count
+    ),
+    compatibility_review_required_count=(
+        compatibility_review_required_count
+    ),
+    compatibility_manual_review_count=(
+        compatibility_manual_review_count
+    ),
+)
+
+core_guidance_status = core_guidance.get(
+    "status",
+    STATE_INCOMPLETE,
+)
+core_assessment_complete = bool(
+    core_guidance.get(
+        "assessment_complete",
+        False,
+    )
+)
+
+# ------------------------------------------------------------
 # Build summary
 # ------------------------------------------------------------
 
@@ -1571,6 +1745,95 @@ add(
     f"{format_generated_time(audit)}"
 )
 add("=" * 58)
+
+# ------------------------------------------------------------
+# Overview
+# ------------------------------------------------------------
+
+add("")
+add("OVERVIEW")
+add("-" * 58)
+add(
+    f"Core update:                 "
+    f"{core_guidance_status}"
+)
+
+if core_guidance_status == STATE_NO_UPDATE:
+    assessment_label = "NOT APPLICABLE"
+else:
+    assessment_label = (
+        "COMPLETE"
+        if core_assessment_complete
+        else "INCOMPLETE"
+    )
+
+add(
+    f"Assessment completeness:     "
+    f"{assessment_label}"
+)
+add(
+    f"Config check:                "
+    f"{str(config_result).upper()}"
+)
+
+if core_update_pending:
+    add(
+        f"Core:                        "
+        f"{core_installed_version or 'unknown'}"
+        " -> "
+        f"{core_target_version or 'unknown'}"
+    )
+else:
+    add(
+        f"Core:                        "
+        f"{system.get('core_version') or 'unknown'}"
+    )
+
+add("")
+
+if core_guidance_status == STATE_CLEAR:
+    add(
+        "No known blockers were found in the evidence "
+        "HA Audit inspected."
+    )
+    add(
+        "This is not a guarantee that the update cannot "
+        "cause a problem."
+    )
+elif core_guidance_status == STATE_REVIEW:
+    add(
+        "One or more findings should be reviewed before "
+        "installing the Core update."
+    )
+    add(
+        "See NEXT ACTIONS for the specific evidence."
+    )
+elif core_guidance_status == STATE_INCOMPLETE:
+    add(
+        "HA Audit could not complete every part of the "
+        "Core update assessment."
+    )
+    add(
+        "Review the evidence sections and NEXT ACTIONS "
+        "before updating."
+    )
+elif core_guidance_status == STATE_BLOCKER:
+    add(
+        "HA Audit found explicit blocker evidence for "
+        "this Core update."
+    )
+    add(
+        "Review NEXT ACTIONS before updating."
+    )
+else:
+    add(
+        "No pending Home Assistant Core update was found."
+    )
+
+add(
+    "Core update guidance is conservative evidence-based "
+    "guidance, not a safe-to-update guarantee."
+)
 
 # ------------------------------------------------------------
 # System
