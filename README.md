@@ -1,43 +1,67 @@
-```markdown
 # HA Audit
 
-HA Audit is a read-only health and configuration auditing app for Home Assistant.
+**Read-only Home Assistant health, configuration and Core upgrade-readiness auditing.**
 
-It is designed to help you understand, maintain, troubleshoot and gradually clean up a Home Assistant installation without automatically changing anything.
+HA Audit helps you understand what needs attention in a Home Assistant installation before you start changing configuration, cleaning up old entities, or installing a Core update.
 
-The intended workflow is:
+It is intended for Home Assistant users who want a practical **health check**, **configuration audit**, **upgrade check**, and a safer way to investigate issues such as broken YAML, unavailable entities and stale configuration.
 
-**run → read → investigate → act → rerun**
+The normal workflow is:
+
+**run → review → investigate → act → rerun**
+
+HA Audit does not automatically repair, delete or rewrite your Home Assistant configuration.
 
 ---
 
-## Current capabilities
+## What HA Audit checks
 
-HA Audit currently provides:
+### Home Assistant health
 
-- Home Assistant Core, Supervisor and OS information
-- device and entity inventory
-- unavailable and unknown entity analysis
-- detection of registry entities no longer currently provided by integrations
-- active-YAML reference checks for not-currently-provided entities
-- Recorder-history context for not-currently-provided entities
-- Template entity cleanup candidates
-- comparison with previous audit results
-- update detection
-- Home Assistant configuration validation
-- YAML configuration inventory
-- active YAML include-tree discovery
-- detection of unreferenced YAML
-- missing include detection
-- missing entity reference candidates
-- duplicate automation ID checks
-- duplicate automation name checks with live Home Assistant state context
-- duplicate script name checks
-- large automation and script detection
-- availability classification for ordinary unavailable entities
-- Recorder-history context for ordinary unavailable entities
-- a concise current-run summary with suggested next actions
-- detailed JSON reports for deeper investigation
+* Core, Supervisor and OS information
+* pending updates
+* device and entity inventory
+* unavailable and unknown entities
+* partial and whole-device availability
+* entities no longer currently provided by integrations
+* Recorder/history evidence
+* changes compared with the previous audit
+
+### Configuration and YAML
+
+* Home Assistant configuration validation
+* active YAML include-tree discovery
+* missing includes
+* missing entity reference candidates
+* active references to entities no longer provided
+* duplicate automation IDs
+* duplicate automation and script names
+* large automations and scripts
+* inactive or unreferenced YAML
+* exact duplicate files
+* Template cleanup/review candidates
+
+Commented-out backup or rollback YAML is not treated as active configuration.
+
+### Core upgrade readiness
+
+When a Home Assistant Core update is pending, HA Audit can:
+
+* identify the installed and target Core versions
+* collect official Home Assistant release evidence
+* identify breaking-change groups across the upgrade
+* compare release changes with the local installation
+* identify locally relevant integrations and configuration
+* dynamically correlate official changes with local evidence
+* use optional deterministic compatibility references for additional precision
+* validate dynamic results where reference evidence exists
+* report incomplete, unavailable or uncertain evidence rather than hiding it
+
+HA Audit does **not yet produce a final “safe to update” recommendation**.
+
+Version 0.7.x provides the evidence needed to review a Core update while deliberately avoiding stronger conclusions than the evidence supports.
+
+Core readiness is currently more developed than Home Assistant OS readiness.
 
 ---
 
@@ -50,149 +74,106 @@ In Home Assistant:
 3. Open the App Store menu and choose **Repositories**
 4. Add:
 
-   `https://github.com/pnm1977/home-assistant-ha-audit`
+```text
+https://github.com/pnm1977/home-assistant-ha-audit
+```
 
-5. Find **HA Audit** in the App Store
+5. Find **HA Audit**
 6. Install it
 
-HA Audit is currently run manually rather than continuously.
+HA Audit currently supports:
+
+```text
+amd64
+```
 
 ---
 
-## First run
+## Running an audit
+
+HA Audit currently runs manually.
 
 After installation:
 
 1. Go to **Settings → Apps → HA Audit**
 2. Select **Start**
-3. Wait for HA Audit to finish
+3. Wait for the audit to finish
 4. Open the **Log** tab
-5. Find the latest:
+5. Find:
 
-   `HA AUDIT vX.X.X - CURRENT RUN SUMMARY`
+```text
+HA AUDIT vX.X.X - CURRENT RUN SUMMARY
+```
 
-Start with these lines and sections:
+A successful run ends with:
 
-   `Config check`  
-   `Collector errors`  
-   `Missing active includes`  
-   `Missing entity candidates`  
-   `Not currently provided`  
-   `Not provided + active YAML`  
-   `Template review candidates`  
-   `AVAILABILITY CONTEXT`  
-   `UNAVAILABLE HISTORY CONTEXT`  
-   `NOT-PROVIDED HISTORY SAFETY`
+```text
+HA Audit finished
+```
 
-Then read the:
+Start with the summary and then read:
 
-   `NEXT ACTIONS`
+```text
+NEXT ACTIONS
+```
 
-section.
-
-It tells you what needs investigation and, where possible, where to go in Home Assistant or Studio Code Server to check it.
-
-Do not assume that every non-zero value is a fault.
+Do not assume every non-zero count represents a problem.
 
 ---
 
-## How to use the results
+## What the results mean
 
-HA Audit is intended to guide investigation rather than automatically decide what should be deleted or changed.
+HA Audit is designed to provide **evidence and context**, not automatic cleanup decisions.
 
 For example:
 
-- an **Unavailable** entity may simply belong to powered-off equipment
-- a device with **partial availability** may still be working normally while some secondary or optional entities are unavailable
-- a **whole-device unavailable** result means that no healthy state entities were seen for that device at the audit snapshot, but does not by itself prove a fault
-- a **Not currently provided** entity may be stale, but could also belong to an integration that has temporarily failed or changed its entity model
-- a **Template review candidate** has stronger evidence that it may be obsolete, but should still be checked in Home Assistant before deletion
-- a **Missing entity candidate** should be checked against the reported YAML location before making changes
-- duplicate automation names may be intentional; HA Audit now checks their live Home Assistant states so disabled rollback copies do not automatically become normal health findings
-- Recorder history can show whether an unavailable or not-currently-provided entity had a usable state during the available history window
-- old, recent or absent usable history does not by itself prove that an entity is faulty, stale or safe to remove
+* an unavailable entity may simply belong to equipment that is powered off
+* a whole-device unavailable result does not automatically prove the device is faulty
+* an entity no longer provided by an integration may be stale, but may also need further investigation
+* active YAML referencing an entity that is no longer provided deserves review before anything is removed
+* missing Recorder history does not prove that an entity is safe to delete
+* an official Core breaking change does not matter locally if the affected integration or configuration is not present
+* lack of an optional deterministic compatibility reference does not mean the upgrade assessment failed
 
-After making a change, rerun HA Audit and confirm that the result changed as expected.
-
-### Full user guide
-
-The detailed guide explains:
-
-- what each section of the audit means
-- which values deserve attention
-- exactly where to check findings in Home Assistant
-- how to investigate YAML findings
-- how to interpret unavailable-device context
-- how to interpret Recorder-history evidence
-- how duplicate automation names are classified
-- when an entity may be a cleanup candidate
-- what to check before deleting anything
-- how to verify a fix by rerunning the audit
-
-See:
-
-**[HA Audit User Guide](ha_audit/DOCS.md)**
+HA Audit deliberately preserves uncertainty when the evidence is incomplete.
 
 ---
 
-## Repeated runs
+## Upgrade-readiness evidence
 
-Repeated audit/fix/rerun cycles are expected.
+The Core readiness pipeline is built around:
 
-The normal app log is deliberately kept concise so repeated runs are easier to follow.
+```text
+Official Home Assistant release evidence
+              ↓
+Generic dynamic correlation
+              ↓
+Local installation evidence
+              ↓
+Optional deterministic reference
+              ↓
+Reference validation
+```
 
-HA Audit also creates:
+The deterministic reference is optional.
 
-   `ha_audit_latest.txt`
+This allows future Home Assistant releases to use the generic release-evidence and correlation path even when no version-specific rule pack has been created.
 
-This file is overwritten on every run and contains only the latest summary.
+---
 
-Detailed audit data is stored alongside it in JSON reports.
+## Latest report
 
-### Where to find these files
+Each run creates:
 
-The report files are stored in HA Audit's own app-config folder rather than your normal Home Assistant configuration folder.
+```text
+ha_audit_latest.txt
+```
 
-In **Studio Code Server**:
+containing the latest human-readable summary.
 
-1. Select **File → Open Folder...**
-2. Enter:
+HA Audit also produces detailed JSON evidence reports for deeper investigation and development.
 
-   `/addon_configs`
-
-3. Open the folder whose name ends with:
-
-   `_ha_audit`
-
-You should then see files such as:
-
-   `ha_audit_latest.txt`  
-   `audit_snapshot.json`  
-   `audit_snapshot_previous.json`  
-   `config_inventory.json`  
-   `quality_audit.json`  
-   `not_provided_reference_audit.json`  
-   `recorder_health_audit.json`  
-   `not_provided_history_audit.json`  
-   `availability_audit.json`  
-   `unavailable_history_audit.json`
-
-The part of the folder name before `_ha_audit` is generated by Home Assistant and may differ between installations.
-
-### Returning to your previous workspace
-
-When you have finished reviewing the reports:
-
-1. Select **File → Open Recent**
-2. Reopen the folder or workspace you were using previously
-
-If it is not listed, use **File → Open Folder...** and select the folder you were using before.
-
-For normal use, start with the **CURRENT RUN SUMMARY** in:
-
-**Settings → Apps → HA Audit → Log**
-
-Only open the detailed report files when the summary or **NEXT ACTIONS** section directs you to them.
+Normal users should start with the app log and **CURRENT RUN SUMMARY** rather than browsing the underlying files.
 
 ---
 
@@ -200,29 +181,73 @@ Only open the detailed report files when the summary or **NEXT ACTIONS** section
 
 HA Audit is designed to be read-only.
 
-It does not modify Home Assistant configuration or automatically delete entities.
+It does not:
+
+* modify Home Assistant configuration
+* delete entities
+* change devices
+* automatically repair findings
+* install Home Assistant updates
 
 Home Assistant configuration is mounted read-only.
 
-Sensitive locations such as `.storage` are excluded from configuration scanning, and files with `secret` in their filename — including `secrets.yaml` — are not read by the configuration scanners.
+Sensitive configuration locations such as `.storage` are excluded from YAML scanning.
 
-HA Audit currently does not send audit data to OpenAI, ChatGPT, GitHub or another external analysis service.
+Files with `secret` in the filename, including `secrets.yaml`, are not read by the configuration scanners.
+
+HA Audit does not currently send your audit results to OpenAI, ChatGPT, Claude, Gemini or another external AI analysis service.
+
+Public Home Assistant release information may be retrieved when collecting Core upgrade evidence.
 
 ---
 
-## Status
+## Documentation
+
+### User guide
+
+For practical guidance on running HA Audit, understanding findings, investigating unavailable entities and interpreting Core upgrade-readiness evidence:
+
+**[HA Audit User Guide](ha_audit/DOCS.md)**
+
+### Release history
+
+**[Changelog](ha_audit/CHANGELOG.md)**
+
+---
+
+## Project status
 
 HA Audit is under active development.
 
-The project is currently focused on:
+The current foundation covers:
 
-- Home Assistant system health
-- configuration quality
-- availability context
-- stale configuration and entity discovery
-- update and upgrade readiness
-- easier maintenance
-- long-term future-proofing
+* Home Assistant health
+* configuration quality
+* YAML auditing
+* availability and Recorder evidence
+* stale entity investigation
+* Core update and upgrade-readiness evidence
 
-See the **[User Guide](ha_audit/DOCS.md)** for current usage instructions and **[Changelog](ha_audit/CHANGELOG.md)** for release history.
-```
+Future work will focus on making the results easier for normal Home Assistant users to understand and act on without losing the detailed evidence underneath.
+
+Planned areas include improved top-level guidance, persistent health evidence, scheduling, native Home Assistant status entities and a more accessible in-Home-Assistant user interface.
+
+---
+
+## Philosophy
+
+HA Audit is intentionally conservative.
+
+A finding means:
+
+**check this**
+
+not automatically:
+
+**delete this**
+
+And an upgrade assessment with no obvious local problem does not automatically mean:
+
+**definitely safe to update**
+
+The aim is to make Home Assistant maintenance safer, clearer and easier to investigate.
