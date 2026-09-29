@@ -93,7 +93,11 @@ run_quiet_python \
     "Correlation validation audit"
 
 
-if ! python3 /summary_report.py; then
+if python3 /summary_report.py; then
+    run_quiet_python \
+        "ai_handoff.py" \
+        "AI / LLM handoff generation"
+else
     bashio::log.error "Latest-run summary generation failed"
 fi
 
