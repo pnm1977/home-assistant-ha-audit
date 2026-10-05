@@ -1,8 +1,8 @@
-# HA Audit
+# HA Audit — Home Assistant Audit & Upgrade Readiness
 
-HA Audit is a read-only health, configuration, and upgrade-readiness auditing app for Home Assistant.
+HA Audit is a read-only **Home Assistant audit and health-check app** for configuration review, troubleshooting, system health, and Core upgrade readiness.
 
-It helps you understand what needs attention, investigate configuration problems, review unavailable entities, and assess a pending Home Assistant Core update using evidence from the actual installation.
+It helps you understand what needs attention in your Home Assistant installation, investigate configuration problems, review unavailable entities, assess pending Home Assistant Core updates, and generate a structured handoff for AI-assisted analysis.
 
 HA Audit does not automatically change Home Assistant.
 
@@ -10,13 +10,13 @@ The intended workflow is:
 
 **run → read → investigate → act → rerun**
 
-## What HA Audit provides
+## Home Assistant audit capabilities
 
-HA Audit currently includes:
+HA Audit currently provides:
 
 - a concise Home Assistant health overview
 - Home Assistant Core, Supervisor, and OS information
-- Core update guidance with evidence-collection status
+- Home Assistant Core update guidance with evidence-collection status
 - pending Core and OS update visibility
 - official Home Assistant Core release and breaking-change evidence
 - local compatibility and upgrade-impact checks
@@ -32,6 +32,14 @@ HA Audit currently includes:
 - suggested next actions
 - detailed JSON evidence reports
 - a vendor-neutral AI / LLM handoff for further analysis
+
+In practical terms, HA Audit can be used as a:
+
+- **Home Assistant health check**
+- **Home Assistant configuration audit**
+- **Home Assistant troubleshooting aid**
+- **Home Assistant Core upgrade-readiness check**
+- **Home Assistant AI-assisted investigation handoff**
 
 ## Start with the overview
 
@@ -51,9 +59,11 @@ Config check:                VALID
 
 `WHY THIS RESULT` then explains the main evidence behind those headline results.
 
-General Home Assistant health and Core update guidance are intentionally kept separate. An unavailable device, for example, does not automatically mean that a Core update is unsafe.
+General Home Assistant health and Core update guidance are intentionally kept separate.
 
-## Core upgrade readiness
+An unavailable device, for example, does not automatically mean that a Core update is unsafe.
+
+## Home Assistant Core upgrade readiness
 
 When a Home Assistant Core update is pending, HA Audit can combine:
 
@@ -75,6 +85,23 @@ Core update: NO KNOWN BLOCKERS FOUND
 ```
 
 does **not** guarantee that an update cannot cause a problem.
+
+## Home Assistant configuration audit
+
+HA Audit inspects the active Home Assistant YAML configuration tree and can report evidence such as:
+
+- missing active includes
+- missing entity-reference candidates
+- orphan YAML candidates
+- duplicate automation IDs
+- duplicate automation aliases with live-state context
+- duplicate script aliases
+- large automations and scripts
+- references to entities that are no longer currently provided
+
+These are review findings rather than automatic cleanup instructions.
+
+HA Audit is deliberately conservative where intent cannot be proven.
 
 ## Availability and history
 
@@ -128,7 +155,7 @@ In Home Assistant:
 
 HA Audit is currently run manually rather than continuously.
 
-## Running an audit
+## Running a Home Assistant audit
 
 1. Go to **Settings → Apps → HA Audit**
 2. Select **Start**
@@ -171,7 +198,7 @@ Important files include:
 - `ha_audit_latest.txt`
 - `ha_audit_ai_handoff.md`
 
-`ha_audit_latest.txt` contains the latest user-facing summary.
+`ha_audit_latest.txt` contains the latest user-facing Home Assistant audit summary.
 
 `ha_audit_ai_handoff.md` contains the concise AI / LLM analysis handoff.
 
@@ -198,9 +225,10 @@ HA Audit is under active development.
 Current areas include:
 
 - Home Assistant health auditing
-- configuration quality
+- Home Assistant configuration auditing
 - availability and Recorder-history context
-- Core upgrade readiness
+- Home Assistant Core upgrade readiness
+- Home Assistant troubleshooting
 - AI / LLM-assisted investigation
 - easier long-term Home Assistant maintenance
 
