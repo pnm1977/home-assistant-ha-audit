@@ -108,12 +108,17 @@ def main():
 
     require(
         output,
-        "NO AUDIT-DETECTED REASON TO DELAY",
+        "Core update guidance:        PROCEED",
     )
 
     require(
         output,
-        "No specific pre-update action",
+        "HA Audit found no reason to delay",
+    )
+
+    require(
+        output,
+        "No general pre-update action",
     )
 
     require(
@@ -123,22 +128,27 @@ def main():
 
     require(
         output,
-        "4 locally relevant rule(s)",
+        "4 locally relevant rules checked",
     )
 
     require(
         output,
-        "UI-managed LLM prompt content",
+        "custom AI prompts configured",
     )
 
     require(
         output,
-        "15 device(s) currently have no healthy",
+        "15 devices currently have no healthy",
     )
 
     require(
         output,
-        "separate from Core update",
+        "2 unavailable entities are not attached",
+    )
+
+    require(
+        output,
+        "not currently linked to the Core update",
     )
 
     require(
@@ -148,7 +158,22 @@ def main():
 
     require(
         output,
-        "intentionally not repeated",
+        "generated separately",
+    )
+
+    forbid(
+        output,
+        "NO AUDIT-DETECTED REASON TO DELAY",
+    )
+
+    forbid(
+        output,
+        "device(s)",
+    )
+
+    forbid(
+        output,
+        "entity/entities",
     )
 
     forbid(
@@ -179,6 +204,9 @@ def main():
         "Plain-English recommendation: PASS"
     )
     print(
+        "Proceed wording:              PASS"
+    )
+    print(
         "Compatibility explanation:    PASS"
     )
     print(
@@ -186,6 +214,9 @@ def main():
     )
     print(
         "Health/update separation:     PASS"
+    )
+    print(
+        "Singular/plural wording:      PASS"
     )
     print(
         "Post-update guidance:         PASS"
