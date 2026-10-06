@@ -9,8 +9,8 @@ from readiness_guidance import (
 from upgrade_decision import (
     RECOMMENDATION_DELAY,
     RECOMMENDATION_INCOMPLETE,
-    RECOMMENDATION_NO_DELAY,
     RECOMMENDATION_NO_UPDATE,
+    RECOMMENDATION_PROCEED,
     RECOMMENDATION_REVIEW,
     build_core_update_decision,
 )
@@ -47,16 +47,20 @@ def test_clear_realistic_case():
 
     if (
         result["recommendation"]
-        != RECOMMENDATION_NO_DELAY
+        != RECOMMENDATION_PROCEED
     ):
         raise AssertionError(
-            "Clear case should not identify a "
-            "reason to delay."
+            "Clear case should recommend PROCEED."
         )
 
     assert_contains(
         result["before_update"],
-        "No specific pre-update action",
+        "no reason to delay",
+    )
+
+    assert_contains(
+        result["before_update"],
+        "No general pre-update action",
     )
 
     assert_contains(
@@ -71,17 +75,12 @@ def test_clear_realistic_case():
 
     assert_contains(
         result["conditional_checks"],
-        "UI-managed LLM prompt",
+        "custom AI prompts configured",
     )
 
     assert_contains(
         result["general_health"],
-        "15 device(s)",
-    )
-
-    assert_contains(
-        result["general_health"],
-        "not linked",
+        "15 devices currently have no healthy",
     )
 
     assert_contains(
@@ -186,12 +185,30 @@ def test_no_update_case():
         )
 
 
+def test_unexpected_state_is_not_clear():
+    result = build_core_update_decision(
+        core_guidance_status="UNKNOWN STATE",
+        config_result="valid",
+        core_assessment_complete=True,
+    )
+
+    if (
+        result["recommendation"]
+        != RECOMMENDATION_INCOMPLETE
+    ):
+        raise AssertionError(
+            "Unexpected guidance state must not "
+            "be treated as safe to proceed."
+        )
+
+
 def main():
     test_clear_realistic_case()
     test_review_case()
     test_incomplete_case()
     test_blocker_case()
     test_no_update_case()
+    test_unexpected_state_is_not_clear()
 
     print("")
     print("=" * 62)
@@ -199,7 +216,7 @@ def main():
     print("=" * 62)
 
     print(
-        "Clear / no-delay guidance:    PASS"
+        "Clear / proceed guidance:     PASS"
     )
     print(
         "Review guidance:             PASS"
@@ -212,6 +229,9 @@ def main():
     )
     print(
         "No-update guidance:          PASS"
+    )
+    print(
+        "Unexpected-state safety:     PASS"
     )
     print(
         "Conditional uncertainty:     PASS"
