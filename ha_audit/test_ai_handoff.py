@@ -1,9 +1,10 @@
-from datetime import datetime, timezone
+from ai_handoff import (
+    build_ai_handoff,
+)
 
-import ai_handoff
 
-
-SAMPLE_SUMMARY = """==========================================================
+SUMMARY_TEXT = """
+==========================================================
 HA AUDIT vtest - CURRENT RUN SUMMARY
 ==========================================================
 
@@ -12,52 +13,74 @@ OVERVIEW
 Home Assistant health:       NEEDS ATTENTION
 Core update:                 NO KNOWN BLOCKERS FOUND
 OS update:                   UPDATE AVAILABLE
+Core evidence collection:    COMPLETE
+Config check:                VALID
+Core:                        2026.8.3 -> 2026.9.4
+OS:                          18.2 -> 18.3
 
 WHY THIS RESULT
 ----------------------------------------------------------
 Home Assistant health:
-  2 device(s) currently have no healthy state entities.
+  15 devices currently have no healthy state entities.
+
+Core update:
+  No known blockers were found.
 
 SYSTEM
 ----------------------------------------------------------
-Core:                        2026.8.3
-OS:                          18.2
+Core:                       2026.8.3
+Supervisor:                 2026.09.3
+OS:                         18.2
+Config check:               VALID
+Updates available:          2
+Collector errors:           0
 
 UPDATE READINESS
 ----------------------------------------------------------
 Pending updates:             2
+Core: 2026.8.3 -> 2026.9.4
+OS: 18.2 -> 18.3
+Relevant + unignored:        0
 
 OFFICIAL RELEASE EVIDENCE
 ----------------------------------------------------------
+Upgrade window:              2026.8.3 -> 2026.9.4
 Evidence collection:         COMPLETE
 
 COMPATIBILITY COVERAGE
 ----------------------------------------------------------
-Coverage/reference state:    COMPLETE
+Official crossed groups:     8
 
 DYNAMIC UPGRADE CORRELATION
 ----------------------------------------------------------
-Correlation collection:      COMPLETE
+Official change groups:      8
 
 CORRELATION VALIDATION
 ----------------------------------------------------------
-Reference validation:        COMPLETE
+Official groups compared:    8
 
 UPGRADE COMPATIBILITY
 ----------------------------------------------------------
+Core rule pack:              2026.9
+Rules assessed:              9
+No local match:              5
+Local match, no affected use: 4
 Review required:             0
+Manual review:               0
 
 CONFIGURATION
 ----------------------------------------------------------
+Active YAML files:           146
 Missing active includes:     0
 
 ENTITY HEALTH
 ----------------------------------------------------------
-Unavailable:                 10
+Entities:                    2800
 
 AVAILABILITY CONTEXT
 ----------------------------------------------------------
-Whole device unavailable:    2 entities / 2 devices
+Whole device unavailable:    15
+Ungrouped unavailable:       2
 
 UNAVAILABLE HISTORY CONTEXT
 ----------------------------------------------------------
@@ -73,152 +96,348 @@ History query failures:      0
 
 NEXT ACTIONS
 ----------------------------------------------------------
-[i] Review 2 unavailable devices.
+[i] Compatibility rules were assessed.
 
 DETAILED REPORTS
 ----------------------------------------------------------
-audit_snapshot.json
+Detailed files omitted.
 """
 
 
-class FixedDateTime(datetime):
-    @classmethod
-    def now(
-        cls,
-        tz=None,
-    ):
-        value = cls(
-            2026,
-            9,
-            29,
-            10,
-            30,
-            0,
-            tzinfo=timezone.utc,
+UPDATE_READINESS = {
+    "repairs": {
+        "relevant_unignored_count": 0,
+    },
+}
+
+
+COMPATIBILITY = {
+    "coverage": {
+        "ui_managed_prompt_content_inspected": False,
+    },
+    "summary": {
+        "rule_count": 9,
+        "review_required_count": 0,
+        "manual_review_count": 0,
+        "status_counts": {
+            "no_local_match": 5,
+            "local_match_no_active_yaml_usage_found": 1,
+            "local_match_no_affected_custom_usage_found": 1,
+            "local_match_no_affected_usage_found": 2,
+        },
+    },
+    "results": [
+        {
+            "id": "core_2026_9_flexit_bacnet",
+            "area": "Flexit Nordic (BACnet)",
+            "change": (
+                "Deprecated fireplace mode switch removed."
+            ),
+            "local_match": False,
+            "status": "no_local_match",
+            "note": (
+                "No local integration-domain evidence "
+                "was found."
+            ),
+        },
+        {
+            "id": "core_2026_9_llm_tool_names",
+            "area": "LLM APIs",
+            "change": (
+                "LLM tool names are prefixed with the "
+                "integration domain."
+            ),
+            "local_match": True,
+            "status": (
+                "local_match_no_active_yaml_usage_found"
+            ),
+            "evidence": {
+                "ui_managed_prompt_content_inspected": False,
+            },
+            "note": (
+                "The LLM component is loaded, but no "
+                "known unprefixed tool names were found "
+                "in active YAML."
+            ),
+        },
+        {
+            "id": (
+                "core_2026_9_"
+                "persistent_notification_updated"
+            ),
+            "area": "Persistent Notification",
+            "change": (
+                "Existing notification updates now "
+                "report updated instead of added."
+            ),
+            "local_match": True,
+            "status": (
+                "local_match_no_affected_usage_found"
+            ),
+            "evidence": {},
+            "note": (
+                "No active YAML trigger depending on "
+                "the old behaviour was found."
+            ),
+        },
+        {
+            "id": "core_2026_9_update_admin_context",
+            "area": "Update",
+            "change": (
+                "Some update actions now require "
+                "administrator context."
+            ),
+            "local_match": True,
+            "status": (
+                "local_match_no_affected_usage_found"
+            ),
+            "evidence": {},
+            "note": (
+                "No affected Update action was found "
+                "in script scope."
+            ),
+        },
+        {
+            "id": (
+                "core_2026_9_vacuum_battery_level"
+            ),
+            "area": "Vacuum",
+            "change": (
+                "The deprecated battery_level property "
+                "was removed."
+            ),
+            "local_match": True,
+            "status": (
+                "local_match_no_affected_custom_usage_found"
+            ),
+            "evidence": {},
+            "note": (
+                "A custom vacuum integration is active, "
+                "but no battery_level Python name "
+                "reference was found in its source."
+            ),
+        },
+    ],
+}
+
+
+AVAILABILITY = {
+    "summary": {
+        "device_classification_counts": {
+            "whole_device_unavailable_unlabelled": 15,
+        },
+        "entity_classification_counts": {
+            "ungrouped_unavailable": 2,
+        },
+    },
+}
+
+
+def require(
+    output,
+    expected,
+):
+    if expected not in output:
+        raise AssertionError(
+            f"Expected text not found: {expected}"
         )
 
-        if tz is not None:
-            return value.astimezone(tz)
 
-        return value
+def forbid(
+    output,
+    unexpected,
+):
+    if unexpected in output:
+        raise AssertionError(
+            f"Unexpected text found: {unexpected}"
+        )
 
 
 def main():
-    original_datetime = ai_handoff.datetime
-    original_version = ai_handoff.VERSION
+    output = build_ai_handoff(
+        summary_text=SUMMARY_TEXT,
+        update_readiness=UPDATE_READINESS,
+        compatibility=COMPATIBILITY,
+        availability=AVAILABILITY,
+        version="test",
+        generated_at=(
+            "2026-10-06T20:00:00+00:00"
+        ),
+    )
 
-    try:
-        ai_handoff.datetime = FixedDateTime
-        ai_handoff.VERSION = "test"
-
-        handoff = ai_handoff.build_handoff(
-            SAMPLE_SUMMARY
-        )
-
-    finally:
-        ai_handoff.datetime = original_datetime
-        ai_handoff.VERSION = original_version
-
-    required_text = (
+    require(
+        output,
         "# HA Audit AI / LLM Handoff",
-        "HA Audit vtest",
-        (
-            "Generated: "
-            "2026-09-29T10:30:00+00:00"
-        ),
-        "vendor-neutral handoff",
-        "ChatGPT",
-        "Claude",
-        "Gemini",
-        "local LLMs",
-        "## Instructions for the receiving AI",
-        (
-            "Treat HA Audit findings as evidence, "
-            "not as proof"
-        ),
-        (
-            "Do not claim that a Home Assistant "
-            "update is guaranteed safe."
-        ),
-        "Do not recommend deleting entities",
-        "## Important limitations",
-        "## Requested analysis",
+    )
+
+    require(
+        output,
+        "## Core update decision support",
+    )
+
+    require(
+        output,
+        "**Recommendation: PROCEED**",
+    )
+
+    require(
+        output,
+        "HA Audit found no reason to delay",
+    )
+
+    require(
+        output,
+        "Conditional checks / uncertainty",
+    )
+
+    require(
+        output,
+        "custom AI prompts configured",
+    )
+
+    require(
+        output,
+        "## Locally relevant Core compatibility findings",
+    )
+
+    require(
+        output,
+        "### LLM APIs",
+    )
+
+    require(
+        output,
+        "### Persistent Notification",
+    )
+
+    require(
+        output,
+        "### Update",
+    )
+
+    require(
+        output,
+        "### Vacuum",
+    )
+
+    require(
+        output,
+        "No affected active YAML usage detected",
+    )
+
+    require(
+        output,
+        "No affected custom integration usage detected",
+    )
+
+    require(
+        output,
+        "UI-managed prompt/config-entry content was not inspected",
+    )
+
+    forbid(
+        output,
+        "### Flexit Nordic (BACnet)",
+    )
+
+    require(
+        output,
+        "1. **Core update recommendation**",
+    )
+
+    require(
+        output,
+        "2. **Required before updating**",
+    )
+
+    require(
+        output,
+        "3. **Conditional checks / uncertainty**",
+    )
+
+    require(
+        output,
+        "4. **General Home Assistant health**",
+    )
+
+    require(
+        output,
+        "5. **After updating**",
+    )
+
+    require(
+        output,
         "## HA Audit evidence",
-        "OVERVIEW",
-        "WHY THIS RESULT",
-        "SYSTEM",
-        "UPDATE READINESS",
+    )
+
+    require(
+        output,
         "OFFICIAL RELEASE EVIDENCE",
+    )
+
+    require(
+        output,
         "UPGRADE COMPATIBILITY",
-        "CONFIGURATION",
-        "AVAILABILITY CONTEXT",
-        "UNAVAILABLE HISTORY CONTEXT",
-        "REVIEW",
-        "NOT-PROVIDED HISTORY SAFETY",
+    )
+
+    require(
+        output,
         "NEXT ACTIONS",
     )
 
-    missing = [
-        text
-        for text in required_text
-        if text not in handoff
-    ]
-
-    if missing:
-        raise AssertionError(
-            "Missing expected handoff text: "
-            + ", ".join(missing)
-        )
-
-    excluded_text = (
-        "COMPATIBILITY COVERAGE",
-        "DYNAMIC UPGRADE CORRELATION",
-        "CORRELATION VALIDATION",
-        "ENTITY HEALTH",
-        "DETAILED REPORTS",
+    forbid(
+        output,
+        "\nCOMPATIBILITY COVERAGE\n",
     )
 
-    unexpected = [
-        text
-        for text in excluded_text
-        if text in handoff
-    ]
+    forbid(
+        output,
+        "\nDYNAMIC UPGRADE CORRELATION\n",
+    )
 
-    if unexpected:
-        raise AssertionError(
-            "Unexpected verbose section in handoff: "
-            + ", ".join(unexpected)
-        )
+    forbid(
+        output,
+        "\nCORRELATION VALIDATION\n",
+    )
 
-    if not handoff.endswith(
-        "```\n"
-    ):
-        raise AssertionError(
-            "Handoff should finish after the "
-            "evidence code block."
-        )
+    forbid(
+        output,
+        "\nENTITY HEALTH\n",
+    )
+
+    forbid(
+        output,
+        "\nDETAILED REPORTS\n",
+    )
 
     print("")
     print("=" * 62)
-    print("HA AUDIT AI / LLM HANDOFF TEST")
+    print("HA AUDIT AI HANDOFF TEST")
     print("=" * 62)
-
     print(
-        "Vendor-neutral purpose:       PASS"
+        "Decision support:             PASS"
     )
     print(
-        "Receiving-AI instructions:    PASS"
+        "Proceed guidance:             PASS"
     )
     print(
-        "Safety limitations:           PASS"
+        "Local compatibility detail:   PASS"
     )
     print(
-        "Selected evidence sections:   PASS"
+        "Non-local rules excluded:     PASS"
+    )
+    print(
+        "Conditional uncertainty:      PASS"
+    )
+    print(
+        "Requested analysis order:     PASS"
+    )
+    print(
+        "Selected evidence retained:   PASS"
     )
     print(
         "Verbose sections excluded:    PASS"
     )
-
     print("")
     print("RESULT: PASS")
     print("=" * 62)
