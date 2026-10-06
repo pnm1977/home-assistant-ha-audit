@@ -405,7 +405,7 @@ def build_user_summary(
         f"{health_status}"
     )
     add(
-        f"Core update guidance:         "
+        f"Core update guidance:        "
         f"{decision['recommendation']}"
     )
     add(
@@ -447,11 +447,11 @@ def build_user_summary(
         config_result
     ).upper() == "VALID":
         evidence_parts.append(
-            "configuration valid"
+            "Configuration valid"
         )
     else:
         evidence_parts.append(
-            f"configuration {config_result.lower()}"
+            f"Configuration {config_result.lower()}"
         )
 
     evidence_parts.append(
@@ -462,12 +462,19 @@ def build_user_summary(
         )
     )
 
-    evidence_parts.append(
-        (
-            f"{relevant_unignored_repairs} "
-            "relevant unignored Repairs"
+    if relevant_unignored_repairs:
+        evidence_parts.append(
+            (
+                f"{relevant_unignored_repairs} "
+                "unignored Repair issue(s) relevant "
+                "to this Core update"
+            )
         )
-    )
+    else:
+        evidence_parts.append(
+            "No unignored Repairs relevant to "
+            "this Core update"
+        )
 
     if compatibility_rule_count:
         evidence_parts.append(
@@ -478,10 +485,16 @@ def build_user_summary(
         )
 
     if local_no_affected_count:
+        rule_word = (
+            "rule"
+            if local_no_affected_count == 1
+            else "rules"
+        )
+
         evidence_parts.append(
             (
                 f"{local_no_affected_count} "
-                "locally relevant rule(s) checked "
+                f"locally relevant {rule_word} checked "
                 "with no affected use detected"
             )
         )
@@ -525,13 +538,20 @@ def build_user_summary(
         "general_health"
     ]:
         add("")
-        add("General health - separate from Core update:")
+        add(
+            "General health - separate from Core update:"
+        )
+
         for item in decision[
             "general_health"
         ][:3]:
             add(
                 f"  {item}"
             )
+
+        add(
+            f"  {decision['general_health_note']}"
+        )
 
     if decision[
         "after_update"
@@ -550,15 +570,9 @@ def build_user_summary(
 
     add("")
     add(
-        decision[
-            "caution"
-        ]
-    )
-
-    add("")
-    add(
-        "Detailed evidence and the AI / LLM handoff were "
-        "generated separately and intentionally not repeated here."
+        "Evidence-based guidance only; this is not a "
+        "guarantee. Detailed evidence and the AI / LLM "
+        "handoff were generated separately."
     )
     add("=" * 58)
 
