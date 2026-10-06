@@ -556,17 +556,10 @@ def build_user_summary(
     )
 
     add("")
-    add("FULL EVIDENCE")
-    add("-" * 58)
     add(
-        "Full technical evidence and the AI / LLM "
-        "handoff were generated separately."
+        "Detailed evidence and the AI / LLM handoff were "
+        "generated separately and intentionally not repeated here."
     )
-    add(
-        "They are intentionally not repeated in "
-        "the normal Home Assistant app log."
-    )
-
     add("=" * 58)
 
     return (
