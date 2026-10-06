@@ -29,10 +29,12 @@ COPY upgrade_correlation_scan.py /
 COPY correlation_validation_scan.py /
 COPY readiness_guidance.py /
 COPY health_guidance.py /
+COPY upgrade_decision.py /
 COPY summary_overview.py /
 COPY summary_upgrade.py /
 COPY summary_report.py /
 COPY ai_handoff.py /
+COPY user_summary.py /
 
 RUN chmod a+x /run.sh
 
