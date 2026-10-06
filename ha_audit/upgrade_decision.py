@@ -11,8 +11,8 @@ RECOMMENDATION_NO_UPDATE = (
     "NO CORE UPDATE PENDING"
 )
 
-RECOMMENDATION_NO_DELAY = (
-    "NO AUDIT-DETECTED REASON TO DELAY"
+RECOMMENDATION_PROCEED = (
+    "PROCEED"
 )
 
 RECOMMENDATION_REVIEW = (
@@ -62,7 +62,7 @@ def build_core_update_decision(
     This helper does not create a new compatibility verdict.
 
     The existing readiness-guidance state remains authoritative.
-    This function only explains that result in a more useful form.
+    This function explains that result in a more useful form.
     """
 
     relevant_unignored_repairs = (
@@ -186,14 +186,32 @@ def build_core_update_decision(
                 "identified by HA Audit before updating."
             )
 
-    else:
+    elif (
+        core_guidance_status == STATE_CLEAR
+        and core_assessment_complete
+    ):
         recommendation = (
-            RECOMMENDATION_NO_DELAY
+            RECOMMENDATION_PROCEED
         )
 
         before_update.append(
-            "No specific pre-update action was "
-            "identified by HA Audit."
+            "HA Audit found no reason to delay "
+            "this Core update."
+        )
+
+        before_update.append(
+            "No general pre-update action is required."
+        )
+
+    else:
+        recommendation = (
+            RECOMMENDATION_INCOMPLETE
+        )
+
+        before_update.append(
+            "HA Audit could not interpret the Core "
+            "update assessment as complete. Review "
+            "the evidence before updating."
         )
 
     if config_label == "VALID":
@@ -220,13 +238,19 @@ def build_core_update_decision(
         )
     )
 
-    why.append(
-        (
-            f"{relevant_unignored_repairs} "
-            "unignored Repair issue(s) were identified "
-            "as relevant to the Core upgrade."
+    if relevant_unignored_repairs:
+        why.append(
+            (
+                f"{relevant_unignored_repairs} "
+                "unignored Repair issue(s) are relevant "
+                "to the Core upgrade."
+            )
         )
-    )
+    else:
+        why.append(
+            "No unignored Repairs were identified as "
+            "relevant to the Core upgrade."
+        )
 
     if compatibility_rule_count:
         why.append(
@@ -279,33 +303,42 @@ def build_core_update_decision(
         and not ui_prompts_inspected
     ):
         conditional_checks.append(
-            "UI-managed LLM prompt content could not "
-            "be inspected. If custom AI prompts name "
-            "Home Assistant tools directly, review "
-            "those prompts before updating."
+            "If you use custom AI prompts configured "
+            "in the Home Assistant UI that directly "
+            "name Home Assistant tools, review those "
+            "prompts before updating. HA Audit cannot "
+            "inspect their contents."
         )
 
     if whole_device_unavailable_count:
-        general_health.append(
-            (
-                f"{whole_device_unavailable_count} "
-                "device(s) currently have no healthy "
-                "state entities. HA Audit has not "
-                "linked this general health finding "
-                "to the Core update."
+        if whole_device_unavailable_count == 1:
+            general_health.append(
+                "1 device currently has no healthy "
+                "state entities."
             )
-        )
+        else:
+            general_health.append(
+                (
+                    f"{whole_device_unavailable_count} "
+                    "devices currently have no healthy "
+                    "state entities."
+                )
+            )
 
     if ungrouped_unavailable_count:
-        general_health.append(
-            (
-                f"{ungrouped_unavailable_count} "
-                "unavailable entity/entities are not "
-                "attached to a device. HA Audit has "
-                "not linked this general health "
-                "finding to the Core update."
+        if ungrouped_unavailable_count == 1:
+            general_health.append(
+                "1 unavailable entity is not attached "
+                "to a device."
             )
-        )
+        else:
+            general_health.append(
+                (
+                    f"{ungrouped_unavailable_count} "
+                    "unavailable entities are not "
+                    "attached to a device."
+                )
+            )
 
     if core_guidance_status != STATE_NO_UPDATE:
         after_update.extend(
@@ -337,6 +370,10 @@ def build_core_update_decision(
         "why": why,
         "conditional_checks": conditional_checks,
         "general_health": general_health,
+        "general_health_note": (
+            "These findings are not currently linked "
+            "to the Core update."
+        ),
         "after_update": after_update,
         "caution": (
             "This is evidence-based guidance, not a "
