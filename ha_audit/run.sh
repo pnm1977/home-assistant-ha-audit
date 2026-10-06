@@ -19,7 +19,6 @@ run_quiet_python() {
     fi
 
     bashio::log.error "${label} failed"
-
     if [ -s "${temp_log}" ]; then
         echo ""
         echo "Output from failed stage:"
@@ -93,12 +92,21 @@ run_quiet_python \
     "Correlation validation audit"
 
 
-if python3 /summary_report.py; then
+if run_quiet_python \
+    "summary_report.py" \
+    "Latest-run summary generation"; then
+
     run_quiet_python \
         "ai_handoff.py" \
         "AI / LLM handoff generation"
+
+    if ! python3 /user_summary.py; then
+        bashio::log.error \
+            "Plain-English user summary generation failed"
+    fi
 else
-    bashio::log.error "Latest-run summary generation failed"
+    bashio::log.error \
+        "Latest-run summary generation failed"
 fi
 
 bashio::log.info "HA Audit finished"
