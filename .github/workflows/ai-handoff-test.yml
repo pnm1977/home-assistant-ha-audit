@@ -7,12 +7,16 @@ on:
     paths:
       - "ha_audit/ai_handoff.py"
       - "ha_audit/test_ai_handoff.py"
+      - "ha_audit/upgrade_decision.py"
+      - "ha_audit/user_summary.py"
       - ".github/workflows/ai-handoff-test.yml"
 
   pull_request:
     paths:
       - "ha_audit/ai_handoff.py"
       - "ha_audit/test_ai_handoff.py"
+      - "ha_audit/upgrade_decision.py"
+      - "ha_audit/user_summary.py"
       - ".github/workflows/ai-handoff-test.yml"
 
 jobs:
