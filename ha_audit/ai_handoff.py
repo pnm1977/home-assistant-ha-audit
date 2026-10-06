@@ -1,5 +1,16 @@
+import json
 import os
 from datetime import datetime, timezone
+
+from upgrade_decision import (
+    build_core_update_decision,
+)
+
+from user_summary import (
+    count_local_no_affected,
+    extract_overview,
+    has_local_llm_match,
+)
 
 
 VERSION = os.environ.get(
@@ -7,12 +18,44 @@ VERSION = os.environ.get(
     "unknown",
 )
 
-SUMMARY_FILE = "/config/ha_audit_latest.txt"
+SUMMARY_FILE = (
+    "/config/ha_audit_latest.txt"
+)
 
-OUTPUT_FILE = "/config/ha_audit_ai_handoff.md"
+UPDATE_READINESS_FILE = (
+    "/config/update_readiness_audit.json"
+)
+
+UPGRADE_COMPATIBILITY_FILE = (
+    "/config/upgrade_compatibility_audit.json"
+)
+
+AVAILABILITY_FILE = (
+    "/config/availability_audit.json"
+)
+
+OUTPUT_FILE = (
+    "/config/ha_audit_ai_handoff.md"
+)
 
 
-ALL_SUMMARY_SECTIONS = (
+SELECTED_SECTIONS = (
+    "OVERVIEW",
+    "WHY THIS RESULT",
+    "SYSTEM",
+    "UPDATE READINESS",
+    "OFFICIAL RELEASE EVIDENCE",
+    "UPGRADE COMPATIBILITY",
+    "CONFIGURATION",
+    "AVAILABILITY CONTEXT",
+    "UNAVAILABLE HISTORY CONTEXT",
+    "REVIEW",
+    "NOT-PROVIDED HISTORY SAFETY",
+    "NEXT ACTIONS",
+)
+
+
+KNOWN_SECTIONS = {
     "OVERVIEW",
     "WHY THIS RESULT",
     "SYSTEM",
@@ -30,247 +73,886 @@ ALL_SUMMARY_SECTIONS = (
     "NOT-PROVIDED HISTORY SAFETY",
     "NEXT ACTIONS",
     "DETAILED REPORTS",
-)
+}
 
 
-HANDOFF_SECTIONS = (
-    "OVERVIEW",
-    "WHY THIS RESULT",
-    "SYSTEM",
-    "UPDATE READINESS",
-    "OFFICIAL RELEASE EVIDENCE",
-    "UPGRADE COMPATIBILITY",
-    "CONFIGURATION",
-    "AVAILABILITY CONTEXT",
-    "UNAVAILABLE HISTORY CONTEXT",
-    "REVIEW",
-    "NOT-PROVIDED HISTORY SAFETY",
-    "NEXT ACTIONS",
-)
+STATUS_LABELS = {
+    (
+        "local_match_no_active_yaml_usage_found"
+    ): (
+        "No affected active YAML usage detected"
+    ),
+    (
+        "local_match_no_affected_custom_usage_found"
+    ): (
+        "No affected custom integration usage detected"
+    ),
+    (
+        "local_match_no_affected_usage_found"
+    ): (
+        "No affected usage detected"
+    ),
+    (
+        "local_match_core_integrations_only"
+    ): (
+        "No affected custom usage detected"
+    ),
+    "review_required": (
+        "Review required"
+    ),
+    "manual_review": (
+        "Manual review required"
+    ),
+}
 
 
-def load_summary():
+def load_json_optional(path):
     try:
         with open(
-            SUMMARY_FILE,
+            path,
             "r",
             encoding="utf-8",
         ) as handle:
-            return handle.read().strip()
-    except Exception as exc:
-        raise RuntimeError(
-            "Could not read HA Audit summary: "
-            f"{exc}"
-        ) from exc
+            return json.load(
+                handle
+            )
+    except Exception:
+        return {}
 
 
-def extract_handoff_evidence(summary):
-    """Return the concise section set used for AI handoff."""
+def load_text(path):
+    with open(
+        path,
+        "r",
+        encoding="utf-8",
+    ) as handle:
+        return handle.read()
 
-    sections = {}
+
+def extract_selected_sections(
+    summary_text,
+):
+    found = {}
     current_heading = None
     current_lines = []
 
-    for line in summary.splitlines():
-        heading = line.strip()
+    def save_current():
+        if (
+            current_heading
+            and current_lines
+            and current_heading
+            not in found
+        ):
+            found[
+                current_heading
+            ] = "\n".join(
+                current_lines
+            ).strip()
 
-        if heading in ALL_SUMMARY_SECTIONS:
-            if current_heading is not None:
-                sections[
-                    current_heading
-                ] = current_lines
+    for raw_line in summary_text.splitlines():
+        stripped = raw_line.strip()
 
-            current_heading = heading
-            current_lines = [line]
+        if stripped in KNOWN_SECTIONS:
+            save_current()
+
+            current_heading = stripped
+            current_lines = [
+                raw_line
+            ]
             continue
 
-        if current_heading is not None:
-            current_lines.append(line)
+        if current_heading:
+            current_lines.append(
+                raw_line
+            )
 
-    if current_heading is not None:
-        sections[
-            current_heading
-        ] = current_lines
+    save_current()
 
-    evidence_lines = []
+    selected = []
 
-    for heading in HANDOFF_SECTIONS:
-        block = sections.get(
+    for heading in SELECTED_SECTIONS:
+        text = found.get(
             heading
         )
 
-        if not block:
-            continue
+        if text:
+            selected.append(
+                text
+            )
 
-        block = list(block)
-
-        while (
-            block
-            and not block[-1].strip()
-        ):
-            block.pop()
-
-        if evidence_lines:
-            evidence_lines.append("")
-
-        evidence_lines.extend(
-            block
-        )
-
-    return "\n".join(
-        evidence_lines
-    ).strip()
-
-
-def build_handoff(summary):
-    generated_at = datetime.now(
-        timezone.utc
-    ).isoformat()
-
-    evidence = extract_handoff_evidence(
-        summary
+    return "\n\n".join(
+        selected
     )
 
-    lines = [
-        "# HA Audit AI / LLM Handoff",
-        "",
-        (
-            "This file was generated automatically by "
-            f"HA Audit v{VERSION}."
+
+def get_relevant_unignored_repairs(
+    update_readiness,
+):
+    repairs = update_readiness.get(
+        "repairs",
+        {},
+    )
+
+    if not isinstance(
+        repairs,
+        dict,
+    ):
+        return 0
+
+    try:
+        return max(
+            0,
+            int(
+                repairs.get(
+                    "relevant_unignored_count",
+                    0,
+                )
+                or 0
+            ),
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return 0
+
+
+def get_compatibility_summary(
+    compatibility,
+):
+    summary = compatibility.get(
+        "summary",
+        {},
+    )
+
+    if not isinstance(
+        summary,
+        dict,
+    ):
+        return {}
+
+    return summary
+
+
+def get_availability_counts(
+    availability,
+):
+    summary = availability.get(
+        "summary",
+        {},
+    )
+
+    if not isinstance(
+        summary,
+        dict,
+    ):
+        summary = {}
+
+    device_counts = summary.get(
+        "device_classification_counts",
+        {},
+    )
+
+    entity_counts = summary.get(
+        "entity_classification_counts",
+        {},
+    )
+
+    if not isinstance(
+        device_counts,
+        dict,
+    ):
+        device_counts = {}
+
+    if not isinstance(
+        entity_counts,
+        dict,
+    ):
+        entity_counts = {}
+
+    try:
+        whole_device_count = max(
+            0,
+            int(
+                device_counts.get(
+                    "whole_device_unavailable_unlabelled",
+                    0,
+                )
+                or 0
+            ),
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        whole_device_count = 0
+
+    try:
+        ungrouped_count = max(
+            0,
+            int(
+                entity_counts.get(
+                    "ungrouped_unavailable",
+                    0,
+                )
+                or 0
+            ),
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        ungrouped_count = 0
+
+    return (
+        whole_device_count,
+        ungrouped_count,
+    )
+
+
+def build_decision(
+    *,
+    summary_text,
+    update_readiness,
+    compatibility,
+    availability,
+):
+    overview = extract_overview(
+        summary_text
+    )
+
+    compatibility_summary = (
+        get_compatibility_summary(
+            compatibility
+        )
+    )
+
+    coverage = compatibility.get(
+        "coverage",
+        {},
+    )
+
+    if not isinstance(
+        coverage,
+        dict,
+    ):
+        coverage = {}
+
+    (
+        whole_device_count,
+        ungrouped_count,
+    ) = get_availability_counts(
+        availability
+    )
+
+    try:
+        rule_count = max(
+            0,
+            int(
+                compatibility_summary.get(
+                    "rule_count",
+                    0,
+                )
+                or 0
+            ),
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        rule_count = 0
+
+    try:
+        review_count = max(
+            0,
+            int(
+                compatibility_summary.get(
+                    "review_required_count",
+                    0,
+                )
+                or 0
+            ),
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        review_count = 0
+
+    try:
+        manual_count = max(
+            0,
+            int(
+                compatibility_summary.get(
+                    "manual_review_count",
+                    0,
+                )
+                or 0
+            ),
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        manual_count = 0
+
+    return build_core_update_decision(
+        core_guidance_status=(
+            overview.get(
+                "Core update",
+                "ASSESSMENT INCOMPLETE",
+            )
         ),
-        "",
-        f"Generated: {generated_at}",
-        "",
-        "## Purpose",
-        "",
-        (
-            "This is a vendor-neutral handoff for analysis "
-            "by an AI or large language model."
+        config_result=(
+            overview.get(
+                "Config check",
+                "UNKNOWN",
+            )
         ),
-        "",
-        (
-            "It is intended for assistants such as ChatGPT, "
-            "Claude, Gemini, local LLMs, or other systems "
-            "capable of analysing Home Assistant evidence."
+        core_assessment_complete=(
+            overview.get(
+                "Core evidence collection"
+            )
+            == "COMPLETE"
         ),
-        "",
-        (
-            "The evidence below is a concise selection from "
-            "HA Audit's current-run summary."
+        relevant_unignored_repairs=(
+            get_relevant_unignored_repairs(
+                update_readiness
+            )
         ),
-        "",
-        "## Instructions for the receiving AI",
-        "",
-        (
-            "- Treat HA Audit findings as evidence, not as "
-            "proof of a fault or guarantee of safety."
+        compatibility_rule_count=(
+            rule_count
         ),
-        (
-            "- Clearly distinguish facts reported by HA Audit "
-            "from your own inference or advice."
+        compatibility_local_no_affected_count=(
+            count_local_no_affected(
+                compatibility
+            )
         ),
-        (
-            "- Do not claim that a Home Assistant update is "
-            "guaranteed safe."
+        compatibility_review_required_count=(
+            review_count
         ),
-        (
-            "- Do not recommend deleting entities, devices, "
-            "YAML, automations, scripts, or configuration "
-            "solely because they are unavailable, unknown, "
-            "or not currently provided."
+        compatibility_manual_review_count=(
+            manual_count
         ),
-        (
-            "- Treat availability and Recorder-history "
-            "findings as context unless stronger evidence "
-            "shows an actual fault."
+        llm_local_match=(
+            has_local_llm_match(
+                compatibility
+            )
         ),
-        (
-            "- Respect HA Audit's distinction between general "
-            "Home Assistant health and Core update guidance."
+        ui_prompts_inspected=bool(
+            coverage.get(
+                "ui_managed_prompt_content_inspected",
+                False,
+            )
         ),
-        (
-            "- If evidence collection is incomplete, say what "
-            "is missing rather than filling the gap with an "
-            "assumption."
+        whole_device_unavailable_count=(
+            whole_device_count
         ),
-        (
-            "- Prioritise concrete findings that deserve "
-            "attention before informational observations."
+        ungrouped_unavailable_count=(
+            ungrouped_count
         ),
-        (
-            "- Explain findings in normal Home Assistant "
-            "language suitable for a smart-home enthusiast."
-        ),
-        (
-            "- When suggesting a change, explain which HA Audit "
-            "evidence supports that suggestion."
-        ),
-        "",
-        "## Important limitations",
-        "",
-        (
-            "- HA Audit is read-only and does not prove that "
-            "an installation is fault-free."
-        ),
-        (
-            "- Core update guidance is conservative "
-            "evidence-based guidance, not a safe-to-update "
-            "guarantee."
-        ),
-        (
-            "- Availability classifications may represent "
-            "intentional, temporary, or feature-level states."
-        ),
-        (
-            "- Recorder history only covers the history that "
-            "was actually available to HA Audit."
-        ),
-        (
-            "- Some Home Assistant configuration may be "
-            "UI-managed or otherwise outside the local scan "
-            "scope."
-        ),
-        (
-            "- Lower-level technical evidence and detailed "
-            "JSON reports contain more information than this "
-            "handoff."
-        ),
-        (
-            "- If this handoff is insufficient, request the "
-            "relevant detailed report rather than inventing "
-            "missing information."
-        ),
-        "",
-        "## Requested analysis",
-        "",
-        (
-            "Using the evidence below, identify what deserves "
-            "attention first, explain why, and separate "
-            "actionable findings from informational context."
-        ),
-        "",
-        (
-            "If a Core or OS update is pending, explain the "
-            "available readiness evidence and any limitations "
-            "without claiming certainty."
-        ),
-        "",
-        "## HA Audit evidence",
-        "",
-        "```text",
-        evidence,
-        "```",
-        "",
+    )
+
+
+def relevant_compatibility_results(
+    compatibility,
+):
+    results = compatibility.get(
+        "results",
+        [],
+    )
+
+    if not isinstance(
+        results,
+        list,
+    ):
+        return []
+
+    return [
+        item
+        for item in results
+        if (
+            isinstance(
+                item,
+                dict,
+            )
+            and item.get(
+                "local_match",
+                False,
+            )
+        )
     ]
 
-    return "\n".join(lines)
+
+def format_status(
+    status,
+):
+    if status in STATUS_LABELS:
+        return STATUS_LABELS[
+            status
+        ]
+
+    return str(
+        status or "unknown"
+    ).replace(
+        "_",
+        " ",
+    ).strip().capitalize()
+
+
+def render_decision_support(
+    lines,
+    decision,
+):
+    lines.append(
+        "## Core update decision support"
+    )
+    lines.append("")
+    lines.append(
+        "HA Audit's interpretation of the "
+        "evidence it collected:"
+    )
+    lines.append("")
+    lines.append(
+        f"**Recommendation: "
+        f"{decision['recommendation']}**"
+    )
+
+    lines.append("")
+    lines.append(
+        "**Before updating:**"
+    )
+
+    for item in decision[
+        "before_update"
+    ]:
+        lines.append(
+            f"- {item}"
+        )
+
+    if decision[
+        "conditional_checks"
+    ]:
+        lines.append("")
+        lines.append(
+            "**Conditional checks / uncertainty:**"
+        )
+
+        for item in decision[
+            "conditional_checks"
+        ]:
+            lines.append(
+                f"- {item}"
+            )
+
+    if decision[
+        "general_health"
+    ]:
+        lines.append("")
+        lines.append(
+            "**General Home Assistant health "
+            "context:**"
+        )
+
+        for item in decision[
+            "general_health"
+        ]:
+            lines.append(
+                f"- {item}"
+            )
+
+        lines.append(
+            f"- {decision['general_health_note']}"
+        )
+
+    if decision[
+        "after_update"
+    ]:
+        lines.append("")
+        lines.append(
+            "**After updating:**"
+        )
+
+        for item in decision[
+            "after_update"
+        ]:
+            lines.append(
+                f"- {item}"
+            )
+
+    lines.append("")
+    lines.append(
+        f"*{decision['caution']}*"
+    )
+
+
+def render_local_compatibility(
+    lines,
+    compatibility,
+):
+    lines.append(
+        "## Locally relevant Core compatibility findings"
+    )
+    lines.append("")
+
+    results = relevant_compatibility_results(
+        compatibility
+    )
+
+    if not results:
+        lines.append(
+            "No locally relevant deterministic "
+            "compatibility rule was identified."
+        )
+        return
+
+    lines.append(
+        "Only rules with local evidence are shown "
+        "here. Rules with no local match are omitted "
+        "from this concise handoff."
+    )
+
+    for item in results:
+        area = str(
+            item.get(
+                "area",
+                "Unknown area",
+            )
+        )
+
+        change = str(
+            item.get(
+                "change",
+                "No change description available.",
+            )
+        )
+
+        status = format_status(
+            item.get(
+                "status"
+            )
+        )
+
+        note = str(
+            item.get(
+                "note",
+                "No local evidence explanation available.",
+            )
+        )
+
+        lines.append("")
+        lines.append(
+            f"### {area}"
+        )
+        lines.append("")
+        lines.append(
+            f"- **Change:** {change}"
+        )
+        lines.append(
+            f"- **Result:** {status}."
+        )
+        lines.append(
+            f"- **HA Audit evidence:** {note}"
+        )
+
+        evidence = item.get(
+            "evidence",
+            {},
+        )
+
+        if (
+            isinstance(
+                evidence,
+                dict,
+            )
+            and (
+                "llm" in str(
+                    item.get(
+                        "id",
+                        "",
+                    )
+                ).lower()
+                or "llm" in area.lower()
+            )
+            and not evidence.get(
+                "ui_managed_prompt_content_inspected",
+                False,
+            )
+        ):
+            lines.append(
+                "- **Remaining uncertainty:** "
+                "UI-managed prompt/config-entry "
+                "content was not inspected."
+            )
+
+
+def build_ai_handoff(
+    *,
+    summary_text,
+    update_readiness,
+    compatibility,
+    availability,
+    version,
+    generated_at=None,
+):
+    if generated_at is None:
+        generated_at = (
+            datetime.now(
+                timezone.utc
+            ).isoformat()
+        )
+
+    decision = build_decision(
+        summary_text=summary_text,
+        update_readiness=update_readiness,
+        compatibility=compatibility,
+        availability=availability,
+    )
+
+    evidence = extract_selected_sections(
+        summary_text
+    )
+
+    lines = []
+
+    lines.append(
+        "# HA Audit AI / LLM Handoff"
+    )
+    lines.append("")
+    lines.append(
+        "This file was generated automatically "
+        f"by HA Audit v{version}."
+    )
+    lines.append("")
+    lines.append(
+        f"Generated: {generated_at}"
+    )
+
+    lines.append("")
+    lines.append(
+        "## Purpose"
+    )
+    lines.append("")
+    lines.append(
+        "This is a vendor-neutral handoff for "
+        "analysis by an AI or large language model."
+    )
+    lines.append("")
+    lines.append(
+        "It is intended for assistants such as "
+        "ChatGPT, Claude, Gemini, local LLMs, or "
+        "other systems capable of analysing "
+        "Home Assistant evidence."
+    )
+    lines.append("")
+    lines.append(
+        "The evidence below is a concise selection "
+        "from HA Audit's current run plus structured "
+        "decision-support context."
+    )
+
+    lines.append("")
+    lines.append(
+        "## Instructions for the receiving AI"
+    )
+    lines.append("")
+    lines.append(
+        "- Treat HA Audit findings as evidence, "
+        "not as proof of a fault or guarantee of safety."
+    )
+    lines.append(
+        "- Clearly distinguish facts reported by "
+        "HA Audit from your own inference or advice."
+    )
+    lines.append(
+        "- Do not claim that a Home Assistant "
+        "update is guaranteed safe."
+    )
+    lines.append(
+        "- Treat the Core update recommendation as "
+        "HA Audit's interpretation of its evidence, "
+        "not as independent proof."
+    )
+    lines.append(
+        "- If the recommendation conflicts with the "
+        "supporting evidence or limitations, call out "
+        "that conflict rather than repeating it."
+    )
+    lines.append(
+        "- Do not recommend deleting entities, "
+        "devices, YAML, automations, scripts, or "
+        "configuration solely because they are "
+        "unavailable, unknown, or not currently provided."
+    )
+    lines.append(
+        "- Treat availability and Recorder-history "
+        "findings as context unless stronger evidence "
+        "shows an actual fault."
+    )
+    lines.append(
+        "- Respect HA Audit's distinction between "
+        "general Home Assistant health and Core "
+        "update guidance."
+    )
+    lines.append(
+        "- If evidence collection is incomplete, "
+        "say what is missing rather than filling the "
+        "gap with an assumption."
+    )
+    lines.append(
+        "- For each locally relevant compatibility "
+        "finding, explain why it was cleared or why "
+        "review is still required."
+    )
+    lines.append(
+        "- Prioritise concrete findings that deserve "
+        "attention before informational observations."
+    )
+    lines.append(
+        "- Explain findings in normal Home Assistant "
+        "language suitable for a smart-home enthusiast."
+    )
+    lines.append(
+        "- When suggesting a change, explain which "
+        "HA Audit evidence supports that suggestion."
+    )
+
+    lines.append("")
+    lines.append(
+        "## Important limitations"
+    )
+    lines.append("")
+    lines.append(
+        "- HA Audit is read-only and does not prove "
+        "that an installation is fault-free."
+    )
+    lines.append(
+        "- Core update guidance is conservative "
+        "evidence-based guidance, not a safe-to-update "
+        "guarantee."
+    )
+    lines.append(
+        "- Availability classifications may represent "
+        "intentional, temporary, or feature-level states."
+    )
+    lines.append(
+        "- Recorder history only covers the history "
+        "that was actually available to HA Audit."
+    )
+    lines.append(
+        "- Some Home Assistant configuration may be "
+        "UI-managed or otherwise outside the local "
+        "scan scope."
+    )
+    lines.append(
+        "- Lower-level technical evidence and detailed "
+        "JSON reports contain more information than "
+        "this handoff."
+    )
+    lines.append(
+        "- If this handoff is insufficient, request "
+        "the relevant detailed report rather than "
+        "inventing missing information."
+    )
+
+    lines.append("")
+    render_decision_support(
+        lines,
+        decision,
+    )
+
+    lines.append("")
+    render_local_compatibility(
+        lines,
+        compatibility,
+    )
+
+    lines.append("")
+    lines.append(
+        "## Requested analysis"
+    )
+    lines.append("")
+    lines.append(
+        "Using the evidence below, answer in this order:"
+    )
+    lines.append("")
+    lines.append(
+        "1. **Core update recommendation** — explain "
+        "whether the evidence supports proceeding, "
+        "reviewing first, delaying, or treating the "
+        "assessment as incomplete."
+    )
+    lines.append(
+        "2. **Required before updating** — list only "
+        "concrete actions that should be completed "
+        "before the Core update."
+    )
+    lines.append(
+        "3. **Conditional checks / uncertainty** — "
+        "state anything HA Audit could not inspect or "
+        "prove."
+    )
+    lines.append(
+        "4. **General Home Assistant health** — "
+        "separate issues worth investigating from "
+        "anything relevant to the Core update."
+    )
+    lines.append(
+        "5. **After updating** — explain what should "
+        "be checked when HA Audit is rerun."
+    )
+    lines.append("")
+    lines.append(
+        "Do not turn informational counts into required "
+        "work unless the evidence supports that conclusion."
+    )
+
+    lines.append("")
+    lines.append(
+        "## HA Audit evidence"
+    )
+    lines.append("")
+    lines.append(
+        "```text"
+    )
+    lines.append(
+        evidence
+    )
+    lines.append(
+        "```"
+    )
+
+    return (
+        "\n".join(
+            lines
+        )
+        + "\n"
+    )
 
 
 def main():
-    summary = load_summary()
+    summary_text = load_text(
+        SUMMARY_FILE
+    )
 
-    handoff = build_handoff(
-        summary
+    update_readiness = load_json_optional(
+        UPDATE_READINESS_FILE
+    )
+
+    compatibility = load_json_optional(
+        UPGRADE_COMPATIBILITY_FILE
+    )
+
+    availability = load_json_optional(
+        AVAILABILITY_FILE
+    )
+
+    output = build_ai_handoff(
+        summary_text=summary_text,
+        update_readiness=update_readiness,
+        compatibility=compatibility,
+        availability=availability,
+        version=VERSION,
     )
 
     with open(
@@ -278,12 +960,9 @@ def main():
         "w",
         encoding="utf-8",
     ) as handle:
-        handle.write(handoff)
-
-    print(
-        "AI / LLM handoff written to "
-        f"{OUTPUT_FILE}"
-    )
+        handle.write(
+            output
+        )
 
 
 if __name__ == "__main__":
