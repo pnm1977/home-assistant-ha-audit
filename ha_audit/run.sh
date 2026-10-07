@@ -94,7 +94,11 @@ run_quiet_python \
 
 run_quiet_python \
     "log_scan.py" \
-    "Core log collection probe"
+    "System Log collection probe"
+
+run_quiet_python \
+    "log_family_scan.py" \
+    "System Log issue family probe"
 
 
 if run_quiet_python \
