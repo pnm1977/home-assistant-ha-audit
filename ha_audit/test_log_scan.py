@@ -1,59 +1,122 @@
+import json
+
 from log_scan import (
-    analyse_log_text,
     build_report,
-    fetch_core_logs,
-    parse_log_line,
-    redact_message,
+    collect_system_log,
+    normalise_entry,
+    redact_text,
 )
 
 
-SAMPLE_LOG = """
-2026-10-07 19:00:00.100 INFO (MainThread) [homeassistant.core] Starting Home Assistant
-2026-10-07 19:00:01.100 WARNING (MainThread) [homeassistant.components.demo] Connection retry scheduled
-2026-10-07 19:00:02.100 WARNING (MainThread) [homeassistant.components.demo] Connection retry scheduled
-2026-10-07 19:00:03.100 WARNING (MainThread) [homeassistant.components.demo] Connection retry scheduled
-2026-10-07 19:00:04.100 ERROR (MainThread) [custom_components.example] Authentication failed token=abc123
-2026-10-07 19:00:05.100 ERROR (MainThread) [custom_components.example] Authentication failed token=def456
-unparsed journal line for parser review
-"""
+SYSTEM_LOG_RESULT = [
+    {
+        "name": (
+            "homeassistant.components.demo"
+        ),
+        "message": [
+            "Connection retry scheduled",
+        ],
+        "level": "WARNING",
+        "source": [
+            "components/demo/__init__.py",
+            42,
+        ],
+        "timestamp": 1791403205.0,
+        "exception": "",
+        "count": 184,
+        "first_occurred": 1791400000.0,
+    },
+    {
+        "name": (
+            "custom_components.example"
+        ),
+        "message": [
+            (
+                "Authentication failed "
+                "token=abc123"
+            ),
+            (
+                "Authentication failed "
+                "token=def456"
+            ),
+        ],
+        "level": "ERROR",
+        "source": [
+            "custom_components/example/api.py",
+            120,
+        ],
+        "timestamp": 1791403210.0,
+        "exception": (
+            "Request failed "
+            "password=secret-value"
+        ),
+        "count": 4,
+        "first_occurred": 1791401000.0,
+    },
+]
 
 
-class FakeResponse:
+class FakeWebSocket:
     def __init__(
         self,
-        status_code,
-        text="",
+        responses,
     ):
-        self.status_code = (
-            status_code
+        self.responses = list(
+            responses
         )
-        self.text = text
+        self.sent = []
+        self.closed = False
+
+    def recv(
+        self,
+    ):
+        return json.dumps(
+            self.responses.pop(
+                0
+            )
+        )
+
+    def send(
+        self,
+        value,
+    ):
+        self.sent.append(
+            json.loads(
+                value
+            )
+        )
+
+    def close(
+        self,
+    ):
+        self.closed = True
 
 
-class FakeSession:
+class FakeFactory:
     def __init__(
         self,
-        response,
+        websocket_instance,
     ):
-        self.response = response
-        self.last_url = None
-        self.last_headers = None
-        self.last_params = None
-        self.last_timeout = None
+        self.websocket_instance = (
+            websocket_instance
+        )
+        self.url = None
+        self.timeout = None
+        self.suppress_origin = None
 
-    def get(
+    def __call__(
         self,
         url,
-        headers=None,
-        params=None,
         timeout=None,
+        suppress_origin=None,
     ):
-        self.last_url = url
-        self.last_headers = headers
-        self.last_params = params
-        self.last_timeout = timeout
+        self.url = url
+        self.timeout = timeout
+        self.suppress_origin = (
+            suppress_origin
+        )
 
-        return self.response
+        return self.websocket_instance
 
 
 def require(
@@ -66,264 +129,286 @@ def require(
         )
 
 
-def test_primary_parser():
-    item = parse_log_line(
-        (
-            "2026-10-07 19:00:02.100 "
-            "WARNING (MainThread) "
-            "[homeassistant.components.demo] "
-            "Connection retry scheduled"
-        )
-    )
-
-    require(
-        item is not None,
-        "Primary parser did not match.",
-    )
-
-    require(
-        item[
-            "level"
-        ] == "WARNING",
-        "Incorrect parsed level.",
-    )
-
-    require(
-        item[
-            "source"
-        ]
-        == "homeassistant.components.demo",
-        "Incorrect parsed source.",
-    )
-
-    require(
-        item[
-            "message"
-        ]
-        == "Connection retry scheduled",
-        "Incorrect parsed message.",
-    )
-
-
 def test_redaction():
-    redacted = redact_message(
+    value = redact_text(
         (
-            "Failed request "
             "token=abc123 "
-            "https://example.test/"
-            "?key=value&password=secret"
+            "password=secret "
+            "Authorization=Bearer123"
         )
     )
 
     require(
-        "abc123" not in redacted,
+        "abc123" not in value,
         "Token was not redacted.",
     )
 
     require(
-        "secret" not in redacted,
+        "secret" not in value,
         "Password was not redacted.",
     )
 
     require(
         "[REDACTED]"
-        in redacted,
+        in value,
         "Redaction marker missing.",
     )
 
 
-def test_grouping():
-    result = analyse_log_text(
-        SAMPLE_LOG
-    )
-
-    require(
-        result[
-            "nonempty_line_count"
-        ] == 7,
-        "Unexpected input line count.",
-    )
-
-    require(
-        result[
-            "parsed_line_count"
-        ] == 6,
-        "Unexpected parsed line count.",
-    )
-
-    require(
-        result[
-            "unparsed_line_count"
-        ] == 1,
-        "Unexpected unparsed line count.",
-    )
-
-    require(
-        result[
-            "repeated_group_count"
-        ] >= 1,
-        "Repeated group was not detected.",
-    )
-
-    demo_groups = [
-        item
-        for item
-        in result[
-            "groups"
+def test_normalise_entry():
+    item = normalise_entry(
+        SYSTEM_LOG_RESULT[
+            1
         ]
-        if (
-            item.get(
-                "source"
-            )
-            == "homeassistant.components.demo"
-        )
-    ]
-
-    require(
-        len(
-            demo_groups
-        ) == 1,
-        "Demo warning should be one group.",
     )
 
     require(
-        demo_groups[
-            0
-        ][
+        item[
+            "level"
+        ] == "ERROR",
+        "Incorrect level.",
+    )
+
+    require(
+        item[
             "count"
-        ] == 3,
-        "Demo warning count should be 3.",
+        ] == 4,
+        "Incorrect occurrence count.",
     )
 
-    auth_groups = [
-        item
-        for item
-        in result[
-            "groups"
-        ]
-        if (
-            item.get(
-                "source"
-            )
-            == "custom_components.example"
-        )
-    ]
-
     require(
-        len(
-            auth_groups
-        ) == 1,
-        (
-            "Redacted authentication errors "
-            "should group together."
+        item[
+            "source"
+        ][
+            "file"
+        ]
+        == (
+            "custom_components/"
+            "example/api.py"
         ),
+        "Incorrect source file.",
     )
 
     require(
-        auth_groups[
-            0
+        item[
+            "source"
         ][
-            "count"
-        ] == 2,
-        "Authentication error count should be 2.",
+            "line"
+        ] == 120,
+        "Incorrect source line.",
     )
 
     require(
-        len(
-            result[
-                "unparsed_samples"
-            ]
-        ) == 1,
-        "Unparsed sample was not retained.",
+        "abc123"
+        not in item[
+            "messages"
+        ][
+            0
+        ],
+        "Message token was not redacted.",
+    )
+
+    require(
+        "secret-value"
+        not in item[
+            "exception"
+        ],
+        "Exception secret was not redacted.",
+    )
+
+    require(
+        item[
+            "first_seen"
+        ]
+        is not None,
+        "First timestamp missing.",
+    )
+
+    require(
+        item[
+            "last_seen"
+        ]
+        is not None,
+        "Last timestamp missing.",
     )
 
 
-def test_fetch_success():
-    session = FakeSession(
-        FakeResponse(
-            200,
-            SAMPLE_LOG,
-        )
+def test_collection_success():
+    fake_ws = FakeWebSocket(
+        [
+            {
+                "type": (
+                    "auth_required"
+                ),
+            },
+            {
+                "type": (
+                    "auth_ok"
+                ),
+            },
+            {
+                "id": 1,
+                "type": "result",
+                "success": True,
+                "result": (
+                    SYSTEM_LOG_RESULT
+                ),
+            },
+        ]
     )
 
-    result = fetch_core_logs(
-        session=session,
+    factory = FakeFactory(
+        fake_ws
+    )
+
+    result = collect_system_log(
+        ws_factory=factory,
         token="test-token",
-        lines=2000,
     )
 
     require(
         result[
             "status"
         ] == "ok",
-        "Successful fetch did not return ok.",
+        "Collection did not succeed.",
     )
 
     require(
-        session.last_url.endswith(
-            "/core/logs"
+        len(
+            result[
+                "entries"
+            ]
+        ) == 2,
+        "Unexpected entry count.",
+    )
+
+    require(
+        factory.url
+        == (
+            "ws://supervisor/"
+            "core/websocket"
         ),
-        "Wrong Core log endpoint.",
+        "Wrong WebSocket URL.",
     )
 
     require(
-        session.last_headers.get(
-            "Authorization"
-        )
-        == "Bearer test-token",
-        "Supervisor token header missing.",
+        fake_ws.sent[
+            0
+        ][
+            "type"
+        ]
+        == "auth",
+        "Authentication message missing.",
     )
 
     require(
-        session.last_headers.get(
-            "Accept"
-        )
-        == "text/x-log",
-        "Annotated log Accept header missing.",
+        fake_ws.sent[
+            0
+        ][
+            "access_token"
+        ]
+        == "test-token",
+        "Authentication token missing.",
     )
 
     require(
-        session.last_params.get(
-            "lines"
-        ) == 2000,
-        "Requested line limit is wrong.",
+        fake_ws.sent[
+            1
+        ]
+        == {
+            "id": 1,
+            "type": (
+                "system_log/list"
+            ),
+        },
+        "Wrong System Log command.",
     )
 
     require(
-        "verbose"
-        in session.last_params,
-        "Verbose log option missing.",
-    )
-
-    require(
-        "no_colors"
-        in session.last_params,
-        "No-colors option missing.",
+        fake_ws.closed,
+        "WebSocket was not closed.",
     )
 
 
-def test_permission_denied():
-    session = FakeSession(
-        FakeResponse(
-            403,
-            "Forbidden",
-        )
+def test_command_denied():
+    fake_ws = FakeWebSocket(
+        [
+            {
+                "type": (
+                    "auth_required"
+                ),
+            },
+            {
+                "type": (
+                    "auth_ok"
+                ),
+            },
+            {
+                "id": 1,
+                "type": "result",
+                "success": False,
+                "error": {
+                    "code": (
+                        "unauthorized"
+                    ),
+                    "message": (
+                        "Unauthorized"
+                    ),
+                },
+            },
+        ]
     )
 
-    result = fetch_core_logs(
-        session=session,
+    result = collect_system_log(
+        ws_factory=FakeFactory(
+            fake_ws
+        ),
         token="test-token",
     )
 
     require(
         result[
             "status"
-        ] == "permission_denied",
-        "403 should be permission_denied.",
+        ] == "command_failed",
+        (
+            "Denied command should be "
+            "reported cleanly."
+        ),
     )
 
+
+def test_missing_token():
+    fake_ws = FakeWebSocket(
+        []
+    )
+
+    result = collect_system_log(
+        ws_factory=FakeFactory(
+            fake_ws
+        ),
+        token="",
+    )
+
+    require(
+        result[
+            "status"
+        ]
+        == "token_unavailable",
+        "Missing-token state incorrect.",
+    )
+
+
+def test_report():
+    collection = {
+        "status": "ok",
+        "entries": (
+            SYSTEM_LOG_RESULT
+        ),
+        "error": None,
+    }
+
     report = build_report(
-        result
+        collection
     )
 
     require(
@@ -331,9 +416,8 @@ def test_permission_denied():
             "collection"
         ][
             "status"
-        ]
-        == "permission_denied",
-        "Permission result not preserved.",
+        ] == "ok",
+        "Collection status lost.",
     )
 
     require(
@@ -343,71 +427,95 @@ def test_permission_denied():
             "judgement_produced"
         ]
         is False,
-        "Probe must not produce a judgement.",
-    )
-
-
-def test_missing_token():
-    session = FakeSession(
-        FakeResponse(
-            200,
-            SAMPLE_LOG,
-        )
-    )
-
-    result = fetch_core_logs(
-        session=session,
-        token="",
+        "Probe produced a judgement.",
     )
 
     require(
-        result[
-            "status"
-        ] == "token_unavailable",
-        "Missing token state incorrect.",
+        report[
+            "scope"
+        ][
+            "severity_produced"
+        ]
+        is False,
+        "Probe produced severity.",
     )
 
     require(
-        session.last_url is None,
+        report[
+            "summary"
+        ][
+            "entries_returned"
+        ] == 2,
+        "Incorrect entry summary.",
+    )
+
+    require(
+        report[
+            "summary"
+        ][
+            "total_occurrence_count"
+        ] == 188,
+        "Incorrect occurrence total.",
+    )
+
+    require(
+        report[
+            "summary"
+        ][
+            "highest_repeat_count"
+        ] == 184,
+        "Incorrect highest repeat count.",
+    )
+
+    require(
+        report[
+            "entries"
+        ][
+            0
+        ][
+            "count"
+        ] == 184,
         (
-            "No HTTP request should occur "
-            "without a token."
+            "Highest recurring entry "
+            "should sort first."
         ),
     )
 
 
 def main():
-    test_primary_parser()
     test_redaction()
-    test_grouping()
-    test_fetch_success()
-    test_permission_denied()
+    test_normalise_entry()
+    test_collection_success()
+    test_command_denied()
     test_missing_token()
+    test_report()
 
     print("")
     print("=" * 62)
-    print("HA AUDIT CORE LOG COLLECTION TEST")
-    print("=" * 62)
     print(
-        "Core log parser:              PASS"
+        "HA AUDIT SYSTEM LOG COLLECTION TEST"
     )
+    print("=" * 62)
     print(
         "Sensitive-value redaction:    PASS"
     )
     print(
-        "Repeated-message grouping:    PASS"
+        "System Log normalisation:     PASS"
     )
     print(
-        "Supervisor API request:       PASS"
+        "WebSocket authentication:     PASS"
     )
     print(
-        "Bounded 2000-line request:    PASS"
+        "system_log/list collection:   PASS"
     )
     print(
-        "Permission-denied handling:   PASS"
+        "Denied-command handling:      PASS"
     )
     print(
         "Missing-token handling:       PASS"
+    )
+    print(
+        "Occurrence counts retained:   PASS"
     )
     print(
         "No severity judgement:        PASS"
