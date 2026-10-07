@@ -81,6 +81,53 @@ LOG_AUDIT = {
             ),
         ),
         entry(
+            name="homeassistant.core",
+            level="ERROR",
+            count=88,
+            message=(
+                "Error executing service: "
+                "<ServiceCall light.turn_on>"
+            ),
+            exception=(
+                "Traceback: "
+                "/homeassistant/components/zha/"
+                "helpers.py -> "
+                "zha/application/platforms/light/"
+                "__init__.py -> "
+                "zigpy.exceptions.DeliveryError"
+            ),
+            first_seen=(
+                "2026-10-03T07:00:00+00:00"
+            ),
+            last_seen=(
+                "2026-10-07T17:00:00+00:00"
+            ),
+            file="core.py",
+            line=2981,
+        ),
+        entry(
+            name="homeassistant",
+            level="ERROR",
+            count=52,
+            message=(
+                "Error doing job: "
+                "Task exception was never retrieved"
+            ),
+            exception=(
+                "Traceback from script execution"
+            ),
+            first_seen=(
+                "2026-10-02T20:00:00+00:00"
+            ),
+            last_seen=(
+                "2026-10-07T16:00:00+00:00"
+            ),
+            file=(
+                "components/zha/helpers.py"
+            ),
+            line=1433,
+        ),
+        entry(
             name=(
                 "homeassistant.components."
                 "apple_tv"
@@ -341,20 +388,45 @@ def main():
     require(
         zigbee[
             "source_entry_count"
-        ] == 2,
+        ] == 4,
         (
-            "Zigbee entries were not "
-            "clustered."
+            "Zigbee provenance records "
+            "were not clustered."
         ),
     )
 
     require(
         zigbee[
             "occurrence_count"
-        ] == 150,
+        ] == 290,
         (
             "Zigbee occurrence count "
             "incorrect."
+        ),
+    )
+
+    require(
+        "homeassistant.core"
+        in zigbee[
+            "logger_names"
+        ],
+        (
+            "Core service error with ZHA "
+            "traceback was not included."
+        ),
+    )
+
+    require(
+        (
+            "components/zha/"
+            "helpers.py:1433"
+        )
+        in zigbee[
+            "sources"
+        ],
+        (
+            "Generic ZHA helper error was "
+            "not included."
         ),
     )
 
@@ -574,7 +646,13 @@ def main():
     )
     print("=" * 62)
     print(
-        "Zigbee family clustering:     PASS"
+        "Zigbee message clustering:    PASS"
+    )
+    print(
+        "Zigbee source provenance:     PASS"
+    )
+    print(
+        "Zigbee traceback provenance:  PASS"
     )
     print(
         "Apple TV family clustering:   PASS"
