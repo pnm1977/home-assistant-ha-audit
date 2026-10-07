@@ -1,4 +1,4 @@
-name: Core log scan test
+name: System log scan test
 
 on:
   workflow_dispatch:
@@ -29,7 +29,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install test dependency
-        run: python3 -m pip install requests
+        run: python3 -m pip install websocket-client
 
-      - name: Run Core log scan test
+      - name: Run System Log scan test
         run: python3 ha_audit/test_log_scan.py
