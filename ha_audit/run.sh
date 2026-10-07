@@ -19,6 +19,7 @@ run_quiet_python() {
     fi
 
     bashio::log.error "${label} failed"
+
     if [ -s "${temp_log}" ]; then
         echo ""
         echo "Output from failed stage:"
@@ -90,6 +91,10 @@ run_quiet_python \
 run_quiet_python \
     "correlation_validation_scan.py" \
     "Correlation validation audit"
+
+run_quiet_python \
+    "log_scan.py" \
+    "Core log collection probe"
 
 
 if run_quiet_python \
