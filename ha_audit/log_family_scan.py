@@ -162,6 +162,28 @@ def logger_name(
     )
 
 
+def source_file(
+    entry,
+):
+    source = entry.get(
+        "source",
+        {},
+    )
+
+    if not isinstance(
+        source,
+        dict,
+    ):
+        return ""
+
+    return clean_text(
+        source.get(
+            "file",
+            "",
+        )
+    ).lower()
+
+
 def has_any(
     text,
     markers,
@@ -177,7 +199,7 @@ def match_zigbee_delivery(
     entry,
     text,
 ):
-    markers = (
+    delivery_markers = (
         "txstatus.",
         "failed to deliver packet",
         "nwk_route_discovery_failed",
@@ -188,10 +210,40 @@ def match_zigbee_delivery(
         "unexpected transmit confirm",
     )
 
-    return has_any(
+    if has_any(
         text,
-        markers,
+        delivery_markers,
+    ):
+        return True
+
+    file_name = source_file(
+        entry
     )
+
+    if (
+        file_name.startswith(
+            "components/zha/"
+        )
+        or "/components/zha/"
+        in file_name
+    ):
+        return True
+
+    provenance_markers = (
+        "components/zha/helpers.py",
+        "homeassistant/components/zha/",
+        "zha/application/platforms/",
+        "zigpy.exceptions.deliveryerror",
+        "zigpy_deconz.zigbee.application",
+    )
+
+    if has_any(
+        text,
+        provenance_markers,
+    ):
+        return True
+
+    return False
 
 
 def match_shelly(
