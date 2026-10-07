@@ -26,12 +26,12 @@ OBSERVED = "OBSERVED"
 NOT_OBSERVED = "NOT OBSERVED"
 UNKNOWN = "UNKNOWN"
 
-PERSISTENCE_MULTI_DAY = "MULTI-DAY"
-PERSISTENCE_SAME_DAY = "SAME-DAY"
-PERSISTENCE_UNKNOWN = "UNKNOWN"
+SPAN_MULTI_DAY = "MULTI-DAY"
+SPAN_SAME_DAY = "SAME-DAY"
+SPAN_UNKNOWN = "UNKNOWN"
 
-BREADTH_MULTIPLE = "MULTIPLE TARGETS"
-BREADTH_SINGLE = "SINGLE TARGET"
+BREADTH_MULTIPLE = "MULTIPLE TARGETS / PATHS"
+BREADTH_SINGLE = "SINGLE TARGET / PATH"
 BREADTH_UNKNOWN = "UNKNOWN"
 
 ACTION_CLEAR_LOCAL = "CLEAR LOCAL ACTION PATH"
@@ -70,14 +70,44 @@ IP_RE = re.compile(
     r"\b"
 )
 
+AUTOMATION_LOGGER_PREFIX = (
+    "homeassistant.components.automation."
+)
 
-KNOWN_MULTIPLE_TARGET_FAMILIES = {
+SCRIPT_LOGGER_PREFIX = (
+    "homeassistant.components.script."
+)
+
+
+KNOWN_MULTIPLE_BREADTH_FAMILIES = {
     "zigbee_delivery",
     "apple_tv",
     "hue_sync",
     "missing_targets",
     "slow_entity_update",
     "esphome",
+}
+
+
+SERVICE_LIKE_IDS = {
+    "light.turn_on",
+    "light.turn_off",
+    "light.toggle",
+    "media_player.turn_on",
+    "media_player.turn_off",
+    "media_player.select_source",
+    "media_player.play_media",
+    "media_player.media_play",
+    "media_player.media_pause",
+    "media_player.volume_set",
+    "switch.turn_on",
+    "switch.turn_off",
+    "switch.toggle",
+    "automation.trigger",
+    "automation.turn_on",
+    "automation.turn_off",
+    "script.turn_on",
+    "script.turn_off",
 }
 
 
@@ -147,32 +177,66 @@ def clean_text(
     )
 
 
-def family_text(
+def list_values(
+    family,
+    key,
+):
+    value = family.get(
+        key,
+        [],
+    )
+
+    if not isinstance(
+        value,
+        list,
+    ):
+        return []
+
+    return [
+        clean_text(
+            item
+        )
+        for item in value
+        if clean_text(
+            item
+        )
+    ]
+
+
+def message_text(
     family,
 ):
-    parts = []
-
-    for key in (
-        "title",
-        "logger_names",
-        "sources",
-        "message_samples",
-    ):
-        value = family.get(
-            key
+    return " ".join(
+        list_values(
+            family,
+            "message_samples",
         )
+    )
 
-        if isinstance(
-            value,
-            list,
-        ):
-            parts.extend(
-                value
-            )
-        elif value:
-            parts.append(
-                value
-            )
+
+def evidence_text(
+    family,
+):
+    parts = [
+        family.get(
+            "title",
+            "",
+        )
+    ]
+
+    parts.extend(
+        list_values(
+            family,
+            "logger_names",
+        )
+    )
+
+    parts.extend(
+        list_values(
+            family,
+            "message_samples",
+        )
+    )
 
     return " ".join(
         clean_text(
@@ -242,7 +306,7 @@ def observed_span_hours(
     )
 
 
-def persistence_evidence(
+def observed_span_class(
     family,
 ):
     hours = observed_span_hours(
@@ -251,18 +315,18 @@ def persistence_evidence(
 
     if hours is None:
         return (
-            PERSISTENCE_UNKNOWN,
+            SPAN_UNKNOWN,
             None,
         )
 
     if hours >= 24:
         return (
-            PERSISTENCE_MULTI_DAY,
+            SPAN_MULTI_DAY,
             hours,
         )
 
     return (
-        PERSISTENCE_SAME_DAY,
+        SPAN_SAME_DAY,
         hours,
     )
 
@@ -287,7 +351,7 @@ def direct_failure_evidence(
     family,
 ):
     return marker_evidence(
-        family_text(
+        evidence_text(
             family
         ),
         DIRECT_FAILURE_MARKERS,
@@ -298,7 +362,7 @@ def recovery_evidence(
     family,
 ):
     return marker_evidence(
-        family_text(
+        evidence_text(
             family
         ),
         RECOVERY_MARKERS,
@@ -309,42 +373,148 @@ def fallback_evidence(
     family,
 ):
     return marker_evidence(
-        family_text(
+        evidence_text(
             family
         ),
         FALLBACK_MARKERS,
     )
 
 
-def extracted_targets(
+def is_loopback_ip(
+    value,
+):
+    return str(
+        value
+    ).startswith(
+        "127."
+    )
+
+
+def valid_entity_identifier(
+    value,
+):
+    identifier = str(
+        value
+    ).lower()
+
+    if identifier in SERVICE_LIKE_IDS:
+        return False
+
+    if identifier.endswith(
+        ".py"
+    ):
+        return False
+
+    return True
+
+
+def message_identifiers(
     family,
 ):
-    text = family_text(
+    text = message_text(
         family
     )
 
-    targets = set()
+    identifiers = set()
 
     for match in ENTITY_RE.finditer(
         text
     ):
-        targets.add(
-            match.group(
-                0
-            ).lower()
-        )
+        value = match.group(
+            0
+        ).lower()
+
+        if valid_entity_identifier(
+            value
+        ):
+            identifiers.add(
+                value
+            )
 
     for match in IP_RE.finditer(
         text
     ):
-        targets.add(
-            match.group(
-                0
-            )
+        value = match.group(
+            0
         )
 
+        if not is_loopback_ip(
+            value
+        ):
+            identifiers.add(
+                value
+            )
+
+    return identifiers
+
+
+def logger_execution_paths(
+    family,
+):
+    paths = set()
+
+    for name in list_values(
+        family,
+        "logger_names",
+    ):
+        lowered = name.lower()
+
+        if lowered.startswith(
+            AUTOMATION_LOGGER_PREFIX
+        ):
+            object_id = lowered[
+                len(
+                    AUTOMATION_LOGGER_PREFIX
+                ):
+            ]
+
+            if object_id:
+                paths.add(
+                    (
+                        "automation."
+                        f"{object_id}"
+                    )
+                )
+
+        elif lowered.startswith(
+            SCRIPT_LOGGER_PREFIX
+        ):
+            object_id = lowered[
+                len(
+                    SCRIPT_LOGGER_PREFIX
+                ):
+            ]
+
+            if object_id:
+                paths.add(
+                    (
+                        "script."
+                        f"{object_id}"
+                    )
+                )
+
+    return paths
+
+
+def observed_identifiers(
+    family,
+):
+    identifiers = set()
+
+    identifiers.update(
+        message_identifiers(
+            family
+        )
+    )
+
+    identifiers.update(
+        logger_execution_paths(
+            family
+        )
+    )
+
     return sorted(
-        targets
+        identifiers
     )
 
 
@@ -358,38 +528,50 @@ def breadth_evidence(
         )
     )
 
-    targets = extracted_targets(
+    identifiers = observed_identifiers(
         family
     )
 
     if (
         family_id
-        in KNOWN_MULTIPLE_TARGET_FAMILIES
+        in KNOWN_MULTIPLE_BREADTH_FAMILIES
     ):
         return (
             BREADTH_MULTIPLE,
-            targets,
+            (
+                "deterministic_family_evidence"
+            ),
+            identifiers,
         )
 
     if len(
-        targets
+        identifiers
     ) >= 2:
         return (
             BREADTH_MULTIPLE,
-            targets,
+            (
+                "multiple_observed_identifiers"
+            ),
+            identifiers,
         )
 
     if len(
-        targets
+        identifiers
     ) == 1:
         return (
             BREADTH_SINGLE,
-            targets,
+            (
+                "single_observed_identifier"
+            ),
+            identifiers,
         )
 
     return (
         BREADTH_UNKNOWN,
-        targets,
+        (
+            "insufficient_identifier_evidence"
+        ),
+        identifiers,
     )
 
 
@@ -455,16 +637,18 @@ def build_record(
     family,
     ownership,
 ):
-    persistence, span_hours = (
-        persistence_evidence(
+    span_class, span_hours = (
+        observed_span_class(
             family
         )
     )
 
-    breadth, targets = (
-        breadth_evidence(
-            family
-        )
+    (
+        breadth,
+        breadth_basis,
+        identifiers,
+    ) = breadth_evidence(
+        family
     )
 
     levels = family.get(
@@ -518,8 +702,8 @@ def build_record(
         "observed_span_hours": (
             span_hours
         ),
-        "persistence_evidence": (
-            persistence
+        "observed_span_class": (
+            span_class
         ),
         "direct_failure_evidence": (
             direct_failure_evidence(
@@ -537,7 +721,12 @@ def build_record(
             )
         ),
         "breadth_evidence": breadth,
-        "observed_targets": targets,
+        "breadth_basis": (
+            breadth_basis
+        ),
+        "observed_identifiers": (
+            identifiers
+        ),
         "ownership": ownership.get(
             "ownership"
         ),
@@ -608,12 +797,27 @@ def build_report(
                 "for a future priority model. No "
                 "field is itself a priority score."
             ),
+            "span_note": (
+                "Observed span describes the time "
+                "between the first and last evidence "
+                "currently retained by Home Assistant "
+                "System Log. MULTI-DAY does not prove "
+                "continuous persistence."
+            ),
             "absence_note": (
                 "NOT OBSERVED means the evidence "
                 "was not present in the bounded "
                 "System Log sample. It does not "
                 "prove that recovery, fallback or "
                 "failure never occurred."
+            ),
+            "breadth_note": (
+                "Breadth uses observed entity, device "
+                "or local automation/script identifiers "
+                "plus conservative deterministic family "
+                "knowledge. Python source filenames, "
+                "service names and loopback addresses "
+                "are not counted as targets."
             ),
         },
         "source_status": {
@@ -769,13 +973,13 @@ def build_report(
         "extra_ownership_family_ids": (
             extra_ownership
         ),
-        "multi_day_family_count": sum(
+        "multi_day_span_family_count": sum(
             1
             for item in records
             if item[
-                "persistence_evidence"
+                "observed_span_class"
             ]
-            == PERSISTENCE_MULTI_DAY
+            == SPAN_MULTI_DAY
         ),
         "direct_failure_family_count": sum(
             1
@@ -801,7 +1005,7 @@ def build_report(
             ]
             == OBSERVED
         ),
-        "multiple_target_family_count": sum(
+        "multiple_breadth_family_count": sum(
             1
             for item in records
             if item[
