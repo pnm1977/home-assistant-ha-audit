@@ -100,6 +100,10 @@ run_quiet_python \
     "log_family_scan.py" \
     "System Log issue family probe"
 
+run_quiet_python \
+    "log_ownership_scan.py" \
+    "System Log ownership probe"
+
 
 if run_quiet_python \
     "summary_report.py" \
