@@ -1,10 +1,9 @@
 import json
 import os
 import re
-from collections import Counter
 from datetime import datetime, timezone
 
-import requests
+import websocket
 
 
 VERSION = os.environ.get(
@@ -12,60 +11,23 @@ VERSION = os.environ.get(
     "unknown",
 )
 
-SUPERVISOR_URL = os.environ.get(
-    "SUPERVISOR_URL",
-    "http://supervisor",
+TOKEN = os.environ.get(
+    "SUPERVISOR_TOKEN",
 )
 
-SUPERVISOR_TOKEN = os.environ.get(
-    "SUPERVISOR_TOKEN",
+WS_URL = (
+    "ws://supervisor/core/websocket"
 )
 
 OUTPUT_FILE = (
     "/config/log_audit.json"
 )
 
-LINES_REQUESTED = 2000
+MAX_ENTRIES = 100
+MAX_MESSAGES_PER_ENTRY = 5
+MAX_MESSAGE_LENGTH = 750
+MAX_EXCEPTION_LENGTH = 2000
 
-MAX_GROUPS = 100
-MAX_UNPARSED_SAMPLES = 10
-MAX_SAMPLE_LENGTH = 500
-
-
-ANSI_RE = re.compile(
-    r"\x1b\[[0-?]*[ -/]*[@-~]"
-)
-
-HA_LOG_RE = re.compile(
-    r"(?P<timestamp>"
-    r"\d{4}-\d{2}-\d{2}"
-    r"[ T]"
-    r"\d{2}:\d{2}:\d{2}"
-    r"(?:[.,]\d+)?"
-    r")"
-    r"\s+"
-    r"(?P<level>"
-    r"DEBUG|INFO|WARNING|ERROR|CRITICAL"
-    r")"
-    r"\s+"
-    r"\((?P<thread>[^)]*)\)"
-    r"\s+"
-    r"\[(?P<source>[^\]]+)\]"
-    r"\s+"
-    r"(?P<message>.*)"
-)
-
-FALLBACK_LOG_RE = re.compile(
-    r"\b"
-    r"(?P<level>"
-    r"DEBUG|INFO|WARNING|ERROR|CRITICAL"
-    r")"
-    r"\b"
-    r".*?"
-    r"\[(?P<source>[^\]]+)\]"
-    r"\s+"
-    r"(?P<message>.*)"
-)
 
 SECRET_RE = re.compile(
     r"(?i)"
@@ -96,385 +58,261 @@ def utc_now():
     ).isoformat()
 
 
-def clean_text(value):
-    value = ANSI_RE.sub(
-        "",
-        str(
-            value or ""
-        ),
+def redact_text(
+    value,
+):
+    text = str(
+        value or ""
     )
 
-    return " ".join(
-        value.split()
-    )
-
-
-def redact_message(value):
-    value = clean_text(
-        value
-    )
-
-    value = BEARER_RE.sub(
+    text = BEARER_RE.sub(
         "Bearer [REDACTED]",
-        value,
+        text,
     )
 
-    value = SECRET_RE.sub(
+    text = SECRET_RE.sub(
         lambda match: (
             f"{match.group(1)}=[REDACTED]"
         ),
-        value,
+        text,
     )
 
-    value = URL_QUERY_RE.sub(
+    text = URL_QUERY_RE.sub(
         lambda match: (
             f"{match.group(1)}=[REDACTED]"
         ),
-        value,
+        text,
     )
 
-    return value
+    return text
 
 
-def truncate_sample(value):
-    value = redact_message(
+def truncate_text(
+    value,
+    limit,
+):
+    text = redact_text(
         value
     )
 
     if len(
-        value
-    ) <= MAX_SAMPLE_LENGTH:
-        return value
+        text
+    ) <= limit:
+        return text
 
     return (
-        value[
-            :MAX_SAMPLE_LENGTH - 3
+        text[
+            :limit - 3
         ]
         + "..."
     )
 
 
-def parse_log_line(line):
-    clean_line = clean_text(
-        line
-    )
-
-    if not clean_line:
+def timestamp_to_iso(
+    value,
+):
+    if value in (
+        None,
+        "",
+    ):
         return None
 
-    match = HA_LOG_RE.search(
-        clean_line
-    )
-
-    if match:
-        return {
-            "timestamp": (
-                match.group(
-                    "timestamp"
-                )
+    try:
+        return datetime.fromtimestamp(
+            float(
+                value
             ),
-            "level": (
-                match.group(
-                    "level"
-                )
-            ),
-            "source": (
-                match.group(
-                    "source"
-                )
-            ),
-            "thread": (
-                match.group(
-                    "thread"
-                )
-            ),
-            "message": redact_message(
-                match.group(
-                    "message"
-                )
-            ),
-        }
-
-    match = FALLBACK_LOG_RE.search(
-        clean_line
-    )
-
-    if match:
-        return {
-            "timestamp": None,
-            "level": (
-                match.group(
-                    "level"
-                )
-            ),
-            "source": (
-                match.group(
-                    "source"
-                )
-            ),
-            "thread": None,
-            "message": redact_message(
-                match.group(
-                    "message"
-                )
-            ),
-        }
-
-    return None
+            tz=timezone.utc,
+        ).isoformat()
+    except (
+        TypeError,
+        ValueError,
+        OSError,
+    ):
+        return None
 
 
-def group_key(
-    item,
+def normalise_source(
+    value,
 ):
-    return (
-        item.get(
-            "level",
-            "UNKNOWN",
+    if isinstance(
+        value,
+        (
+            list,
+            tuple,
         ),
-        item.get(
-            "source",
-            "unknown",
-        ),
-        clean_text(
-            item.get(
-                "message",
-                "",
-            )
-        ),
-    )
-
-
-def analyse_log_text(
-    log_text,
-):
-    raw_lines = str(
-        log_text or ""
-    ).splitlines()
-
-    nonempty_lines = [
-        line
-        for line in raw_lines
-        if line.strip()
-    ]
-
-    parsed = []
-    unparsed_samples = []
-
-    for line in nonempty_lines:
-        item = parse_log_line(
-            line
-        )
-
-        if item is None:
-            if (
-                len(
-                    unparsed_samples
-                )
-                < MAX_UNPARSED_SAMPLES
-            ):
-                unparsed_samples.append(
-                    truncate_sample(
-                        line
-                    )
-                )
-
-            continue
-
-        parsed.append(
-            item
-        )
-
-    groups = {}
-
-    for item in parsed:
-        key = group_key(
-            item
-        )
-
-        if key not in groups:
-            groups[
-                key
-            ] = {
-                "level": key[0],
-                "source": key[1],
-                "message": key[2],
-                "count": 0,
-                "first_seen": None,
-                "last_seen": None,
-                "sample": truncate_sample(
-                    key[2]
+    ):
+        if len(
+            value
+        ) >= 2:
+            return {
+                "file": str(
+                    value[
+                        0
+                    ]
                 ),
+                "line": value[
+                    1
+                ],
             }
 
-        group = groups[
-            key
-        ]
+        if len(
+            value
+        ) == 1:
+            return {
+                "file": str(
+                    value[
+                        0
+                    ]
+                ),
+                "line": None,
+            }
 
-        group[
-            "count"
-        ] += 1
-
-        timestamp = item.get(
-            "timestamp"
-        )
-
-        if timestamp:
-            if (
-                group[
-                    "first_seen"
-                ]
-                is None
-                or timestamp
-                < group[
-                    "first_seen"
-                ]
-            ):
-                group[
-                    "first_seen"
-                ] = timestamp
-
-            if (
-                group[
-                    "last_seen"
-                ]
-                is None
-                or timestamp
-                > group[
-                    "last_seen"
-                ]
-            ):
-                group[
-                    "last_seen"
-                ] = timestamp
-
-    level_counts = Counter(
-        item.get(
-            "level",
-            "UNKNOWN",
-        )
-        for item in parsed
-    )
-
-    grouped_rows = list(
-        groups.values()
-    )
-
-    grouped_rows.sort(
-        key=lambda item: (
-            -int(
-                item.get(
-                    "count",
-                    0,
-                )
+    if value:
+        return {
+            "file": str(
+                value
             ),
-            str(
-                item.get(
-                    "level",
-                    "",
-                )
-            ),
-            str(
-                item.get(
-                    "source",
-                    "",
-                )
-            ),
-            str(
-                item.get(
-                    "message",
-                    "",
-                )
-            ),
-        )
-    )
-
-    repeated_groups = [
-        item
-        for item in grouped_rows
-        if item.get(
-            "count",
-            0,
-        )
-        > 1
-    ]
-
-    parsed_count = len(
-        parsed
-    )
-
-    total_count = len(
-        nonempty_lines
-    )
-
-    if total_count:
-        parse_rate = round(
-            (
-                parsed_count
-                / total_count
-            )
-            * 100,
-            1,
-        )
-    else:
-        parse_rate = 0.0
+            "line": None,
+        }
 
     return {
-        "line_count": len(
-            raw_lines
-        ),
-        "nonempty_line_count": (
-            total_count
-        ),
-        "parsed_line_count": (
-            parsed_count
-        ),
-        "unparsed_line_count": (
-            total_count
-            - parsed_count
-        ),
-        "parse_rate_percent": (
-            parse_rate
-        ),
-        "level_counts": dict(
-            sorted(
-                level_counts.items()
-            )
-        ),
-        "unique_group_count": len(
-            grouped_rows
-        ),
-        "repeated_group_count": len(
-            repeated_groups
-        ),
-        "highest_repeat_count": (
-            repeated_groups[
-                0
-            ].get(
-                "count",
-                0,
-            )
-            if repeated_groups
-            else 0
-        ),
-        "groups": grouped_rows[
-            :MAX_GROUPS
-        ],
-        "unparsed_samples": (
-            unparsed_samples
-        ),
+        "file": None,
+        "line": None,
     }
 
 
-def fetch_core_logs(
+def normalise_messages(
+    value,
+):
+    if isinstance(
+        value,
+        list,
+    ):
+        candidates = value
+    elif value is None:
+        candidates = []
+    else:
+        candidates = [
+            value
+        ]
+
+    result = []
+
+    for item in candidates:
+        text = truncate_text(
+            item,
+            MAX_MESSAGE_LENGTH,
+        )
+
+        if not text:
+            continue
+
+        if text in result:
+            continue
+
+        result.append(
+            text
+        )
+
+        if (
+            len(
+                result
+            )
+            >= MAX_MESSAGES_PER_ENTRY
+        ):
+            break
+
+    return result
+
+
+def normalise_entry(
+    item,
+):
+    if not isinstance(
+        item,
+        dict,
+    ):
+        return None
+
+    try:
+        count = max(
+            1,
+            int(
+                item.get(
+                    "count",
+                    1,
+                )
+                or 1
+            ),
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        count = 1
+
+    level = str(
+        item.get(
+            "level",
+            "UNKNOWN",
+        )
+        or "UNKNOWN"
+    ).upper()
+
+    messages = normalise_messages(
+        item.get(
+            "message"
+        )
+    )
+
+    exception = truncate_text(
+        item.get(
+            "exception",
+            "",
+        ),
+        MAX_EXCEPTION_LENGTH,
+    )
+
+    return {
+        "level": level,
+        "name": str(
+            item.get(
+                "name",
+                "unknown",
+            )
+            or "unknown"
+        ),
+        "source": normalise_source(
+            item.get(
+                "source"
+            )
+        ),
+        "count": count,
+        "first_seen": timestamp_to_iso(
+            item.get(
+                "first_occurred"
+            )
+        ),
+        "last_seen": timestamp_to_iso(
+            item.get(
+                "timestamp"
+            )
+        ),
+        "messages": messages,
+        "exception": exception,
+    }
+
+
+def collect_system_log(
     *,
-    session=requests,
+    ws_factory=websocket.create_connection,
     token=None,
-    lines=LINES_REQUESTED,
 ):
     token = (
         token
         if token is not None
-        else SUPERVISOR_TOKEN
+        else TOKEN
     )
 
     if not token:
@@ -482,98 +320,178 @@ def fetch_core_logs(
             "status": (
                 "token_unavailable"
             ),
-            "http_status": None,
-            "text": "",
+            "entries": [],
             "error": (
                 "SUPERVISOR_TOKEN is not "
                 "available to HA Audit."
             ),
         }
 
-    url = (
-        f"{SUPERVISOR_URL}"
-        f"/core/logs"
-    )
-
-    headers = {
-        "Authorization": (
-            f"Bearer {token}"
-        ),
-        "Accept": (
-            "text/x-log"
-        ),
-    }
-
-    params = {
-        "verbose": "",
-        "lines": int(
-            lines
-        ),
-        "no_colors": "",
-    }
-
     try:
-        response = session.get(
-            url,
-            headers=headers,
-            params=params,
+        ws = ws_factory(
+            WS_URL,
             timeout=30,
+            suppress_origin=True,
         )
     except Exception as exc:
         return {
             "status": (
-                "request_failed"
+                "connection_failed"
             ),
-            "http_status": None,
-            "text": "",
+            "entries": [],
             "error": str(
                 exc
             ),
         }
 
-    if response.status_code != 200:
-        if response.status_code in (
-            401,
-            403,
-        ):
-            status = (
-                "permission_denied"
+    try:
+        greeting = json.loads(
+            ws.recv()
+        )
+
+        if greeting.get(
+            "type"
+        ) != "auth_required":
+            return {
+                "status": (
+                    "unexpected_greeting"
+                ),
+                "entries": [],
+                "error": (
+                    "Unexpected Home Assistant "
+                    "WebSocket greeting."
+                ),
+            }
+
+        ws.send(
+            json.dumps(
+                {
+                    "type": "auth",
+                    "access_token": token,
+                }
             )
-        else:
-            status = (
-                "http_error"
+        )
+
+        authentication = json.loads(
+            ws.recv()
+        )
+
+        if authentication.get(
+            "type"
+        ) != "auth_ok":
+            return {
+                "status": (
+                    "authentication_failed"
+                ),
+                "entries": [],
+                "error": (
+                    "Home Assistant WebSocket "
+                    "authentication failed."
+                ),
+            }
+
+        ws.send(
+            json.dumps(
+                {
+                    "id": 1,
+                    "type": (
+                        "system_log/list"
+                    ),
+                }
+            )
+        )
+
+        while True:
+            response = json.loads(
+                ws.recv()
             )
 
+            if (
+                response.get(
+                    "type"
+                )
+                != "result"
+                or response.get(
+                    "id"
+                )
+                != 1
+            ):
+                continue
+
+            if not response.get(
+                "success",
+                False,
+            ):
+                error = response.get(
+                    "error",
+                    {},
+                )
+
+                return {
+                    "status": (
+                        "command_failed"
+                    ),
+                    "entries": [],
+                    "error": (
+                        error.get(
+                            "message"
+                        )
+                        if isinstance(
+                            error,
+                            dict,
+                        )
+                        else str(
+                            error
+                        )
+                    ),
+                }
+
+            result = response.get(
+                "result",
+                [],
+            )
+
+            if not isinstance(
+                result,
+                list,
+            ):
+                return {
+                    "status": (
+                        "invalid_response"
+                    ),
+                    "entries": [],
+                    "error": (
+                        "system_log/list did not "
+                        "return a list."
+                    ),
+                }
+
+            return {
+                "status": "ok",
+                "entries": result,
+                "error": None,
+            }
+
+    except Exception as exc:
         return {
-            "status": status,
-            "http_status": (
-                response.status_code
+            "status": (
+                "request_failed"
             ),
-            "text": "",
-            "error": (
-                f"Supervisor Core log "
-                f"request returned HTTP "
-                f"{response.status_code}."
+            "entries": [],
+            "error": str(
+                exc
             ),
         }
 
-    return {
-        "status": "ok",
-        "http_status": (
-            response.status_code
-        ),
-        "text": (
-            response.text
-            or ""
-        ),
-        "error": None,
-    }
+    finally:
+        try:
+            ws.close()
+        except Exception:
+            pass
 
 
 def build_report(
     collection,
-    *,
-    lines_requested=LINES_REQUESTED,
 ):
     report = {
         "audit_version": VERSION,
@@ -583,25 +501,30 @@ def build_report(
                 "core_log_collection_probe"
             ),
             "source": (
-                "Home Assistant Core"
+                "Home Assistant System Log"
             ),
-            "endpoint": (
-                "/core/logs"
+            "collection_method": (
+                "system_log/list"
             ),
-            "lines_requested": (
-                int(
-                    lines_requested
-                )
+            "current_core_session_only": (
+                True
             ),
-            "verbose": True,
-            "no_colors": True,
+            "warning_and_error_entries_only": (
+                True
+            ),
+            "home_assistant_deduplicated": (
+                True
+            ),
             "judgement_produced": False,
             "severity_produced": False,
             "note": (
-                "This probe groups recent Core "
-                "log evidence. It does not decide "
-                "whether a message is harmful, "
-                "resource-intensive, user-fixable, "
+                "Home Assistant System Log "
+                "already groups recurring warning "
+                "and error records. HA Audit is "
+                "collecting that evidence only. "
+                "It does not yet decide whether "
+                "an entry is harmful, resource-"
+                "intensive, user-fixable, upstream, "
                 "or relevant to an update."
             ),
         },
@@ -609,20 +532,12 @@ def build_report(
             "status": collection.get(
                 "status"
             ),
-            "http_status": (
-                collection.get(
-                    "http_status"
-                )
-            ),
-            "error": (
-                collection.get(
-                    "error"
-                )
+            "error": collection.get(
+                "error"
             ),
         },
         "summary": {},
-        "groups": [],
-        "unparsed_samples": [],
+        "entries": [],
     }
 
     if collection.get(
@@ -630,52 +545,123 @@ def build_report(
     ) != "ok":
         return report
 
-    analysis = analyse_log_text(
-        collection.get(
-            "text",
-            "",
+    raw_entries = collection.get(
+        "entries",
+        [],
+    )
+
+    entries = []
+
+    for item in raw_entries:
+        entry = normalise_entry(
+            item
         )
+
+        if entry is not None:
+            entries.append(
+                entry
+            )
+
+    entries.sort(
+        key=lambda item: (
+            -int(
+                item.get(
+                    "count",
+                    0,
+                )
+            ),
+            0
+            if item.get(
+                "level"
+            )
+            in (
+                "CRITICAL",
+                "ERROR",
+            )
+            else 1,
+            str(
+                item.get(
+                    "name",
+                    "",
+                )
+            ),
+        )
+    )
+
+    entries = entries[
+        :MAX_ENTRIES
+    ]
+
+    error_entries = [
+        item
+        for item in entries
+        if item.get(
+            "level"
+        )
+        in (
+            "CRITICAL",
+            "ERROR",
+        )
+    ]
+
+    warning_entries = [
+        item
+        for item in entries
+        if item.get(
+            "level"
+        )
+        == "WARNING"
+    ]
+
+    total_occurrences = sum(
+        int(
+            item.get(
+                "count",
+                0,
+            )
+        )
+        for item in entries
     )
 
     report[
         "summary"
     ] = {
-        key: value
-        for key, value
-        in analysis.items()
-        if key not in (
-            "groups",
-            "unparsed_samples",
-        )
+        "entries_returned": len(
+            entries
+        ),
+        "error_entry_count": len(
+            error_entries
+        ),
+        "warning_entry_count": len(
+            warning_entries
+        ),
+        "total_occurrence_count": (
+            total_occurrences
+        ),
+        "highest_repeat_count": (
+            entries[
+                0
+            ].get(
+                "count",
+                0,
+            )
+            if entries
+            else 0
+        ),
     }
 
     report[
-        "groups"
-    ] = analysis.get(
-        "groups",
-        [],
-    )
-
-    report[
-        "unparsed_samples"
-    ] = analysis.get(
-        "unparsed_samples",
-        [],
-    )
+        "entries"
+    ] = entries
 
     return report
 
 
 def main():
-    collection = fetch_core_logs(
-        lines=LINES_REQUESTED
-    )
+    collection = collect_system_log()
 
     report = build_report(
-        collection,
-        lines_requested=(
-            LINES_REQUESTED
-        ),
+        collection
     )
 
     with open(
