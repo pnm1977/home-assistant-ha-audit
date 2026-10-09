@@ -120,6 +120,10 @@ run_quiet_python \
     "log_persistence_scan.py" \
     "System Log persistence probe"
 
+run_quiet_python \
+    "log_recurrence_scan.py" \
+    "System Log recurrence evidence"
+
 
 if run_quiet_python \
     "summary_report.py" \
