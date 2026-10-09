@@ -233,6 +233,166 @@ AVAILABILITY = {
 }
 
 
+LOG_PRIORITY_FINAL = {
+    "status": "ok",
+    "scope": {
+        "priority_produced": True,
+    },
+    "summary": {
+        "final_priority_counts": {
+            "VERY HIGH": 0,
+            "HIGH": 3,
+            "MEDIUM": 5,
+            "LOW": 10,
+            "VERY LOW": 9,
+        },
+        "durable_recurrence_evidence_count": 0,
+        "short_window_no_promotion_count": 12,
+    },
+    "families": [
+        {
+            "stable_fingerprint": "lfp_private_zigbee",
+            "family_id": "zigbee_delivery",
+            "title": "Zigbee / ZHA delivery failures",
+            "occurrence_count": 615,
+            "local_action_path": "LOCAL INVESTIGATION",
+            "recovery_evidence": "NOT OBSERVED",
+            "fallback_evidence": "NOT OBSERVED",
+            "final_priority": "HIGH",
+            "priority_changed": False,
+            "recurrence": {
+                "class": "SHORT-WINDOW REPEAT",
+            },
+            "availability_correlation": {
+                "effect": "NO CHANGE",
+            },
+        },
+        {
+            "stable_fingerprint": "lfp_private_esphome",
+            "family_id": "esphome",
+            "title": "ESPHome device connectivity",
+            "occurrence_count": 61,
+            "local_action_path": "LOCAL INVESTIGATION",
+            "recovery_evidence": "NOT OBSERVED",
+            "fallback_evidence": "NOT OBSERVED",
+            "final_priority": "HIGH",
+            "priority_changed": False,
+            "recurrence": {
+                "class": "SHORT-WINDOW REPEAT",
+            },
+            "availability_correlation": {
+                "effect": "NO CHANGE",
+            },
+        },
+        {
+            "stable_fingerprint": "lfp_private_hue",
+            "family_id": "hue_sync",
+            "title": "Hue Sync Box connectivity",
+            "occurrence_count": 6,
+            "local_action_path": "LOCAL INVESTIGATION",
+            "recovery_evidence": "NOT OBSERVED",
+            "fallback_evidence": "NOT OBSERVED",
+            "final_priority": "HIGH",
+            "priority_changed": False,
+            "recurrence": {
+                "class": "SHORT-WINDOW REPEAT",
+            },
+            "availability_correlation": {
+                "effect": "NO CHANGE",
+            },
+        },
+        {
+            "stable_fingerprint": "lfp_private_missing",
+            "family_id": "missing_targets",
+            "title": (
+                "Referenced entities or devices not "
+                "currently available"
+            ),
+            "occurrence_count": 1,
+            "local_action_path": "UNKNOWN",
+            "recovery_evidence": "NOT OBSERVED",
+            "fallback_evidence": "NOT OBSERVED",
+            "final_priority": "MEDIUM",
+            "priority_changed": True,
+            "recurrence": {
+                "class": "SHORT-WINDOW REPEAT",
+            },
+            "availability_correlation": {
+                "effect": "PROMOTION EVIDENCE",
+            },
+        },
+        {
+            "stable_fingerprint": "lfp_private_shelly",
+            "family_id": "shelly",
+            "title": "Shelly integration data retrieval",
+            "occurrence_count": 783,
+            "local_action_path": "LOCAL INVESTIGATION",
+            "recovery_evidence": "NOT OBSERVED",
+            "fallback_evidence": "NOT OBSERVED",
+            "final_priority": "MEDIUM",
+            "priority_changed": False,
+            "recurrence": {
+                "class": "SHORT-WINDOW REPEAT",
+            },
+            "availability_correlation": {
+                "effect": "NO CHANGE",
+            },
+        },
+        {
+            "stable_fingerprint": "lfp_private_apple",
+            "family_id": "apple_tv",
+            "title": "Apple TV connectivity",
+            "occurrence_count": 303,
+            "local_action_path": "LOCAL INVESTIGATION",
+            "recovery_evidence": "OBSERVED",
+            "fallback_evidence": "NOT OBSERVED",
+            "final_priority": "MEDIUM",
+            "priority_changed": False,
+            "recurrence": {
+                "class": "SHORT-WINDOW REPEAT",
+            },
+            "availability_correlation": {
+                "effect": "NO CHANGE",
+            },
+        },
+        {
+            "stable_fingerprint": "lfp_private_vaillant",
+            "family_id": "mypyllant",
+            "title": "myVAILLANT API / data retrieval",
+            "occurrence_count": 15,
+            "local_action_path": "LIMITED LOCAL CONTROL",
+            "recovery_evidence": "NOT OBSERVED",
+            "fallback_evidence": "NOT OBSERVED",
+            "final_priority": "MEDIUM",
+            "priority_changed": False,
+            "recurrence": {
+                "class": "SHORT-WINDOW REPEAT",
+            },
+            "availability_correlation": {
+                "effect": "NO CHANGE",
+            },
+        },
+        {
+            "stable_fingerprint": "lfp_private_robovac",
+            "family_id": "robovac",
+            "title": "RoboVac connectivity",
+            "occurrence_count": 12,
+            "local_action_path": "LOCAL INVESTIGATION",
+            "recovery_evidence": "NOT OBSERVED",
+            "fallback_evidence": "NOT OBSERVED",
+            "final_priority": "MEDIUM",
+            "priority_changed": False,
+            "recurrence": {
+                "class": "NOT ESTABLISHED",
+            },
+            "availability_correlation": {
+                "effect": "NO CHANGE",
+            },
+        },
+    ],
+}
+
+
 def require(
     output,
     expected,
@@ -260,6 +420,7 @@ def main():
         compatibility=COMPATIBILITY,
         availability=AVAILABILITY,
         version="test",
+        log_priority_final=LOG_PRIORITY_FINAL,
         generated_at=(
             "2026-10-06T20:00:00+00:00"
         ),
@@ -293,6 +454,96 @@ def main():
     require(
         output,
         "custom AI prompts configured",
+    )
+
+    require(
+        output,
+        "## System issues",
+    )
+
+    require(
+        output,
+        (
+            "**Priority counts:** HIGH 3; MEDIUM 5; "
+            "LOW 10; VERY LOW 9."
+        ),
+    )
+
+    require(
+        output,
+        "**Durable recurrence (24h+):** 0.",
+    )
+
+    require(
+        output,
+        (
+            "**Short-window repeats:** 12. These do not "
+            "count as durable recurrence."
+        ),
+    )
+
+    require(
+        output,
+        "**HIGH — Zigbee / ZHA delivery failures**",
+    )
+
+    require(
+        output,
+        "**HIGH — ESPHome device connectivity**",
+    )
+
+    require(
+        output,
+        "**HIGH — Hue Sync Box connectivity**",
+    )
+
+    require(
+        output,
+        (
+            "**MEDIUM — Referenced entities or devices "
+            "not currently available**"
+        ),
+    )
+
+    require(
+        output,
+        "**MEDIUM — Shelly integration data retrieval**",
+    )
+
+    require(
+        output,
+        (
+            "Priority raised by direct whole-device "
+            "unavailability and Recorder evidence."
+        ),
+    )
+
+    require(
+        output,
+        "Other MEDIUM findings omitted: 3.",
+    )
+
+    require(
+        output,
+        (
+            "LOW / VERY LOW contextual findings omitted: "
+            "19."
+        ),
+    )
+
+    forbid(
+        output,
+        "Apple TV connectivity",
+    )
+
+    forbid(
+        output,
+        "lfp_private_",
+    )
+
+    forbid(
+        output,
+        "zigbee_delivery",
     )
 
     require(
@@ -357,12 +608,17 @@ def main():
 
     require(
         output,
-        "4. **General Home Assistant health**",
+        "4. **System issues**",
     )
 
     require(
         output,
-        "5. **After updating**",
+        "5. **General Home Assistant health**",
+    )
+
+    require(
+        output,
+        "6. **After updating**",
     )
 
     require(
@@ -428,6 +684,12 @@ def main():
     )
     print(
         "Conditional uncertainty:      PASS"
+    )
+    print(
+        "System issues handoff:         PASS"
+    )
+    print(
+        "Top-five privacy boundary:     PASS"
     )
     print(
         "Requested analysis order:     PASS"
