@@ -101,6 +101,10 @@ run_quiet_python \
     "System Log issue family probe"
 
 run_quiet_python \
+    "log_fingerprint_scan.py" \
+    "System Log stable fingerprint probe"
+
+run_quiet_python \
     "log_ownership_scan.py" \
     "System Log ownership probe"
 
