@@ -116,6 +116,10 @@ run_quiet_python \
     "log_priority_scan.py" \
     "System Log priority probe"
 
+run_quiet_python \
+    "log_persistence_scan.py" \
+    "System Log persistence probe"
+
 
 if run_quiet_python \
     "summary_report.py" \
