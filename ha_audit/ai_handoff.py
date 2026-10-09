@@ -7,9 +7,14 @@ from upgrade_decision import (
 )
 
 from user_summary import (
+    ATTENTION_LIMIT,
+    attention_sort_key,
     count_local_no_affected,
     extract_overview,
     has_local_llm_match,
+    issue_action_label,
+    issue_note,
+    log_priority_available,
 )
 
 
@@ -32,6 +37,10 @@ UPGRADE_COMPATIBILITY_FILE = (
 
 AVAILABILITY_FILE = (
     "/config/availability_audit.json"
+)
+
+LOG_PRIORITY_FINAL_FILE = (
+    "/config/log_priority_final.json"
 )
 
 OUTPUT_FILE = (
@@ -686,6 +695,297 @@ def render_local_compatibility(
             )
 
 
+def get_priority_counts(
+    report,
+):
+    summary = report.get(
+        "summary",
+        {},
+    )
+
+    if not isinstance(
+        summary,
+        dict,
+    ):
+        summary = {}
+
+    counts = summary.get(
+        "final_priority_counts",
+        {},
+    )
+
+    if isinstance(
+        counts,
+        dict,
+    ):
+        return {
+            "HIGH": int(
+                counts.get(
+                    "HIGH",
+                    0,
+                )
+                or 0
+            ),
+            "MEDIUM": int(
+                counts.get(
+                    "MEDIUM",
+                    0,
+                )
+                or 0
+            ),
+            "LOW": int(
+                counts.get(
+                    "LOW",
+                    0,
+                )
+                or 0
+            ),
+            "VERY LOW": int(
+                counts.get(
+                    "VERY LOW",
+                    0,
+                )
+                or 0
+            ),
+        }
+
+    return {
+        "HIGH": 0,
+        "MEDIUM": 0,
+        "LOW": 0,
+        "VERY LOW": 0,
+    }
+
+
+def render_system_issues(
+    lines,
+    report,
+):
+    lines.append(
+        "## System issues"
+    )
+    lines.append("")
+
+    if not log_priority_available(
+        report
+    ):
+        lines.append(
+            "Final System Log prioritisation was "
+            "not available for this run."
+        )
+        lines.append("")
+        lines.append(
+            "Do not infer issue priority or recurrence "
+            "from raw occurrence counts alone."
+        )
+        return
+
+    summary = report.get(
+        "summary",
+        {},
+    )
+
+    if not isinstance(
+        summary,
+        dict,
+    ):
+        summary = {}
+
+    counts = get_priority_counts(
+        report
+    )
+
+    durable_count = int(
+        summary.get(
+            "durable_recurrence_evidence_count",
+            0,
+        )
+        or 0
+    )
+
+    short_count = int(
+        summary.get(
+            "short_window_no_promotion_count",
+            0,
+        )
+        or 0
+    )
+
+    lines.append(
+        "HA Audit's final System Log prioritisation "
+        "for the current run:"
+    )
+    lines.append("")
+    lines.append(
+        "- **Priority counts:** "
+        f"HIGH {counts['HIGH']}; "
+        f"MEDIUM {counts['MEDIUM']}; "
+        f"LOW {counts['LOW']}; "
+        f"VERY LOW {counts['VERY LOW']}."
+    )
+    lines.append(
+        "- **Durable recurrence (24h+):** "
+        f"{durable_count}."
+    )
+    lines.append(
+        "- **Short-window repeats:** "
+        f"{short_count}. These do not count as "
+        "durable recurrence."
+    )
+
+    families = [
+        item
+        for item in report.get(
+            "families",
+            [],
+        )
+        if (
+            isinstance(
+                item,
+                dict,
+            )
+            and str(
+                item.get(
+                    "final_priority",
+                    "",
+                )
+            ).upper()
+            in (
+                "HIGH",
+                "MEDIUM",
+            )
+        )
+    ]
+
+    families.sort(
+        key=attention_sort_key
+    )
+
+    shown = families[
+        :ATTENTION_LIMIT
+    ]
+
+    lines.append("")
+    lines.append(
+        "### Attention first"
+    )
+    lines.append("")
+
+    if not shown:
+        lines.append(
+            "No HIGH or MEDIUM System Log finding "
+            "was available to surface."
+        )
+    else:
+        for item in shown:
+            priority = str(
+                item.get(
+                    "final_priority",
+                    "UNKNOWN",
+                )
+            ).upper()
+
+            title = str(
+                item.get(
+                    "title"
+                )
+                or "Unnamed System Log finding"
+            )
+
+            recurrence = item.get(
+                "recurrence",
+                {},
+            )
+
+            if not isinstance(
+                recurrence,
+                dict,
+            ):
+                recurrence = {}
+
+            recurrence_class = str(
+                recurrence.get(
+                    "class"
+                )
+                or "NOT ESTABLISHED"
+            )
+
+            lines.append(
+                f"- **{priority} — {title}**"
+            )
+            lines.append(
+                "  - **Attention label:** "
+                f"{issue_action_label(item)}."
+            )
+            lines.append(
+                "  - **Recurrence:** "
+                f"{recurrence_class}."
+            )
+            lines.append(
+                "  - **Evidence note:** "
+                f"{issue_note(item)}"
+            )
+
+    shown_medium = sum(
+        1
+        for item in shown
+        if str(
+            item.get(
+                "final_priority",
+                "",
+            )
+        ).upper()
+        == "MEDIUM"
+    )
+
+    hidden_medium = max(
+        0,
+        counts[
+            "MEDIUM"
+        ]
+        - shown_medium,
+    )
+
+    low_context = (
+        counts[
+            "LOW"
+        ]
+        + counts[
+            "VERY LOW"
+        ]
+    )
+
+    lines.append("")
+    lines.append(
+        "Only the top HIGH/MEDIUM findings are shown "
+        "in this concise handoff."
+    )
+
+    if hidden_medium:
+        lines.append(
+            f"- Other MEDIUM findings omitted: "
+            f"{hidden_medium}."
+        )
+
+    lines.append(
+        "- LOW / VERY LOW contextual findings omitted: "
+        f"{low_context}."
+    )
+
+    lines.append(
+        "- Request `log_priority_final.json` if the "
+        "complete prioritised family list is needed."
+    )
+
+    lines.append("")
+    lines.append(
+        "Treat these as HA Audit's evidence-based "
+        "priorities, not as severity judgements or proof "
+        "of a fault. Do not re-rank an issue solely from "
+        "its raw occurrence count."
+    )
+
+
 def build_ai_handoff(
     *,
     summary_text,
@@ -693,6 +993,7 @@ def build_ai_handoff(
     compatibility,
     availability,
     version,
+    log_priority_final=None,
     generated_at=None,
 ):
     if generated_at is None:
@@ -809,6 +1110,15 @@ def build_ai_handoff(
         "attention before informational observations."
     )
     lines.append(
+        "- Use the System issues section as HA Audit's "
+        "current prioritisation; do not re-rank issues "
+        "solely from raw occurrence counts."
+    )
+    lines.append(
+        "- Treat SHORT-WINDOW REPEAT as distinct from "
+        "durable 24-hour recurrence."
+    )
+    lines.append(
         "- Explain findings in normal Home Assistant "
         "language suitable for a smart-home enthusiast."
     )
@@ -850,6 +1160,12 @@ def build_ai_handoff(
         "this handoff."
     )
     lines.append(
+        "- The System issues section intentionally shows "
+        "only the highest-priority current findings; "
+        "lower-priority families remain in the detailed "
+        "final-priority report."
+    )
+    lines.append(
         "- If this handoff is insufficient, request "
         "the relevant detailed report rather than "
         "inventing missing information."
@@ -859,6 +1175,12 @@ def build_ai_handoff(
     render_decision_support(
         lines,
         decision,
+    )
+
+    lines.append("")
+    render_system_issues(
+        lines,
+        log_priority_final,
     )
 
     lines.append("")
@@ -893,12 +1215,18 @@ def build_ai_handoff(
         "prove."
     )
     lines.append(
-        "4. **General Home Assistant health** — "
-        "separate issues worth investigating from "
-        "anything relevant to the Core update."
+        "4. **System issues** — use HA Audit's final "
+        "priorities and recurrence evidence to identify "
+        "what deserves attention first. Do not treat "
+        "SHORT-WINDOW REPEAT as durable recurrence."
     )
     lines.append(
-        "5. **After updating** — explain what should "
+        "5. **General Home Assistant health** — "
+        "separate broader health context from both "
+        "System Log findings and Core-update relevance."
+    )
+    lines.append(
+        "6. **After updating** — explain what should "
         "be checked when HA Audit is rerun."
     )
     lines.append("")
@@ -947,12 +1275,17 @@ def main():
         AVAILABILITY_FILE
     )
 
+    log_priority_final = load_json_optional(
+        LOG_PRIORITY_FINAL_FILE
+    )
+
     output = build_ai_handoff(
         summary_text=summary_text,
         update_readiness=update_readiness,
         compatibility=compatibility,
         availability=availability,
         version=VERSION,
+        log_priority_final=log_priority_final,
     )
 
     with open(
