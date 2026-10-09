@@ -573,16 +573,33 @@ def fallback_family(
     entry,
     index,
 ):
+    # The source-entry index must not be part of fallback identity.
+    #
+    # Home Assistant can expose the same underlying System Log issue as
+    # multiple rows in one collection. If logger, level, source file and
+    # normalized evidence text are identical, treating those rows as
+    # separate fallback families creates duplicate stable fingerprints
+    # later in the pipeline.
+    #
+    # Keep the legacy grouping_method value for downstream compatibility,
+    # but allow exact-evidence fallback rows to consolidate within this
+    # snapshot.
     signature = "|".join(
         (
             logger_name(
                 entry
+            ).lower(),
+            clean_text(
+                entry.get(
+                    "level",
+                    "UNKNOWN",
+                )
+            ).upper(),
+            source_file(
+                entry
             ),
             entry_text(
                 entry
-            ),
-            str(
-                index
             ),
         )
     )
@@ -977,10 +994,11 @@ def build_family_report(
             "note": (
                 "Known related System Log records "
                 "are grouped using conservative "
-                "deterministic rules. Entries that "
-                "cannot be confidently related stay "
-                "separate rather than being forced "
-                "into a family."
+                "deterministic rules. Unclassified "
+                "rows remain separate unless their "
+                "logger, level, source file and "
+                "normalized evidence are exactly "
+                "the same within the snapshot."
             ),
         },
         "source_collection": {
