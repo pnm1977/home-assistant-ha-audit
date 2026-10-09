@@ -245,6 +245,28 @@ def main():
         ),
     )
 
+    require(
+        alpha_1[
+            "first_repeat_activity_at"
+        ]
+        is None,
+        (
+            "Baseline incorrectly has a "
+            "first repeat timestamp."
+        ),
+    )
+
+    require(
+        alpha_1[
+            "last_repeat_activity_at"
+        ]
+        is None,
+        (
+            "Baseline incorrectly has a "
+            "last repeat timestamp."
+        ),
+    )
+
     (
         history_2,
         report_2,
@@ -308,6 +330,17 @@ def main():
             "Repeated audit of unchanged "
             "evidence falsely counted as "
             "recurrence."
+        ),
+    )
+
+    require(
+        alpha_2[
+            "first_repeat_activity_at"
+        ]
+        is None,
+        (
+            "Retained evidence incorrectly "
+            "created a first repeat time."
         ),
     )
 
@@ -386,6 +419,32 @@ def main():
         ),
     )
 
+    require(
+        beta_3[
+            "first_repeat_activity_at"
+        ]
+        == (
+            "2026-10-09T09:30:00+00:00"
+        ),
+        (
+            "First repeat timestamp "
+            "incorrect."
+        ),
+    )
+
+    require(
+        beta_3[
+            "last_repeat_activity_at"
+        ]
+        == (
+            "2026-10-09T09:30:00+00:00"
+        ),
+        (
+            "First last-repeat timestamp "
+            "incorrect."
+        ),
+    )
+
     family_report_4 = deepcopy(
         family_report_3
     )
@@ -447,6 +506,32 @@ def main():
         (
             "Consecutive new-activity "
             "streak should be 2."
+        ),
+    )
+
+    require(
+        beta_4[
+            "first_repeat_activity_at"
+        ]
+        == (
+            "2026-10-09T09:30:00+00:00"
+        ),
+        (
+            "First repeat timestamp "
+            "was not preserved."
+        ),
+    )
+
+    require(
+        beta_4[
+            "last_repeat_activity_at"
+        ]
+        == (
+            "2026-10-09T10:00:00+00:00"
+        ),
+        (
+            "Last repeat timestamp "
+            "was not advanced."
         ),
     )
 
@@ -561,6 +646,108 @@ def main():
         (
             "Missing family retained its "
             "appearance streak."
+        ),
+    )
+
+    legacy_history = deepcopy(
+        history_2
+    )
+
+    legacy_beta = by_fingerprint(
+        legacy_history,
+        "lfp_beta",
+    )
+
+    legacy_beta[
+        "repeat_activity_audits"
+    ] = 1
+
+    legacy_beta[
+        "consecutive_new_activity_audits"
+    ] = 1
+
+    legacy_beta[
+        "last_activity_status"
+    ] = ACTIVITY_NEW
+
+    legacy_beta[
+        "last_audit_seen"
+    ] = (
+        "2026-10-09T09:00:00+00:00"
+    )
+
+    legacy_beta.pop(
+        "first_repeat_activity_at",
+        None,
+    )
+
+    legacy_beta.pop(
+        "last_repeat_activity_at",
+        None,
+    )
+
+    (
+        migrated_history,
+        migrated_report,
+        migrated_ready,
+    ) = build_update(
+        family_report,
+        fingerprint_report,
+        priority_report,
+        legacy_history,
+        (
+            "2026-10-09T09:10:00+00:00"
+        ),
+    )
+
+    require(
+        migrated_ready,
+        (
+            "Existing history without "
+            "repeat timestamps could not "
+            "be upgraded."
+        ),
+    )
+
+    migrated_beta = by_fingerprint(
+        migrated_history,
+        "lfp_beta",
+    )
+
+    require(
+        migrated_beta[
+            "last_activity_status"
+        ]
+        == ACTIVITY_RETAINED,
+        (
+            "Legacy backfill changed "
+            "retained evidence status."
+        ),
+    )
+
+    require(
+        migrated_beta[
+            "first_repeat_activity_at"
+        ]
+        == (
+            "2026-10-09T09:00:00+00:00"
+        ),
+        (
+            "Recoverable legacy first "
+            "repeat time was not backfilled."
+        ),
+    )
+
+    require(
+        migrated_beta[
+            "last_repeat_activity_at"
+        ]
+        == (
+            "2026-10-09T09:00:00+00:00"
+        ),
+        (
+            "Recoverable legacy last "
+            "repeat time was not backfilled."
         ),
     )
 
@@ -696,7 +883,16 @@ def main():
         "Repeat activity counted:      PASS"
     )
     print(
-        "Activity streak counted:      PASS"
+        "First repeat timestamp:       PASS"
+    )
+    print(
+        "Last repeat timestamp:        PASS"
+    )
+    print(
+        "Repeat timestamps preserved:  PASS"
+    )
+    print(
+        "Legacy history backfill:      PASS"
     )
     print(
         "Missing family tracked:       PASS"
