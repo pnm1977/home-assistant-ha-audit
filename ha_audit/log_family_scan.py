@@ -569,21 +569,70 @@ RULES = (
 )
 
 
+def fallback_message_signature(
+    entry,
+):
+    messages = sorted(
+        {
+            clean_text(
+                message
+            )
+            for message in entry_messages(
+                entry
+            )
+            if clean_text(
+                message
+            )
+        }
+    )
+
+    return "\n".join(
+        messages
+    )
+
+
+def fallback_source_line(
+    entry,
+):
+    source = entry.get(
+        "source",
+        {},
+    )
+
+    if not isinstance(
+        source,
+        dict,
+    ):
+        return ""
+
+    line = source.get(
+        "line"
+    )
+
+    if line is None:
+        return ""
+
+    return str(
+        line
+    )
+
+
 def fallback_family(
     entry,
     index,
 ):
-    # The source-entry index must not be part of fallback identity.
+    # The source-entry index and exception text must not be part of
+    # fallback identity.
     #
     # Home Assistant can expose the same underlying System Log issue as
-    # multiple rows in one collection. If logger, level, source file and
-    # normalized evidence text are identical, treating those rows as
-    # separate fallback families creates duplicate stable fingerprints
-    # later in the pipeline.
+    # multiple rows in one collection. Exception payloads can vary between
+    # those rows even when the visible logger/source/message evidence is
+    # identical. Including exception text here therefore creates separate
+    # family IDs that later collapse to the same stable fingerprint.
     #
-    # Keep the legacy grouping_method value for downstream compatibility,
-    # but allow exact-evidence fallback rows to consolidate within this
-    # snapshot.
+    # Consolidate only when logger, level, source location and the complete
+    # cleaned message set are identical. This keeps the fallback grouping
+    # conservative while removing observer-only row/exception differences.
     signature = "|".join(
         (
             logger_name(
@@ -598,7 +647,10 @@ def fallback_family(
             source_file(
                 entry
             ),
-            entry_text(
+            fallback_source_line(
+                entry
+            ),
+            fallback_message_signature(
                 entry
             ),
         )
@@ -996,8 +1048,8 @@ def build_family_report(
                 "are grouped using conservative "
                 "deterministic rules. Unclassified "
                 "rows remain separate unless their "
-                "logger, level, source file and "
-                "normalized evidence are exactly "
+                "logger, level, source location and "
+                "cleaned message evidence are exactly "
                 "the same within the snapshot."
             ),
         },
