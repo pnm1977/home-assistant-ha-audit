@@ -69,6 +69,33 @@ def record(
     }
 
 
+def persistence(
+    *,
+    generated_at,
+    run_sequence,
+    current_family_count,
+    status="ok",
+    history_written=True,
+):
+    return {
+        "generated_at": generated_at,
+        "scope": {
+            "history_written": (
+                history_written
+            ),
+        },
+        "status": status,
+        "summary": {
+            "run_sequence": (
+                run_sequence
+            ),
+            "current_family_count": (
+                current_family_count
+            ),
+        },
+    }
+
+
 def by_title(
     report,
     title,
@@ -100,15 +127,17 @@ def by_title(
 
 
 def main():
+    updated_at = (
+        "2026-10-12T12:00:00+00:00"
+    )
+
     history = {
         "history_schema_version": 1,
         "fingerprint_schema_version": 1,
         "created_at": (
             "2026-10-09T09:00:00+00:00"
         ),
-        "updated_at": (
-            "2026-10-12T12:00:00+00:00"
-        ),
+        "updated_at": updated_at,
         "run_sequence": 4,
         "last_audit_version": "test",
         "records": {
@@ -207,8 +236,15 @@ def main():
         },
     }
 
+    current_persistence = persistence(
+        generated_at=updated_at,
+        run_sequence=4,
+        current_family_count=7,
+    )
+
     report = build_report(
-        history
+        history,
+        current_persistence,
     )
 
     require(
@@ -216,7 +252,8 @@ def main():
             "status"
         ] == "ok",
         (
-            "Valid history was rejected."
+            "Valid current persistence/history "
+            "pair was rejected."
         ),
     )
 
@@ -443,12 +480,123 @@ def main():
         ),
     )
 
+    blocked = build_report(
+        history,
+        persistence(
+            generated_at=updated_at,
+            run_sequence=4,
+            current_family_count=7,
+            status="duplicate_fingerprints",
+            history_written=False,
+        ),
+    )
+
+    require(
+        blocked[
+            "status"
+        ]
+        == "persistence_not_current",
+        (
+            "Failed persistence did not "
+            "block recurrence output."
+        ),
+    )
+
+    require(
+        blocked[
+            "scope"
+        ][
+            "recurrence_evidence_produced"
+        ]
+        is False,
+        (
+            "Stale recurrence evidence was "
+            "presented after persistence "
+            "failure."
+        ),
+    )
+
+    require(
+        blocked[
+            "families"
+        ] == [],
+        (
+            "Blocked recurrence report "
+            "still exposed stale families."
+        ),
+    )
+
+    stale_time = build_report(
+        history,
+        persistence(
+            generated_at=(
+                "2026-10-12T11:59:00+00:00"
+            ),
+            run_sequence=4,
+            current_family_count=7,
+        ),
+    )
+
+    require(
+        stale_time[
+            "status"
+        ]
+        == "persistence_not_current",
+        (
+            "Stale persistence timestamp "
+            "was accepted."
+        ),
+    )
+
+    stale_sequence = build_report(
+        history,
+        persistence(
+            generated_at=updated_at,
+            run_sequence=3,
+            current_family_count=7,
+        ),
+    )
+
+    require(
+        stale_sequence[
+            "status"
+        ]
+        == "persistence_not_current",
+        (
+            "Mismatched persistence sequence "
+            "was accepted."
+        ),
+    )
+
+    stale_count = build_report(
+        history,
+        persistence(
+            generated_at=updated_at,
+            run_sequence=4,
+            current_family_count=8,
+        ),
+    )
+
+    require(
+        stale_count[
+            "status"
+        ]
+        == "persistence_not_current",
+        (
+            "Mismatched current-family count "
+            "was accepted."
+        ),
+    )
+
     print("")
     print("=" * 62)
     print(
         "HA AUDIT LOG RECURRENCE TEST"
     )
     print("=" * 62)
+    print(
+        "Current persistence aligned:   PASS"
+    )
     print(
         "Retained evidence protected:  PASS"
     )
@@ -475,6 +623,18 @@ def main():
     )
     print(
         "Observation span calculated:  PASS"
+    )
+    print(
+        "Persistence failure blocked:  PASS"
+    )
+    print(
+        "Stale timestamp blocked:      PASS"
+    )
+    print(
+        "Stale sequence blocked:       PASS"
+    )
+    print(
+        "Family-count mismatch blocked: PASS"
     )
     print(
         "No priority change:           PASS"
