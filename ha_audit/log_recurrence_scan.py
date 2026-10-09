@@ -12,6 +12,10 @@ INPUT_FILE = (
     "/config/log_issue_history.json"
 )
 
+PERSISTENCE_FILE = (
+    "/config/log_persistence.json"
+)
+
 OUTPUT_FILE = (
     "/config/log_recurrence.json"
 )
@@ -337,6 +341,155 @@ def validate_history(
     )
 
 
+def validate_current_persistence(
+    history,
+    persistence,
+):
+    if not isinstance(
+        persistence,
+        dict,
+    ):
+        return (
+            False,
+            "Persistence report is not an object.",
+        )
+
+    if persistence.get(
+        "status"
+    ) != "ok":
+        return (
+            False,
+            (
+                "Current persistence stage did not "
+                "complete successfully."
+            ),
+        )
+
+    scope = persistence.get(
+        "scope",
+        {},
+    )
+
+    if not isinstance(
+        scope,
+        dict,
+    ):
+        scope = {}
+
+    if scope.get(
+        "history_written"
+    ) is not True:
+        return (
+            False,
+            (
+                "Current persistence stage did not "
+                "write history."
+            ),
+        )
+
+    summary = persistence.get(
+        "summary",
+        {},
+    )
+
+    if not isinstance(
+        summary,
+        dict,
+    ):
+        summary = {}
+
+    persistence_sequence = safe_int(
+        summary.get(
+            "run_sequence",
+            -1,
+        )
+    )
+
+    history_sequence = safe_int(
+        history.get(
+            "run_sequence",
+            -2,
+        )
+    )
+
+    if (
+        persistence_sequence < 1
+        or persistence_sequence
+        != history_sequence
+    ):
+        return (
+            False,
+            (
+                "Persistence run sequence does not "
+                "match the history being read."
+            ),
+        )
+
+    persistence_time = persistence.get(
+        "generated_at"
+    )
+
+    history_time = history.get(
+        "updated_at"
+    )
+
+    if (
+        not persistence_time
+        or not history_time
+        or persistence_time != history_time
+    ):
+        return (
+            False,
+            (
+                "Persistence generation time does "
+                "not match the latest history update."
+            ),
+        )
+
+    expected_current = safe_int(
+        summary.get(
+            "current_family_count",
+            -1,
+        )
+    )
+
+    actual_current = sum(
+        1
+        for record in history.get(
+            "records",
+            {},
+        ).values()
+        if isinstance(
+            record,
+            dict,
+        )
+        and bool(
+            record.get(
+                "seen_in_latest_audit",
+                False,
+            )
+        )
+    )
+
+    if (
+        expected_current < 0
+        or expected_current
+        != actual_current
+    ):
+        return (
+            False,
+            (
+                "Persistence current-family count "
+                "does not match the history."
+            ),
+        )
+
+    return (
+        True,
+        None,
+    )
+
+
 def build_record(
     record,
 ):
@@ -432,6 +585,7 @@ def build_record(
 
 def build_report(
     history,
+    persistence,
 ):
     (
         valid,
@@ -449,6 +603,9 @@ def build_report(
             ),
             "input": (
                 "log_issue_history.json"
+            ),
+            "persistence_input": (
+                "log_persistence.json"
             ),
             "history_schema_version": (
                 SUPPORTED_HISTORY_SCHEMA_VERSION
@@ -489,6 +646,25 @@ def build_report(
     }
 
     if not valid:
+        return report
+
+    (
+        persistence_current,
+        persistence_error,
+    ) = validate_current_persistence(
+        history,
+        persistence,
+    )
+
+    if not persistence_current:
+        report[
+            "status"
+        ] = "persistence_not_current"
+
+        report[
+            "error"
+        ] = persistence_error
+
         return report
 
     records = history.get(
@@ -621,8 +797,13 @@ def main():
             INPUT_FILE
         )
 
+        persistence = load_json(
+            PERSISTENCE_FILE
+        )
+
         report = build_report(
-            history
+            history,
+            persistence,
         )
     except Exception as exc:
         report = {
@@ -634,6 +815,9 @@ def main():
                 ),
                 "input": (
                     "log_issue_history.json"
+                ),
+                "persistence_input": (
+                    "log_persistence.json"
                 ),
                 "recurrence_evidence_produced": (
                     False
