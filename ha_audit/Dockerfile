@@ -33,6 +33,7 @@ COPY log_fingerprint_scan.py /
 COPY log_ownership_scan.py /
 COPY log_priority_evidence.py /
 COPY log_priority_scan.py /
+COPY log_persistence_scan.py /
 COPY readiness_guidance.py /
 COPY health_guidance.py /
 COPY upgrade_decision.py /
