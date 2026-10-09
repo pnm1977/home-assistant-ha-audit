@@ -531,6 +531,71 @@ def evidence_advanced(
     return False
 
 
+def existing_repeat_timestamps(
+    previous_record,
+):
+    first_repeat = (
+        previous_record.get(
+            "first_repeat_activity_at"
+        )
+    )
+
+    last_repeat = (
+        previous_record.get(
+            "last_repeat_activity_at"
+        )
+    )
+
+    repeat_count = safe_int(
+        previous_record.get(
+            "repeat_activity_audits",
+            0,
+        )
+    )
+
+    last_status = (
+        previous_record.get(
+            "last_activity_status"
+        )
+    )
+
+    last_audit_seen = (
+        previous_record.get(
+            "last_audit_seen"
+        )
+    )
+
+    if (
+        repeat_count == 1
+        and not first_repeat
+        and not last_repeat
+        and last_status == ACTIVITY_NEW
+        and last_audit_seen
+    ):
+        first_repeat = (
+            last_audit_seen
+        )
+
+        last_repeat = (
+            last_audit_seen
+        )
+
+    elif (
+        repeat_count > 0
+        and not last_repeat
+        and last_status == ACTIVITY_NEW
+        and last_audit_seen
+    ):
+        last_repeat = (
+            last_audit_seen
+        )
+
+    return (
+        first_repeat,
+        last_repeat,
+    )
+
+
 def new_history_record(
     fingerprint,
     fingerprint_item,
@@ -566,6 +631,8 @@ def new_history_record(
         "missed_audits_since_seen": 0,
         "repeat_activity_audits": 0,
         "consecutive_new_activity_audits": 0,
+        "first_repeat_activity_at": None,
+        "last_repeat_activity_at": None,
         "last_activity_status": (
             ACTIVITY_BASELINE
         ),
@@ -626,6 +693,13 @@ def update_history_record(
     else:
         consecutive_appearances = 1
 
+    (
+        first_repeat_activity_at,
+        last_repeat_activity_at,
+    ) = existing_repeat_timestamps(
+        previous_record
+    )
+
     new_activity = evidence_advanced(
         previous_record,
         family,
@@ -644,6 +718,15 @@ def update_history_record(
                 )
             )
             + 1
+        )
+
+        if not first_repeat_activity_at:
+            first_repeat_activity_at = (
+                run_at
+            )
+
+        last_repeat_activity_at = (
+            run_at
         )
 
         if (
@@ -718,6 +801,12 @@ def update_history_record(
             "consecutive_new_activity_audits": (
                 consecutive_new_activity
             ),
+            "first_repeat_activity_at": (
+                first_repeat_activity_at
+            ),
+            "last_repeat_activity_at": (
+                last_repeat_activity_at
+            ),
             "last_activity_status": (
                 activity_status
             ),
@@ -760,6 +849,21 @@ def mark_not_present(
     record = dict(
         previous_record
     )
+
+    (
+        first_repeat_activity_at,
+        last_repeat_activity_at,
+    ) = existing_repeat_timestamps(
+        previous_record
+    )
+
+    record[
+        "first_repeat_activity_at"
+    ] = first_repeat_activity_at
+
+    record[
+        "last_repeat_activity_at"
+    ] = last_repeat_activity_at
 
     record[
         "seen_in_latest_audit"
@@ -839,6 +943,16 @@ def current_report_record(
         "consecutive_new_activity_audits": (
             history_record.get(
                 "consecutive_new_activity_audits"
+            )
+        ),
+        "first_repeat_activity_at": (
+            history_record.get(
+                "first_repeat_activity_at"
+            )
+        ),
+        "last_repeat_activity_at": (
+            history_record.get(
+                "last_repeat_activity_at"
             )
         ),
         "latest_occurrence_count": (
@@ -1240,6 +1354,13 @@ def build_update(
                 "previous audit. Merely retaining "
                 "the same System Log evidence does "
                 "not count as recurrence."
+            ),
+            "repeat_timestamp_note": (
+                "first_repeat_activity_at and "
+                "last_repeat_activity_at are HA "
+                "Audit observation times for new "
+                "activity, not raw log event "
+                "timestamps."
             ),
             "privacy_note": (
                 "History stores stable hashes and "
