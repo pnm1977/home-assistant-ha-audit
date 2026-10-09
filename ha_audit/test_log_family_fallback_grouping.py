@@ -20,6 +20,7 @@ def fallback_entry(
     level="ERROR",
     file_name="helpers/update_coordinator.py",
     line=435,
+    exception=None,
 ):
     return {
         "level": level,
@@ -34,7 +35,7 @@ def fallback_entry(
         "messages": [
             message
         ],
-        "exception": None,
+        "exception": exception,
     }
 
 
@@ -49,6 +50,9 @@ def main():
         message=(
             "Unexpected error fetching tado data"
         ),
+        exception=(
+            "First traceback payload"
+        ),
     )
 
     identical_two = fallback_entry(
@@ -60,6 +64,9 @@ def main():
         ),
         message=(
             "Unexpected error fetching tado data"
+        ),
+        exception=(
+            "Different traceback payload"
         ),
     )
 
@@ -88,6 +95,19 @@ def main():
         level="WARNING",
     )
 
+    distinct_source_line = fallback_entry(
+        first_seen=(
+            "2026-10-09T10:32:00+00:00"
+        ),
+        last_seen=(
+            "2026-10-09T10:32:00+00:00"
+        ),
+        message=(
+            "Unexpected error fetching tado data"
+        ),
+        line=436,
+    )
+
     report = build_family_report(
         {
             "collection": {
@@ -99,6 +119,7 @@ def main():
                 identical_two,
                 distinct_message,
                 distinct_level,
+                distinct_source_line,
             ],
         }
     )
@@ -112,7 +133,7 @@ def main():
             "summary"
         ][
             "source_entry_count"
-        ] == 4,
+        ] == 5,
         (
             "Source entry count changed."
         ),
@@ -121,11 +142,11 @@ def main():
     require(
         len(
             families
-        ) == 3,
+        ) == 4,
         (
-            "Exact duplicate fallback rows "
-            "were not consolidated, or "
-            "distinct evidence was over-grouped."
+            "Equivalent fallback rows were "
+            "not consolidated, or distinct "
+            "evidence was over-grouped."
         ),
     )
 
@@ -227,6 +248,9 @@ def main():
     )
     print("=" * 62)
     print(
+        "Exception variation ignored:   PASS"
+    )
+    print(
         "Exact fallback rows grouped:   PASS"
     )
     print(
@@ -234,6 +258,9 @@ def main():
     )
     print(
         "Different level separated:     PASS"
+    )
+    print(
+        "Different source separated:    PASS"
     )
     print(
         "Occurrence total preserved:    PASS"
