@@ -49,6 +49,10 @@ ACTION_PLATFORM = (
 )
 
 
+SPARSE_OCCURRENCE_MAX = 5
+STRONG_RECURRENCE_MIN = 100
+
+
 PRIORITY_ORDER = (
     PRIORITY_VERY_HIGH,
     PRIORITY_HIGH,
@@ -112,6 +116,21 @@ def priority_index(
         return len(
             PRIORITY_ORDER
         ) - 1
+
+
+def promote(
+    priority,
+):
+    index = priority_index(
+        priority
+    )
+
+    if index <= 0:
+        return PRIORITY_VERY_HIGH
+
+    return PRIORITY_ORDER[
+        index - 1
+    ]
 
 
 def demote(
@@ -376,6 +395,24 @@ def apply_modifiers(
 ):
     modifiers = []
 
+    family_id = clean_text(
+        item.get(
+            "family_id"
+        )
+    )
+
+    direct_failure = clean_text(
+        item.get(
+            "direct_failure_evidence"
+        )
+    )
+
+    span = clean_text(
+        item.get(
+            "observed_span_class"
+        )
+    )
+
     recovery = clean_text(
         item.get(
             "recovery_evidence"
@@ -406,6 +443,27 @@ def apply_modifiers(
             0,
         )
     )
+
+    if (
+        priority == PRIORITY_MEDIUM
+        and direct_failure == OBSERVED
+        and span == SPAN_MULTI_DAY
+        and action_path
+        == ACTION_INVESTIGATE_LOCAL
+        and occurrences
+        >= STRONG_RECURRENCE_MIN
+    ):
+        priority = promote(
+            priority
+        )
+
+        modifiers.append(
+            (
+                "Very strong repeated local failure "
+                "evidence raises the priority by "
+                "one level."
+            )
+        )
 
     if (
         recovery == OBSERVED
@@ -446,6 +504,23 @@ def apply_modifiers(
                     )
                 )
 
+    if occurrences <= SPARSE_OCCURRENCE_MAX:
+        capped = cap_priority(
+            priority,
+            PRIORITY_MEDIUM,
+        )
+
+        if capped != priority:
+            priority = capped
+
+            modifiers.append(
+                (
+                    "Sparse observed recurrence "
+                    "caps log-only priority at "
+                    "MEDIUM."
+                )
+            )
+
     if ownership_confidence == "LOW":
         capped = cap_priority(
             priority,
@@ -462,8 +537,26 @@ def apply_modifiers(
                 )
             )
 
+    if family_id == "invalid_auth":
+        capped = cap_priority(
+            priority,
+            PRIORITY_MEDIUM,
+        )
+
+        if capped != priority:
+            priority = capped
+
+            modifiers.append(
+                (
+                    "Authentication failures are "
+                    "capped at MEDIUM until security "
+                    "or client-impact evidence can "
+                    "corroborate higher urgency."
+                )
+            )
+
     if (
-        occurrences <= 5
+        occurrences <= SPARSE_OCCURRENCE_MAX
         and action_path
         in (
             ACTION_LIMITED_LOCAL,
@@ -661,7 +754,7 @@ def build_report(
                 False
             ),
             "model": (
-                "log_evidence_baseline_v1"
+                "log_evidence_baseline_v2"
             ),
             "model_note": (
                 "Priority is assigned by a "
@@ -669,6 +762,12 @@ def build_report(
                 "Occurrence count is contextual "
                 "evidence and is not a priority "
                 "score."
+            ),
+            "recurrence_note": (
+                "Occurrence count can strengthen "
+                "or constrain an evidence-based "
+                "priority, but does not determine "
+                "priority by itself."
             ),
             "very_high_note": (
                 "VERY HIGH is reserved for future "
