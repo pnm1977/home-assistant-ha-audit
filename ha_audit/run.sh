@@ -124,6 +124,10 @@ run_quiet_python \
     "log_recurrence_scan.py" \
     "System Log recurrence evidence"
 
+run_quiet_python \
+    "log_correlation_scan.py" \
+    "System Log availability and Repairs correlation"
+
 
 if run_quiet_python \
     "summary_report.py" \
