@@ -108,6 +108,10 @@ run_quiet_python \
     "log_priority_evidence.py" \
     "System Log priority evidence probe"
 
+run_quiet_python \
+    "log_priority_scan.py" \
+    "System Log priority probe"
+
 
 if run_quiet_python \
     "summary_report.py" \
