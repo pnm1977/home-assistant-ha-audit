@@ -21,6 +21,9 @@ UPGRADE_COMPATIBILITY_FILE = (
 AVAILABILITY_FILE = (
     "/config/availability_audit.json"
 )
+LOG_PRIORITY_FINAL_FILE = (
+    "/config/log_priority_final.json"
+)
 
 
 NO_AFFECTED_STATUSES = (
@@ -174,6 +177,559 @@ def has_local_llm_match(
     return False
 
 
+PRIORITY_RANK = {
+    "VERY LOW": 0,
+    "LOW": 1,
+    "MEDIUM": 2,
+    "HIGH": 3,
+    "VERY HIGH": 4,
+}
+
+ATTENTION_LIMIT = 5
+
+
+def safe_int(value):
+    try:
+        return int(
+            value
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return 0
+
+
+def log_priority_available(
+    report,
+):
+    if not isinstance(
+        report,
+        dict,
+    ):
+        return False
+
+    scope = report.get(
+        "scope",
+        {},
+    )
+
+    if not isinstance(
+        scope,
+        dict,
+    ):
+        return False
+
+    return (
+        report.get(
+            "status"
+        )
+        == "ok"
+        and scope.get(
+            "priority_produced"
+        )
+        is True
+        and isinstance(
+            report.get(
+                "families"
+            ),
+            list,
+        )
+    )
+
+
+def issue_action_label(
+    item,
+):
+    priority = str(
+        item.get(
+            "final_priority",
+            "",
+        )
+    ).upper()
+
+    action_path = str(
+        item.get(
+            "local_action_path",
+            "",
+        )
+    ).upper()
+
+    priority_changed = bool(
+        item.get(
+            "priority_changed",
+            False,
+        )
+    )
+
+    availability = item.get(
+        "availability_correlation",
+        {},
+    )
+
+    if not isinstance(
+        availability,
+        dict,
+    ):
+        availability = {}
+
+    availability_promoted = (
+        availability.get(
+            "effect"
+        )
+        == "PROMOTION EVIDENCE"
+    )
+
+    if (
+        priority
+        in (
+            "HIGH",
+            "MEDIUM",
+        )
+        and action_path
+        == "CLEAR LOCAL ACTION PATH"
+    ):
+        return "FIX / REVIEW"
+
+    if (
+        priority == "HIGH"
+        and action_path
+        == "LOCAL INVESTIGATION"
+    ):
+        return "INVESTIGATE"
+
+    if (
+        priority_changed
+        or availability_promoted
+    ):
+        return "REVIEW"
+
+    if (
+        priority == "MEDIUM"
+        and action_path
+        == "LOCAL INVESTIGATION"
+    ):
+        return "INVESTIGATE"
+
+    if priority == "HIGH":
+        if action_path in (
+            "LIMITED LOCAL CONTROL",
+            "PLATFORM / UPSTREAM",
+        ):
+            return "MONITOR"
+
+        return "REVIEW"
+
+    if priority == "MEDIUM":
+        return "MONITOR"
+
+    return "CONTEXT"
+
+
+def issue_note(
+    item,
+):
+    availability = item.get(
+        "availability_correlation",
+        {},
+    )
+
+    recurrence = item.get(
+        "recurrence",
+        {},
+    )
+
+    if not isinstance(
+        availability,
+        dict,
+    ):
+        availability = {}
+
+    if not isinstance(
+        recurrence,
+        dict,
+    ):
+        recurrence = {}
+
+    if (
+        availability.get(
+            "effect"
+        )
+        == "PROMOTION EVIDENCE"
+    ):
+        return (
+            "Priority raised by direct whole-device "
+            "unavailability and Recorder evidence."
+        )
+
+    recurrence_class = recurrence.get(
+        "class"
+    )
+
+    if recurrence_class == "RECURRING 24H+":
+        return (
+            "Independent new activity has been "
+            "observed across at least 24 hours."
+        )
+
+    recovery = item.get(
+        "recovery_evidence"
+    )
+
+    if recovery == "OBSERVED":
+        return (
+            "Recovery was also observed; monitor "
+            "before escalating."
+        )
+
+    fallback = item.get(
+        "fallback_evidence"
+    )
+
+    if fallback == "OBSERVED":
+        return (
+            "Fallback was observed; local impact "
+            "may be reduced."
+        )
+
+    action_path = item.get(
+        "local_action_path"
+    )
+
+    if recurrence_class == "SHORT-WINDOW REPEAT":
+        if action_path == "LOCAL INVESTIGATION":
+            return (
+                "Short-window repeat only; investigate "
+                "locally if it is still happening."
+            )
+
+        if action_path in (
+            "LIMITED LOCAL CONTROL",
+            "PLATFORM / UPSTREAM",
+        ):
+            return (
+                "Short-window repeat only; local "
+                "control is limited."
+            )
+
+        return (
+            "Short-window repeat only; durable "
+            "recurrence is not yet established."
+        )
+
+    if action_path == "LOCAL INVESTIGATION":
+        return (
+            "Recurrence is not established; investigate "
+            "if the behaviour is still occurring."
+        )
+
+    if action_path in (
+        "LIMITED LOCAL CONTROL",
+        "PLATFORM / UPSTREAM",
+    ):
+        return (
+            "Local control is limited; monitor for "
+            "continued impact."
+        )
+
+    return (
+        "Review the detailed evidence if this finding "
+        "remains current."
+    )
+
+
+def attention_sort_key(
+    item,
+):
+    priority = str(
+        item.get(
+            "final_priority",
+            "",
+        )
+    ).upper()
+
+    availability = item.get(
+        "availability_correlation",
+        {},
+    )
+
+    if not isinstance(
+        availability,
+        dict,
+    ):
+        availability = {}
+
+    promoted = bool(
+        item.get(
+            "priority_changed",
+            False,
+        )
+    )
+
+    availability_promoted = (
+        availability.get(
+            "effect"
+        )
+        == "PROMOTION EVIDENCE"
+    )
+
+    action_rank = {
+        "FIX / REVIEW": 4,
+        "INVESTIGATE": 3,
+        "REVIEW": 2,
+        "MONITOR": 1,
+        "CONTEXT": 0,
+    }.get(
+        issue_action_label(
+            item
+        ),
+        0,
+    )
+
+    return (
+        -PRIORITY_RANK.get(
+            priority,
+            -1,
+        ),
+        -int(
+            promoted
+        ),
+        -int(
+            availability_promoted
+        ),
+        -action_rank,
+        -safe_int(
+            item.get(
+                "occurrence_count",
+                0,
+            )
+        ),
+        str(
+            item.get(
+                "title",
+                "",
+            )
+        ).lower(),
+    )
+
+
+def render_system_issues(
+    add,
+    report,
+):
+    add("")
+    add("SYSTEM ISSUES")
+    add("-" * 58)
+
+    if not log_priority_available(
+        report
+    ):
+        add(
+            "System Log prioritisation:    UNAVAILABLE"
+        )
+        add(
+            "  Final priority evidence was not produced "
+            "for this run."
+        )
+        return
+
+    families = [
+        item
+        for item in report.get(
+            "families",
+            [],
+        )
+        if isinstance(
+            item,
+            dict,
+        )
+    ]
+
+    counts = {
+        "VERY HIGH": 0,
+        "HIGH": 0,
+        "MEDIUM": 0,
+        "LOW": 0,
+        "VERY LOW": 0,
+    }
+
+    for item in families:
+        priority = str(
+            item.get(
+                "final_priority",
+                "",
+            )
+        ).upper()
+
+        if priority in counts:
+            counts[
+                priority
+            ] += 1
+
+    summary = report.get(
+        "summary",
+        {},
+    )
+
+    if not isinstance(
+        summary,
+        dict,
+    ):
+        summary = {}
+
+    durable_count = safe_int(
+        summary.get(
+            "durable_recurrence_evidence_count",
+            0,
+        )
+    )
+
+    short_count = safe_int(
+        summary.get(
+            "short_window_no_promotion_count",
+            0,
+        )
+    )
+
+    add(
+        "Priority: "
+        f"HIGH {counts['HIGH']} | "
+        f"MEDIUM {counts['MEDIUM']} | "
+        f"LOW {counts['LOW']} | "
+        f"VERY LOW {counts['VERY LOW']}"
+    )
+
+    add(
+        f"Durable recurrence (24h+):   "
+        f"{durable_count}"
+    )
+
+    add(
+        f"Short-window repeats:        "
+        f"{short_count}"
+    )
+
+    attention = [
+        item
+        for item in families
+        if str(
+            item.get(
+                "final_priority",
+                "",
+            )
+        ).upper()
+        in (
+            "HIGH",
+            "MEDIUM",
+        )
+    ]
+
+    attention.sort(
+        key=attention_sort_key
+    )
+
+    shown = attention[
+        :ATTENTION_LIMIT
+    ]
+
+    add("")
+
+    if shown:
+        add(
+            f"Attention first "
+            f"(showing {len(shown)}):"
+        )
+
+        for item in shown:
+            label = issue_action_label(
+                item
+            )
+
+            priority = str(
+                item.get(
+                    "final_priority",
+                    "UNKNOWN",
+                )
+            ).upper()
+
+            title = (
+                item.get(
+                    "title"
+                )
+                or "Unnamed System Log finding"
+            )
+
+            add(
+                f"  [{label}] {priority} - {title}"
+            )
+
+            add(
+                f"    {issue_note(item)}"
+            )
+    else:
+        add(
+            "No HIGH or MEDIUM System Log findings "
+            "need to be surfaced."
+        )
+
+    hidden_medium = max(
+        0,
+        counts[
+            "MEDIUM"
+        ]
+        - sum(
+            1
+            for item in shown
+            if str(
+                item.get(
+                    "final_priority",
+                    "",
+                )
+            ).upper()
+            == "MEDIUM"
+        ),
+    )
+
+    low_context = (
+        counts[
+            "LOW"
+        ]
+        + counts[
+            "VERY LOW"
+        ]
+    )
+
+    add("")
+
+    if hidden_medium:
+        add(
+            f"Other MEDIUM findings:       "
+            f"{hidden_medium}"
+        )
+
+    add(
+        f"LOW / VERY LOW context:      "
+        f"{low_context}"
+    )
+
+    if durable_count == 0:
+        add(
+            "No issue has yet been proven recurring "
+            "across 24 hours."
+        )
+    else:
+        add(
+            "Durable recurrence is shown only when "
+            "independent new activity spans 24+ hours."
+        )
+
+    if short_count:
+        add(
+            "Short-window repeats do not count as "
+            "durable recurrence."
+        )
+
+
 def build_user_summary(
     *,
     summary_text,
@@ -181,6 +737,7 @@ def build_user_summary(
     compatibility,
     availability,
     version,
+    log_priority_final=None,
 ):
     overview = extract_overview(
         summary_text
@@ -429,6 +986,11 @@ def build_user_summary(
             f"{os_version}"
         )
 
+    render_system_issues(
+        add,
+        log_priority_final,
+    )
+
     add("")
     add("CORE UPDATE - WHAT TO DO")
     add("-" * 58)
@@ -601,11 +1163,16 @@ def main():
         AVAILABILITY_FILE
     )
 
+    log_priority_final = load_json_optional(
+        LOG_PRIORITY_FINAL_FILE
+    )
+
     output = build_user_summary(
         summary_text=summary_text,
         update_readiness=update_readiness,
         compatibility=compatibility,
         availability=availability,
+        log_priority_final=log_priority_final,
         version=VERSION,
     )
 
