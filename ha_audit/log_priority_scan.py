@@ -50,7 +50,6 @@ ACTION_PLATFORM = (
 
 
 SPARSE_OCCURRENCE_MAX = 5
-STRONG_RECURRENCE_MIN = 100
 
 
 PRIORITY_ORDER = (
@@ -116,21 +115,6 @@ def priority_index(
         return len(
             PRIORITY_ORDER
         ) - 1
-
-
-def promote(
-    priority,
-):
-    index = priority_index(
-        priority
-    )
-
-    if index <= 0:
-        return PRIORITY_VERY_HIGH
-
-    return PRIORITY_ORDER[
-        index - 1
-    ]
 
 
 def demote(
@@ -445,27 +429,6 @@ def apply_modifiers(
     )
 
     if (
-        priority == PRIORITY_MEDIUM
-        and direct_failure == OBSERVED
-        and span == SPAN_MULTI_DAY
-        and action_path
-        == ACTION_INVESTIGATE_LOCAL
-        and occurrences
-        >= STRONG_RECURRENCE_MIN
-    ):
-        priority = promote(
-            priority
-        )
-
-        modifiers.append(
-            (
-                "Very strong repeated local failure "
-                "evidence raises the priority by "
-                "one level."
-            )
-        )
-
-    if (
         recovery == OBSERVED
         or fallback == OBSERVED
     ):
@@ -515,7 +478,7 @@ def apply_modifiers(
 
             modifiers.append(
                 (
-                    "Sparse observed recurrence "
+                    "Sparse observed log evidence "
                     "caps log-only priority at "
                     "MEDIUM."
                 )
@@ -754,7 +717,7 @@ def build_report(
                 False
             ),
             "model": (
-                "log_evidence_baseline_v2"
+                "log_evidence_baseline_v3"
             ),
             "model_note": (
                 "Priority is assigned by a "
@@ -764,10 +727,12 @@ def build_report(
                 "score."
             ),
             "recurrence_note": (
-                "Occurrence count can strengthen "
-                "or constrain an evidence-based "
-                "priority, but does not determine "
-                "priority by itself."
+                "Occurrence count is snapshot "
+                "evidence volume. It may constrain "
+                "priority when evidence is sparse, "
+                "but it does not establish cross-run "
+                "recurrence or independently promote "
+                "an issue to HIGH."
             ),
             "very_high_note": (
                 "VERY HIGH is reserved for future "
