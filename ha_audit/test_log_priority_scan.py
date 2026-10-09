@@ -255,11 +255,24 @@ def main():
         )[
             "priority"
         ]
-        == PRIORITY_HIGH,
+        == PRIORITY_MEDIUM,
         (
-            "Very strong repeated local "
-            "failure should raise MEDIUM "
-            "to HIGH."
+            "High occurrence count must not "
+            "promote multi-day local evidence "
+            "from MEDIUM to HIGH."
+        ),
+    )
+
+    require(
+        by_id(
+            report,
+            "shelly_like",
+        )[
+            "priority_modifiers"
+        ] == [],
+        (
+            "High occurrence count produced "
+            "an unexpected priority modifier."
         ),
     )
 
@@ -398,6 +411,35 @@ def main():
 
     require(
         report[
+            "scope"
+        ][
+            "model"
+        ]
+        == "log_evidence_baseline_v3",
+        (
+            "Priority model version was not "
+            "updated for the occurrence-count "
+            "semantic correction."
+        ),
+    )
+
+    require(
+        (
+            "does not establish cross-run recurrence"
+            in report[
+                "scope"
+            ][
+                "recurrence_note"
+            ]
+        ),
+        (
+            "Priority scope still conflates "
+            "occurrence count with recurrence."
+        ),
+    )
+
+    require(
+        report[
             "summary"
         ][
             "priority_counts"
@@ -463,7 +505,7 @@ def main():
         "Broad direct failure:         PASS"
     )
     print(
-        "Strong recurrence modifier:   PASS"
+        "High-count promotion blocked: PASS"
     )
     print(
         "Sparse evidence restraint:    PASS"
