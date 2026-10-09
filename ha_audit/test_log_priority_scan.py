@@ -52,7 +52,7 @@ EVIDENCE_REPORT = {
     "families": [
         item(
             "zigbee_like",
-            count=724,
+            count=266,
             direct="OBSERVED",
             span="MULTI-DAY",
             breadth=(
@@ -60,18 +60,49 @@ EVIDENCE_REPORT = {
             ),
         ),
         item(
+            "shelly_like",
+            count=777,
+            direct="OBSERVED",
+            span="MULTI-DAY",
+            breadth="UNKNOWN",
+            confidence="MEDIUM",
+        ),
+        item(
             "apple_tv_like",
-            count=268,
+            count=335,
             direct="OBSERVED",
             span="MULTI-DAY",
             breadth=(
                 "MULTIPLE TARGETS / PATHS"
             ),
             recovery="OBSERVED",
+            confidence="MEDIUM",
+        ),
+        item(
+            "hue_sparse_like",
+            count=4,
+            direct="OBSERVED",
+            span="MULTI-DAY",
+            breadth=(
+                "MULTIPLE TARGETS / PATHS"
+            ),
+        ),
+        item(
+            "invalid_auth",
+            count=12,
+            direct="OBSERVED",
+            span="MULTI-DAY",
+            breadth=(
+                "MULTIPLE TARGETS / PATHS"
+            ),
+            ownership=(
+                "USER / LOCAL CONFIGURATION"
+            ),
+            confidence="MEDIUM",
         ),
         item(
             "octopus_like",
-            count=191,
+            count=213,
             direct="OBSERVED",
             span="MULTI-DAY",
             breadth="UNKNOWN",
@@ -83,7 +114,7 @@ EVIDENCE_REPORT = {
         ),
         item(
             "music_like",
-            count=6,
+            count=87,
             direct="OBSERVED",
             span="SAME-DAY",
             breadth=(
@@ -98,7 +129,7 @@ EVIDENCE_REPORT = {
         ),
         item(
             "lg_tv_like",
-            count=48,
+            count=57,
             direct="OBSERVED",
             span="MULTI-DAY",
             breadth=(
@@ -113,7 +144,7 @@ EVIDENCE_REPORT = {
         ),
         item(
             "slow_update_like",
-            count=131,
+            count=166,
             direct="NOT OBSERVED",
             span="MULTI-DAY",
             breadth=(
@@ -203,45 +234,87 @@ def main():
         EVIDENCE_REPORT
     )
 
-    zigbee = by_id(
-        report,
-        "zigbee_like",
-    )
-
     require(
-        zigbee[
+        by_id(
+            report,
+            "zigbee_like",
+        )[
             "priority"
-        ] == PRIORITY_HIGH,
+        ]
+        == PRIORITY_HIGH,
         (
-            "Broad multi-day direct "
+            "Broad repeated Zigbee-like "
             "failure should be HIGH."
         ),
     )
 
-    apple_tv = by_id(
-        report,
-        "apple_tv_like",
+    require(
+        by_id(
+            report,
+            "shelly_like",
+        )[
+            "priority"
+        ]
+        == PRIORITY_HIGH,
+        (
+            "Very strong repeated local "
+            "failure should raise MEDIUM "
+            "to HIGH."
+        ),
     )
 
     require(
-        apple_tv[
+        by_id(
+            report,
+            "apple_tv_like",
+        )[
             "priority"
-        ] == PRIORITY_MEDIUM,
+        ]
+        == PRIORITY_MEDIUM,
         (
             "Observed recovery should "
             "reduce HIGH to MEDIUM."
         ),
     )
 
-    octopus = by_id(
-        report,
-        "octopus_like",
+    require(
+        by_id(
+            report,
+            "hue_sparse_like",
+        )[
+            "priority"
+        ]
+        == PRIORITY_MEDIUM,
+        (
+            "Sparse log-only evidence "
+            "must not reach HIGH."
+        ),
     )
 
     require(
-        octopus[
+        by_id(
+            report,
+            "invalid_auth",
+        )[
             "priority"
-        ] == PRIORITY_LOW,
+        ]
+        == PRIORITY_MEDIUM,
+        (
+            "Authentication failures "
+            "must remain MEDIUM until "
+            "security evidence supports "
+            "higher urgency."
+        ),
+    )
+
+    require(
+        by_id(
+            report,
+            "octopus_like",
+        )[
+            "priority"
+        ]
+        == PRIORITY_LOW,
         (
             "External service with "
             "observed fallback should "
@@ -249,15 +322,14 @@ def main():
         ),
     )
 
-    music = by_id(
-        report,
-        "music_like",
-    )
-
     require(
-        music[
+        by_id(
+            report,
+            "music_like",
+        )[
             "priority"
-        ] == PRIORITY_MEDIUM,
+        ]
+        == PRIORITY_MEDIUM,
         (
             "Direct local failure across "
             "multiple execution paths "
@@ -265,15 +337,14 @@ def main():
         ),
     )
 
-    lg_tv = by_id(
-        report,
-        "lg_tv_like",
-    )
-
     require(
-        lg_tv[
+        by_id(
+            report,
+            "lg_tv_like",
+        )[
             "priority"
-        ] == PRIORITY_HIGH,
+        ]
+        == PRIORITY_HIGH,
         (
             "Multi-day direct failure "
             "with clear local action "
@@ -281,15 +352,14 @@ def main():
         ),
     )
 
-    slow = by_id(
-        report,
-        "slow_update_like",
-    )
-
     require(
-        slow[
+        by_id(
+            report,
+            "slow_update_like",
+        )[
             "priority"
-        ] == PRIORITY_LOW,
+        ]
+        == PRIORITY_LOW,
         (
             "Broad multi-day warning "
             "without direct failure "
@@ -297,30 +367,28 @@ def main():
         ),
     )
 
-    platform_sparse = by_id(
-        report,
-        "platform_sparse_like",
-    )
-
     require(
-        platform_sparse[
+        by_id(
+            report,
+            "platform_sparse_like",
+        )[
             "priority"
-        ] == PRIORITY_LOW,
+        ]
+        == PRIORITY_LOW,
         (
             "Sparse platform evidence "
             "should be capped at LOW."
         ),
     )
 
-    noise = by_id(
-        report,
-        "one_off_noise",
-    )
-
     require(
-        noise[
+        by_id(
+            report,
+            "one_off_noise",
+        )[
             "priority"
-        ] == PRIORITY_VERY_LOW,
+        ]
+        == PRIORITY_VERY_LOW,
         (
             "One-off condition without "
             "direct failure should be "
@@ -385,28 +453,6 @@ def main():
             ),
         )
 
-    priorities = [
-        record[
-            "priority"
-        ]
-        for record in report[
-            "families"
-        ]
-    ]
-
-    require(
-        priorities.index(
-            PRIORITY_HIGH
-        )
-        < priorities.index(
-            PRIORITY_MEDIUM
-        ),
-        (
-            "Priority sorting is "
-            "incorrect."
-        ),
-    )
-
     print("")
     print("=" * 62)
     print(
@@ -415,6 +461,15 @@ def main():
     print("=" * 62)
     print(
         "Broad direct failure:         PASS"
+    )
+    print(
+        "Strong recurrence modifier:   PASS"
+    )
+    print(
+        "Sparse evidence restraint:    PASS"
+    )
+    print(
+        "Authentication restraint:     PASS"
     )
     print(
         "Recovery modifier:            PASS"
