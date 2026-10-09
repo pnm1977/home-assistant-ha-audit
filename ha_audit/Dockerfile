@@ -35,6 +35,7 @@ COPY log_priority_evidence.py /
 COPY log_priority_scan.py /
 COPY log_persistence_scan.py /
 COPY log_recurrence_scan.py /
+COPY log_correlation_scan.py /
 COPY readiness_guidance.py /
 COPY health_guidance.py /
 COPY upgrade_decision.py /
