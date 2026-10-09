@@ -31,6 +31,7 @@ COPY log_scan.py /
 COPY log_family_scan.py /
 COPY log_ownership_scan.py /
 COPY log_priority_evidence.py /
+COPY log_priority_scan.py /
 COPY readiness_guidance.py /
 COPY health_guidance.py /
 COPY upgrade_decision.py /
