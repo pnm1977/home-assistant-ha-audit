@@ -29,6 +29,7 @@ COPY upgrade_correlation_scan.py /
 COPY correlation_validation_scan.py /
 COPY log_scan.py /
 COPY log_family_scan.py /
+COPY log_fingerprint_scan.py /
 COPY log_ownership_scan.py /
 COPY log_priority_evidence.py /
 COPY log_priority_scan.py /
