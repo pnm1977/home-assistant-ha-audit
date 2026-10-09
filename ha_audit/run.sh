@@ -128,6 +128,10 @@ run_quiet_python \
     "log_correlation_scan.py" \
     "System Log availability and Repairs correlation"
 
+run_quiet_python \
+    "log_priority_final.py" \
+    "System Log enriched priority"
+
 
 if run_quiet_python \
     "summary_report.py" \
