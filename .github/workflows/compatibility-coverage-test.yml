@@ -1,0 +1,32 @@
+name: Compatibility coverage test
+
+on:
+  workflow_dispatch:
+
+  push:
+    paths:
+      - "ha_audit/compatibility_coverage_scan.py"
+      - "ha_audit/test_compatibility_coverage_scan.py"
+      - ".github/workflows/compatibility-coverage-test.yml"
+
+  pull_request:
+    paths:
+      - "ha_audit/compatibility_coverage_scan.py"
+      - "ha_audit/test_compatibility_coverage_scan.py"
+      - ".github/workflows/compatibility-coverage-test.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Run compatibility coverage regression test
+        run: python3 ha_audit/test_compatibility_coverage_scan.py
