@@ -9,19 +9,16 @@ VERSION = os.environ.get(
     "unknown",
 )
 
-RELEASE_EVIDENCE_FILE = os.environ.get(
-    "HA_AUDIT_RELEASE_EVIDENCE_FILE",
-    "/config/release_evidence_audit.json",
+RELEASE_EVIDENCE_FILE = (
+    "/config/release_evidence_audit.json"
 )
 
-UPGRADE_COMPATIBILITY_FILE = os.environ.get(
-    "HA_AUDIT_UPGRADE_COMPATIBILITY_FILE",
-    "/config/upgrade_compatibility_audit.json",
+UPGRADE_COMPATIBILITY_FILE = (
+    "/config/upgrade_compatibility_audit.json"
 )
 
-OUTPUT_FILE = os.environ.get(
-    "HA_AUDIT_COMPATIBILITY_COVERAGE_FILE",
-    "/config/compatibility_coverage_audit.json",
+OUTPUT_FILE = (
+    "/config/compatibility_coverage_audit.json"
 )
 
 
@@ -39,30 +36,10 @@ OUTPUT_FILE = os.environ.get(
 # One official group can map to multiple deterministic rules
 # when the release note contains separately testable changes.
 #
-# Deterministic reference is allowed to be complete or selective
-# at release-family level:
-#
-# complete
-#   Every official crossed group in that family is expected to
-#   have a registry mapping. A missing mapping is incomplete.
-#
-# selective
-#   Only explicitly listed groups have deterministic reference.
-#   Unlisted groups remain valid dynamic-only / no-reference
-#   groups rather than becoming unmapped failures.
-#
-# A family with no declared mode and no registry is also a
-# supported dynamic-only state.
+# A release family being absent from this registry is now a
+# supported state. It means HA Audit has no deterministic
+# reference for that family yet; it is NOT a collector failure.
 # ------------------------------------------------------------
-
-REFERENCE_MODE_COMPLETE = "complete"
-REFERENCE_MODE_SELECTIVE = "selective"
-
-REFERENCE_FAMILY_MODES = {
-    "2026.9": REFERENCE_MODE_COMPLETE,
-    "2026.10": REFERENCE_MODE_SELECTIVE,
-}
-
 
 RULE_GROUP_REGISTRY = {
     "2026.9": {
@@ -313,194 +290,6 @@ REGISTRY_INDEX = (
 )
 
 
-def reference_family_mode(
-    release_family,
-):
-    release_family = clean(
-        release_family
-    )
-
-    explicit_mode = (
-        REFERENCE_FAMILY_MODES.get(
-            release_family
-        )
-    )
-
-    if explicit_mode in (
-        REFERENCE_MODE_COMPLETE,
-        REFERENCE_MODE_SELECTIVE,
-    ):
-        return explicit_mode
-
-    if release_family in REGISTRY_INDEX:
-        return REFERENCE_MODE_COMPLETE
-
-    return None
-
-
-def classify_group_reference(
-    release_family,
-    heading,
-    compatibility_rule_ids,
-):
-    release_family = clean(
-        release_family
-    )
-
-    heading = clean(
-        heading
-    )
-
-    family_mode = (
-        reference_family_mode(
-            release_family
-        )
-    )
-
-    family_registry_available = (
-        release_family
-        in REGISTRY_INDEX
-    )
-
-    family_registry = (
-        REGISTRY_INDEX.get(
-            release_family,
-            {},
-        )
-    )
-
-    registry_entry = (
-        family_registry.get(
-            normalise_heading(
-                heading
-            )
-        )
-    )
-
-    expected_rule_ids = []
-
-    registered_heading = None
-
-    if registry_entry:
-        registered_heading = (
-            registry_entry.get(
-                "registered_heading"
-            )
-        )
-
-        expected_rule_ids = unique(
-            registry_entry.get(
-                "rule_ids",
-                [],
-            )
-        )
-
-    compatibility_rule_ids = set(
-        compatibility_rule_ids
-        or []
-    )
-
-    present_rule_ids = [
-        rule_id
-        for rule_id
-        in expected_rule_ids
-        if rule_id
-        in compatibility_rule_ids
-    ]
-
-    missing_rule_ids = [
-        rule_id
-        for rule_id
-        in expected_rule_ids
-        if rule_id
-        not in compatibility_rule_ids
-    ]
-
-    if family_mode is None:
-        coverage_status = (
-            "no_reference"
-        )
-
-        reference_status = (
-            "not_available"
-        )
-
-    elif not expected_rule_ids:
-        if (
-            family_mode
-            == REFERENCE_MODE_SELECTIVE
-        ):
-            coverage_status = (
-                "no_reference"
-            )
-
-            reference_status = (
-                "not_available"
-            )
-
-        else:
-            coverage_status = (
-                "unmapped"
-            )
-
-            reference_status = (
-                "incomplete"
-            )
-
-    elif missing_rule_ids:
-        coverage_status = (
-            "partial"
-        )
-
-        reference_status = (
-            "incomplete"
-        )
-
-    else:
-        coverage_status = (
-            "covered"
-        )
-
-        reference_status = (
-            "available"
-        )
-
-    return {
-        "release_family":
-            release_family,
-
-        "official_heading":
-            heading,
-
-        "registered_heading":
-            registered_heading,
-
-        "registry_available":
-            family_registry_available,
-
-        "reference_family_mode":
-            (
-                family_mode
-                or "none"
-            ),
-
-        "reference_status":
-            reference_status,
-
-        "coverage_status":
-            coverage_status,
-
-        "mapped_rule_ids":
-            expected_rule_ids,
-
-        "present_rule_ids":
-            present_rule_ids,
-
-        "missing_rule_ids":
-            missing_rule_ids,
-    }
-
-
 # ------------------------------------------------------------
 # Load input reports
 # ------------------------------------------------------------
@@ -736,59 +525,79 @@ no_reference_group_count = 0
 
 for group in crossed_groups:
 
-    classification = (
-        classify_group_reference(
-            group.get(
-                "release_family"
-            ),
-            group.get(
-                "heading"
-            ),
-            compatibility_rule_ids,
+    release_family = clean(
+        group.get(
+            "release_family"
         )
     )
 
-    release_family = (
-        classification[
-            "release_family"
-        ]
+    heading = clean(
+        group.get(
+            "heading"
+        )
     )
 
-    heading = (
-        classification[
-            "official_heading"
-        ]
+
+    family_registry_available = (
+        release_family
+        in REGISTRY_INDEX
     )
 
-    expected_rule_ids = (
-        classification[
-            "mapped_rule_ids"
-        ]
+
+    family_registry = (
+        REGISTRY_INDEX.get(
+            release_family,
+            {},
+        )
     )
 
-    present_rule_ids = (
-        classification[
-            "present_rule_ids"
-        ]
+
+    registry_entry = (
+        family_registry.get(
+            normalise_heading(
+                heading
+            )
+        )
     )
 
-    missing_rule_ids = (
-        classification[
-            "missing_rule_ids"
-        ]
-    )
 
-    coverage_status = (
-        classification[
-            "coverage_status"
-        ]
-    )
+    expected_rule_ids = []
 
-    reference_status = (
-        classification[
-            "reference_status"
-        ]
-    )
+    registered_heading = None
+
+
+    if registry_entry:
+
+        registered_heading = (
+            registry_entry.get(
+                "registered_heading"
+            )
+        )
+
+        expected_rule_ids = unique(
+            registry_entry.get(
+                "rule_ids",
+                [],
+            )
+        )
+
+
+    present_rule_ids = [
+        rule_id
+        for rule_id
+        in expected_rule_ids
+        if rule_id
+        in compatibility_rule_ids
+    ]
+
+
+    missing_rule_ids = [
+        rule_id
+        for rule_id
+        in expected_rule_ids
+        if rule_id
+        not in compatibility_rule_ids
+    ]
 
 
     mapped_rule_ids.extend(
@@ -804,32 +613,96 @@ for group in crossed_groups:
     )
 
 
-    if coverage_status == "covered":
-        covered_group_count += 1
+    if not family_registry_available:
 
-    elif coverage_status == "partial":
-        partial_group_count += 1
+        coverage_status = (
+            "no_reference"
+        )
 
-    elif coverage_status == "unmapped":
+        reference_status = (
+            "not_available"
+        )
+
+        no_reference_group_count += 1
+
+
+    elif not expected_rule_ids:
+
+        coverage_status = (
+            "unmapped"
+        )
+
+        reference_status = (
+            "incomplete"
+        )
+
         unmapped_group_count += 1
 
-    elif coverage_status == "no_reference":
-        no_reference_group_count += 1
+
+    elif missing_rule_ids:
+
+        coverage_status = (
+            "partial"
+        )
+
+        reference_status = (
+            "incomplete"
+        )
+
+        partial_group_count += 1
+
+
+    else:
+
+        coverage_status = (
+            "covered"
+        )
+
+        reference_status = (
+            "available"
+        )
+
+        covered_group_count += 1
 
 
     group_results.append(
         {
-            **classification,
+            "release_family":
+                release_family,
+
+            "official_heading":
+                heading,
+
+            "registered_heading":
+                registered_heading,
 
             "release_notes_url":
                 group.get(
                     "release_notes_url"
                 ),
 
+            "registry_available":
+                family_registry_available,
+
+            "reference_status":
+                reference_status,
+
+            "coverage_status":
+                coverage_status,
+
             "mapped_rule_count":
                 len(
                     expected_rule_ids
                 ),
+
+            "mapped_rule_ids":
+                expected_rule_ids,
+
+            "present_rule_ids":
+                present_rule_ids,
+
+            "missing_rule_ids":
+                missing_rule_ids,
         }
     )
 
@@ -904,12 +777,6 @@ for release_family in crossed_release_families:
         in RULE_GROUP_REGISTRY
     )
 
-    family_reference_mode = (
-        reference_family_mode(
-            release_family
-        )
-    )
-
 
     family_covered = sum(
         1
@@ -966,17 +833,14 @@ for release_family in crossed_release_families:
         )
 
 
-    elif (
-        family_partial
-        or family_unmapped
-    ):
+    elif not family_registry_available:
 
         family_status = (
-            "incomplete"
+            "no_reference"
         )
 
         family_reference_status = (
-            "incomplete"
+            "not_available"
         )
 
 
@@ -993,45 +857,6 @@ for release_family in crossed_release_families:
 
         family_reference_status = (
             "complete"
-        )
-
-
-    elif (
-        family_reference_mode
-        == REFERENCE_MODE_SELECTIVE
-        and family_covered
-        and family_no_reference
-        and (
-            family_covered
-            + family_no_reference
-            == len(
-                family_groups
-            )
-        )
-    ):
-
-        family_status = (
-            "partial_reference"
-        )
-
-        family_reference_status = (
-            "partial"
-        )
-
-
-    elif (
-        family_no_reference
-        == len(
-            family_groups
-        )
-    ):
-
-        family_status = (
-            "no_reference"
-        )
-
-        family_reference_status = (
-            "not_available"
         )
 
 
@@ -1076,12 +901,6 @@ for release_family in crossed_release_families:
 
             "registry_available":
                 family_registry_available,
-
-            "reference_family_mode":
-                (
-                    family_reference_mode
-                    or "none"
-                ),
 
             "is_compatibility_rule_pack_family":
                 release_family
@@ -1368,13 +1187,11 @@ report = {
         "note": (
             "This report links official Home Assistant Core "
             "backward-incompatible-change groups to deterministic "
-            "HA Audit compatibility rules when deterministic "
-            "reference is declared. Complete-reference families "
-            "expect every official group to be mapped. Selective-"
-            "reference families map only explicitly supported groups; "
-            "unlisted groups remain dynamic-only no_reference. "
-            "The report measures deterministic reference availability "
-            "only. It does not decide whether "
+            "HA Audit compatibility rules when a deterministic "
+            "registry exists. A release family without a registry "
+            "is reported as no_reference rather than as failed or "
+            "unmapped coverage. The report measures deterministic "
+            "reference availability only. It does not decide whether "
             "a change affects this installation and does not produce "
             "a safe-to-update verdict."
         ),
@@ -1407,13 +1224,6 @@ report = {
         "registry_release_families":
             sorted(
                 RULE_GROUP_REGISTRY
-            ),
-
-        "reference_family_modes":
-            dict(
-                sorted(
-                    REFERENCE_FAMILY_MODES.items()
-                )
             ),
     },
 
@@ -1503,10 +1313,9 @@ report = {
 
     "limitations": [
         (
-            "Deterministic reference can be complete or selective "
-            "at release-family level. In selective mode, unlisted "
-            "official groups deliberately remain dynamic-only "
-            "no_reference rather than becoming unmapped failures."
+            "Deterministic coverage mappings are defined explicitly "
+            "for selected release families. A release family without "
+            "a mapping registry is a supported no-reference state."
         ),
 
         (
@@ -1522,9 +1331,9 @@ report = {
         ),
 
         (
-            "An unmapped group is an error only for a complete-"
-            "reference family. A selective-reference family may "
-            "intentionally leave groups as no_reference."
+            "An unmapped group inside a release family that does have "
+            "a deterministic registry is treated as incomplete "
+            "reference coverage, not as the normal no-reference state."
         ),
 
         (
