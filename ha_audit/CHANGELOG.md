@@ -43,6 +43,22 @@
 - Wired AI / LLM handoff generation to occur only after the latest summary is successfully generated, reducing the risk of presenting stale evidence as a new handoff.
 - Kept AI / LLM handoff generation entirely local. HA Audit does not automatically transmit audit information to an external AI service.
 - Updated the root README, app README, and User Guide with the current overview, Core upgrade-readiness, AI / LLM handoff, privacy, and usage workflow.
+- Added bounded Home Assistant System Log collection for current warning and error evidence.
+- Added deterministic System Log issue-family grouping so related entries can be reviewed together.
+- Added stable System Log fingerprints for cross-run identity and persistence tracking.
+- Added System Log ownership and evidence classification for local, network, upstream, and uncertain investigation paths.
+- Added evidence-based System Log priority with `HIGH`, `MEDIUM`, `LOW`, and `VERY LOW` user-facing levels.
+- Kept System Log priority separate from log severity and prevented raw occurrence count from being treated as recurrence or an independent reason to promote an issue to `HIGH`.
+- Added cross-run persistence tracking while retaining historical evidence when an issue is not present in the latest run.
+- Added recurrence classification with a strict distinction between `SHORT-WINDOW REPEAT` and durable `RECURRING 24H+` evidence.
+- Added System Log correlation with availability, Recorder-history, and Repairs context.
+- Added final enriched System Log priority with conservative promotion rules and fail-closed source alignment.
+- Added the plain-English `SYSTEM ISSUES` section to show the highest-priority current findings without overwhelming the normal user summary.
+- Added regression coverage for System Log grouping, fingerprinting, ownership, priority, persistence, recurrence, correlation, final priority, and user-facing rendering.
+- Added System Issues to `ha_audit_ai_handoff.md`, including final priority and recurrence context.
+- Added receiving-AI guidance not to re-rank System issues solely from raw occurrence count and to keep short-window repeats separate from durable recurrence.
+- Kept lower-priority System Log findings and internal family/fingerprint details out of the concise AI handoff while retaining them in detailed reports.
+- Updated the README, User Guide, and changelog to reflect the completed 0.7.x System Log and AI-handoff work.
 
 ## 0.6.10
 
