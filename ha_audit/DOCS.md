@@ -25,11 +25,11 @@ HA Audit is currently designed to run manually.
 2. Click **Start**
 3. Wait for the audit to complete
 4. Open the **Log** tab
-5. Find the latest `CURRENT RUN SUMMARY`
+5. Find the latest `HA AUDIT vX.X.X - USER SUMMARY`
 
 The app stops automatically after the audit finishes.
 
-Each successful run also writes the latest summary and supporting reports to HA Audit's private app-config folder.
+Each successful run also writes the detailed latest-run summary and supporting reports to HA Audit's private app-config folder.
 
 ---
 
@@ -58,6 +58,8 @@ This explains the main evidence behind the headline results.
 For most users, these two sections should be the starting point.
 
 Do not start by trying to interpret every technical count in the report.
+
+The shorter `USER SUMMARY` shown in the app log is intended for normal day-to-day use. It brings together the main status, the highest-priority System issues, and the Core update action guidance.
 
 ---
 
@@ -583,7 +585,65 @@ There is no benefit in trying to force every non-zero count to zero.
 
 ---
 
-# 18. AI / LLM HANDOFF
+# 18. SYSTEM ISSUES
+
+The plain-English `USER SUMMARY` contains a dedicated `SYSTEM ISSUES` section.
+
+HA Audit groups related Home Assistant System Log entries into issue families and prioritises the current findings using evidence from the audit.
+
+Typical output includes:
+
+```text
+Priority: HIGH 3 | MEDIUM 5 | LOW 10 | VERY LOW 9
+Durable recurrence (24h+):   0
+Short-window repeats:        12
+```
+
+## Priority
+
+Priority is evidence-based and is not the same as Home Assistant log severity.
+
+A large raw occurrence count does not by itself prove that an issue is recurring and does not independently make an issue `HIGH`.
+
+The user summary shows the highest-priority `HIGH` and `MEDIUM` findings first.
+
+Lower-priority findings remain available in the detailed final-priority report.
+
+## Short-window repeat
+
+```text
+SHORT-WINDOW REPEAT
+```
+
+means HA Audit observed independent repeated activity, but the proven span is still less than 24 hours.
+
+This does not count as durable recurrence.
+
+## Durable recurrence
+
+```text
+RECURRING 24H+
+```
+
+means independent repeated activity has been proven across at least 24 hours.
+
+This is stronger evidence that an issue is recurring, but it does not mean the issue was continuously active for the whole period.
+
+## Important limitation
+
+System Log collection is intentionally bounded.
+
+HA Audit does not provide a complete historical Home Assistant Core log archive, so an issue that is not present in the current collected window should not automatically be treated as permanently resolved.
+
+The complete current prioritised family list is stored in:
+
+```text
+log_priority_final.json
+```
+
+---
+
+# 19. AI / LLM HANDOFF
 
 Every successful audit generates:
 
@@ -619,6 +679,8 @@ The handoff includes selected evidence such as:
 - Recorder-history context
 - review findings
 - next actions
+- the highest-priority current System issues
+- short-window and durable recurrence context
 
 Lower-level technical evidence remains available in the detailed reports if needed.
 
@@ -633,6 +695,8 @@ The generated file includes instructions asking the receiving AI to:
 - preserve uncertainty when evidence is incomplete
 - keep general Home Assistant health separate from Core update guidance
 - prioritise concrete findings over informational context
+- use HA Audit's final System issue priorities rather than re-ranking solely from raw occurrence count
+- keep short-window repeats separate from durable 24-hour recurrence
 
 ## Using the handoff
 
@@ -674,7 +738,7 @@ HA Audit does not automatically send the handoff to ChatGPT, OpenAI, Claude, Gem
 
 ---
 
-# 19. DETAILED REPORTS
+# 20. DETAILED REPORTS
 
 HA Audit stores reports in its private app-config folder.
 
@@ -697,6 +761,7 @@ release_evidence_audit.json
 compatibility_coverage_audit.json
 upgrade_correlation_audit.json
 correlation_validation_audit.json
+log_priority_final.json
 ha_audit_latest.txt
 ha_audit_ai_handoff.md
 ```
@@ -730,7 +795,7 @@ Studio Code Server is only one possible file-access method. It is not required b
 
 ---
 
-# 20. SECURITY AND PRIVACY
+# 21. SECURITY AND PRIVACY
 
 HA Audit is designed to be read-only.
 
@@ -761,14 +826,14 @@ External sharing occurs only if the user chooses to copy or upload a generated f
 
 ---
 
-# 21. CURRENT LIMITATIONS
+# 22. CURRENT LIMITATIONS
 
 HA Audit is under active development.
 
 It does not currently:
 
 - automatically repair Home Assistant
-- provide complete Home Assistant Core log analysis
+- provide a complete historical Home Assistant Core log archive
 - perform scheduled automatic audits
 - provide a full OS upgrade-readiness assessment equivalent to the Core assessment
 - guarantee compatibility with every third-party integration or custom component
@@ -781,7 +846,7 @@ Do not interpret an uninspected area as either confirmed safe or confirmed probl
 
 ---
 
-# 22. PROJECT GOAL
+# 23. PROJECT GOAL
 
 The long-term goal is to provide a structured technical view of a Home Assistant installation so that:
 
