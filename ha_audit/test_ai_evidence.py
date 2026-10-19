@@ -21,6 +21,21 @@ def by_family(report, family_id):
     )
 
 
+def link_by_type(issue, link_type):
+    for item in issue.get(
+        "configuration_links",
+        [],
+    ):
+        if item.get(
+            "link_type"
+        ) == link_type:
+            return item
+
+    raise AssertionError(
+        f"Missing configuration link: {link_type}"
+    )
+
+
 def main():
     audit = {
         "system": {
@@ -48,9 +63,29 @@ def main():
             "duplicate_id_details": {},
             "active_duplicate_aliases": {},
             "unresolved_duplicate_aliases": {},
+            "source_index": [
+                {
+                    "id": "123",
+                    "alias": "Hue Switch - Bedroom",
+                    "source": "automations.yaml",
+                    "line": 120,
+                    "entity_id": "automation.hue_switch_bedroom",
+                    "live_state": "on",
+                    "currently_on": True,
+                }
+            ],
         },
         "scripts": {
             "duplicate_aliases": {},
+            "source_index": [
+                {
+                    "key": "dim_to_off_kitchen",
+                    "entity_id": "script.dim_to_off_kitchen",
+                    "alias": "Dim to Off - Kitchen",
+                    "source": "scripts.yaml",
+                    "line": 900,
+                }
+            ],
         },
         "entity_references": {
             "missing_candidates": [
@@ -64,6 +99,24 @@ def main():
                     ],
                 }
             ],
+            "locations_by_entity": {
+                "light.kitchen_1": [
+                    {
+                        "file": "scripts.yaml",
+                        "lines": [914],
+                    }
+                ],
+                "sensor.old_watch_battery": [
+                    {
+                        "file": "entities/template/watch.yaml",
+                        "lines": [42, 43],
+                    },
+                    {
+                        "file": "automations.yaml",
+                        "lines": [578],
+                    },
+                ],
+            },
         },
     }
 
@@ -78,6 +131,7 @@ def main():
                 "last_seen": "2026-10-19T10:00:00+00:00",
                 "logger_names": [
                     "homeassistant.components.automation.hue_switch_bedroom",
+                    "homeassistant.components.script.dim_to_off_kitchen",
                 ],
                 "sources": [
                     "components/automation/__init__.py:806",
@@ -150,9 +204,9 @@ def main():
                 "family_id": "unclassified_template",
                 "title": "Unclassified System Log entry",
                 "occurrence_count": 470,
-                "ownership": "MIXED / UNKNOWN",
-                "ownership_confidence": "LOW",
-                "local_action_path": "UNKNOWN",
+                "ownership": "USER / LOCAL CONFIGURATION",
+                "ownership_confidence": "MEDIUM",
+                "local_action_path": "LOCAL INVESTIGATION",
                 "direct_failure_evidence": "NOT OBSERVED",
                 "recovery_evidence": "NOT OBSERVED",
                 "fallback_evidence": "NOT OBSERVED",
@@ -253,7 +307,7 @@ def main():
     )
 
     require(
-        report["schema_version"] == 1,
+        report["schema_version"] == 2,
         "Unexpected evidence schema version.",
     )
 
@@ -291,6 +345,12 @@ def main():
     )
 
     require(
+        "script.dim_to_off_kitchen"
+        in zigbee["affected_scripts"],
+        "Script logger context was not extracted.",
+    )
+
+    require(
         "192.168.0.20"
         not in zigbee["representative_messages"][0],
         "Local IP address leaked into AI evidence.",
@@ -306,6 +366,45 @@ def main():
         zigbee["availability_context"]["power_expectation"]
         == "UNKNOWN",
         "Unlabelled connectivity issue inferred a power expectation.",
+    )
+
+    automation_link = link_by_type(
+        zigbee,
+        "AUTOMATION_SOURCE",
+    )
+
+    require(
+        automation_link["source"] == "automations.yaml"
+        and automation_link["line"] == 120,
+        "Automation source was not linked from quality evidence.",
+    )
+
+    script_link = link_by_type(
+        zigbee,
+        "SCRIPT_SOURCE",
+    )
+
+    require(
+        script_link["source"] == "scripts.yaml"
+        and script_link["line"] == 900,
+        "Script source was not linked from quality evidence.",
+    )
+
+    entity_link = next(
+        item
+        for item in zigbee["configuration_links"]
+        if item.get("entity_id") == "light.kitchen_1"
+    )
+
+    require(
+        entity_link["locations"][0]["file"] == "scripts.yaml"
+        and entity_link["locations"][0]["lines"] == [914],
+        "Active YAML entity reference was not linked.",
+    )
+
+    require(
+        entity_link["causal_link_established"] is False,
+        "Entity-reference link incorrectly claims causality.",
     )
 
     template = by_family(
@@ -329,10 +428,20 @@ def main():
         "Unclassified issue gap was not preserved.",
     )
 
+    template_link = next(
+        item
+        for item in template["configuration_links"]
+        if item.get("entity_id") == "sensor.old_watch_battery"
+    )
+
     require(
-        template["configuration_links"][0]["entity_id"]
-        == "sensor.old_watch_battery",
-        "System Log evidence was not linked to matching quality evidence.",
+        len(template_link["locations"]) == 2,
+        "Full active-YAML source index was not used for template evidence.",
+    )
+
+    require(
+        template_link["missing_entity_reference"] is True,
+        "Missing-reference context was not preserved on the source link.",
     )
 
     powered_off = by_family(
@@ -352,6 +461,11 @@ def main():
         ["locations"][0]["lines"]
         == [578],
         "Configuration source location was not preserved.",
+    )
+
+    require(
+        report["summary"]["issues_with_configuration_links"] == 2,
+        "Configuration-link summary count is wrong.",
     )
 
     require(
