@@ -208,6 +208,42 @@ def safe_load_yaml(path):
         return None
 
 
+def top_level_mapping_key_lines(path):
+    try:
+        with open(
+            path,
+            "r",
+            encoding="utf-8",
+        ) as handle:
+            root = yaml.compose(
+                handle,
+                Loader=HALoader,
+            )
+
+        if not isinstance(
+            root,
+            yaml.MappingNode,
+        ):
+            return {}
+
+        lines = {}
+
+        for key_node, _value_node in root.value:
+            key = str(
+                key_node.value
+            )
+
+            lines[key] = (
+                key_node.start_mark.line
+                + 1
+            )
+
+        return lines
+
+    except Exception:
+        return {}
+
+
 def discover_all_yaml_files():
     results = set()
 
@@ -697,6 +733,8 @@ script_file = os.path.join(
 
 scripts = {}
 
+script_key_lines = {}
+
 
 if script_file in active_files:
 
@@ -710,10 +748,18 @@ if script_file in active_files:
     ):
         scripts = loaded
 
+        script_key_lines = (
+            top_level_mapping_key_lines(
+                script_file
+            )
+        )
+
 
 script_aliases = defaultdict(
     list
 )
+
+script_records = []
 
 large_scripts = []
 
@@ -729,6 +775,40 @@ for script_key, script in (
 
     alias = script.get(
         "alias"
+    )
+
+    source_line = (
+        script_key_lines.get(
+            str(
+                script_key
+            )
+        )
+    )
+
+    script_records.append(
+        {
+            "key": str(
+                script_key
+            ),
+            "entity_id": (
+                f"script.{script_key}"
+            ),
+            "alias": (
+                str(
+                    alias
+                ).strip()
+                if alias is not None
+                else None
+            ),
+            "source": (
+                relative(
+                    script_file
+                )
+                if script_file in active_files
+                else None
+            ),
+            "line": source_line,
+        }
     )
 
     if alias:
@@ -755,6 +835,14 @@ for script_key, script in (
             {
                 "key": script_key,
                 "alias": alias,
+                "source": (
+                    relative(
+                        script_file
+                    )
+                    if script_file in active_files
+                    else None
+                ),
+                "source_line": source_line,
                 "lines": line_count,
             }
         )
@@ -1065,6 +1153,18 @@ for alias, indexes in (
         ] = detail
 
 
+automation_source_index = [
+    automation_record_with_state(
+        automation_records_by_index[
+            index
+        ]
+    )
+    for index in sorted(
+        automation_records_by_index
+    )
+]
+
+
 allowed_entity_domains = (
     COMMON_ENTITY_DOMAINS
     | live_entity_domains
@@ -1185,6 +1285,34 @@ for path in sorted(
 
 
 # ------------------------------------------------------------
+# Active entity-reference source index
+# ------------------------------------------------------------
+
+entity_reference_source_index = {}
+
+
+for entity_id, locations in sorted(
+    entity_reference_locations.items()
+):
+
+    entity_reference_source_index[
+        entity_id
+    ] = [
+        {
+            "file": file_path,
+            "lines": sorted(
+                locations[
+                    file_path
+                ]
+            ),
+        }
+        for file_path in sorted(
+            locations
+        )
+    ]
+
+
+# ------------------------------------------------------------
 # Missing entity candidates
 # ------------------------------------------------------------
 
@@ -1193,8 +1321,8 @@ missing_entity_references = []
 
 if existing_entities:
 
-    for entity_id, locations in (
-        entity_reference_locations.items()
+    for entity_id in (
+        entity_reference_source_index
     ):
 
         if (
@@ -1204,31 +1332,15 @@ if existing_entities:
             continue
 
 
-        formatted_locations = []
-
-
-        for file_path in sorted(
-            locations
-        ):
-            formatted_locations.append(
-                {
-                    "file": file_path,
-                    "lines": sorted(
-                        locations[
-                            file_path
-                        ]
-                    ),
-                }
-            )
-
-
         missing_entity_references.append(
             {
                 "entity_id":
                     entity_id,
 
                 "locations":
-                    formatted_locations,
+                    entity_reference_source_index[
+                        entity_id
+                    ],
             }
         )
 
@@ -1407,6 +1519,9 @@ quality = {
         "unresolved_duplicate_aliases":
             unresolved_duplicate_automation_aliases,
 
+        "source_index":
+            automation_source_index,
+
         "duplicate_alias_note":
             (
                 "Duplicate aliases are a maintainability "
@@ -1440,6 +1555,15 @@ quality = {
         "duplicate_aliases":
             duplicate_script_aliases,
 
+        "source_index":
+            sorted(
+                script_records,
+                key=lambda item:
+                    item[
+                        "key"
+                    ],
+            ),
+
         "large":
             sorted(
                 large_scripts,
@@ -1465,11 +1589,18 @@ quality = {
         "missing_candidates":
             missing_entity_references,
 
+        "locations_by_entity":
+            entity_reference_source_index,
+
         "note":
             (
                 "Candidates are for review. "
                 "A missing reference is not "
-                "automatically a fault."
+                "automatically a fault. "
+                "locations_by_entity records active YAML "
+                "references for evidence linking only; a "
+                "matching reference does not prove that "
+                "the YAML location caused a System Log issue."
             ),
     },
 
