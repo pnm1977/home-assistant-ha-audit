@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 
 VERSION = os.environ.get("HA_AUDIT_VERSION", "unknown")
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 AUDIT_FILE = "/config/audit_snapshot.json"
 QUALITY_FILE = "/config/quality_audit.json"
@@ -15,6 +15,9 @@ LOG_CORRELATION_FILE = "/config/log_correlation.json"
 OUTPUT_FILE = "/config/ha_audit_ai_evidence.json"
 
 MAX_REPRESENTATIVE_MESSAGES = 3
+MAX_CONFIGURATION_LINKS = 24
+MAX_LOCATIONS_PER_LINK = 8
+MAX_LINES_PER_LOCATION = 12
 PRIORITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "VERY LOW": 3}
 
 ENTITY_LIST_RE = re.compile(r"entity_id=\[([^\]]+)\]", re.IGNORECASE)
@@ -153,6 +156,120 @@ def missing_reference_index(quality):
     return result
 
 
+def compact_locations(locations):
+    result = []
+    source_locations = as_list(locations)
+
+    for item in source_locations[:MAX_LOCATIONS_PER_LINK]:
+        if not isinstance(item, dict):
+            continue
+        lines = as_list(item.get("lines"))
+        result.append(
+            {
+                "file": item.get("file"),
+                "lines": lines[:MAX_LINES_PER_LOCATION],
+                "lines_truncated": len(lines) > MAX_LINES_PER_LOCATION,
+            }
+        )
+
+    return result, len(source_locations) > MAX_LOCATIONS_PER_LINK
+
+
+def quality_source_indexes(quality):
+    quality = as_dict(quality)
+    references = as_dict(quality.get("entity_references"))
+    automations = as_dict(quality.get("automations"))
+    scripts = as_dict(quality.get("scripts"))
+
+    entity_locations = as_dict(references.get("locations_by_entity"))
+
+    if not entity_locations:
+        for entity_id, item in missing_reference_index(quality).items():
+            entity_locations[entity_id] = as_list(item.get("locations"))
+
+    automation_sources = {}
+    for item in as_list(automations.get("source_index")):
+        if not isinstance(item, dict):
+            continue
+        entity_id = item.get("entity_id")
+        if entity_id:
+            automation_sources[entity_id] = item
+
+    script_sources = {}
+    for item in as_list(scripts.get("source_index")):
+        if not isinstance(item, dict):
+            continue
+        entity_id = item.get("entity_id")
+        if entity_id:
+            script_sources[entity_id] = item
+
+    return entity_locations, automation_sources, script_sources
+
+
+def build_configuration_links(
+    entities,
+    automations,
+    scripts,
+    quality,
+):
+    entity_locations, automation_sources, script_sources = quality_source_indexes(
+        quality
+    )
+    missing_references = missing_reference_index(quality)
+    links = []
+
+    for entity_id in automations:
+        item = automation_sources.get(entity_id)
+        if not item:
+            continue
+        links.append(
+            {
+                "link_type": "AUTOMATION_SOURCE",
+                "entity_id": entity_id,
+                "alias": item.get("alias"),
+                "source": item.get("source"),
+                "line": item.get("line"),
+                "match_basis": "EXACT_AUTOMATION_ENTITY_ID",
+                "causal_link_established": False,
+            }
+        )
+
+    for entity_id in scripts:
+        item = script_sources.get(entity_id)
+        if not item:
+            continue
+        links.append(
+            {
+                "link_type": "SCRIPT_SOURCE",
+                "entity_id": entity_id,
+                "alias": item.get("alias"),
+                "source": item.get("source"),
+                "line": item.get("line"),
+                "match_basis": "EXACT_SCRIPT_ENTITY_ID",
+                "causal_link_established": False,
+            }
+        )
+
+    for entity_id in entities:
+        locations = entity_locations.get(entity_id)
+        if not locations:
+            continue
+        compacted, truncated = compact_locations(locations)
+        links.append(
+            {
+                "link_type": "ACTIVE_YAML_ENTITY_REFERENCE",
+                "entity_id": entity_id,
+                "locations": compacted,
+                "locations_truncated": truncated,
+                "missing_entity_reference": entity_id in missing_references,
+                "match_basis": "EXACT_ENTITY_ID",
+                "causal_link_established": False,
+            }
+        )
+
+    return links[:MAX_CONFIGURATION_LINKS], len(links) > MAX_CONFIGURATION_LINKS
+
+
 def build_system_context(audit):
     audit = as_dict(audit)
     system = as_dict(audit.get("system"))
@@ -259,7 +376,7 @@ def compact_repairs(correlation):
     }
 
 
-def build_issue(final_item, family, correlation, missing_references):
+def build_issue(final_item, family, correlation, quality):
     final_item = as_dict(final_item)
     family = as_dict(family)
     correlation = as_dict(correlation)
@@ -303,9 +420,12 @@ def build_issue(final_item, family, correlation, missing_references):
                 {"device_id": device_id, "name": None, "source": "system_log_message"}
             )
 
-    configuration_links = [
-        missing_references[item] for item in entities if item in missing_references
-    ]
+    configuration_links, configuration_links_truncated = build_configuration_links(
+        entities,
+        automations,
+        scripts,
+        quality,
+    )
 
     gaps = []
     if not representative_messages:
@@ -322,6 +442,12 @@ def build_issue(final_item, family, correlation, missing_references):
         and str(final_item.get("ownership", "")).upper() == "DEVICE / LOCAL NETWORK"
     ):
         gaps.append("POWER_EXPECTATION_UNKNOWN")
+    if (
+        str(final_item.get("ownership", "")).upper() == "USER / LOCAL CONFIGURATION"
+        and (entities or automations or scripts)
+        and not configuration_links
+    ):
+        gaps.append("CONFIGURATION_SOURCE_NOT_LINKED")
 
     recurrence = as_dict(final_item.get("recurrence"))
 
@@ -357,6 +483,7 @@ def build_issue(final_item, family, correlation, missing_references):
         "availability_context": availability,
         "repairs_context": compact_repairs(correlation),
         "configuration_links": configuration_links,
+        "configuration_links_truncated": configuration_links_truncated,
         "evidence_gaps": gaps,
     }
 
@@ -383,7 +510,6 @@ def build_ai_evidence(
     generated_at = generated_at or utc_now()
     family_by_id = family_index(log_families)
     correlation_by_id = family_index(log_correlation)
-    missing_references = missing_reference_index(quality)
     issues = []
 
     for item in as_list(as_dict(log_priority_final).get("families")):
@@ -395,7 +521,7 @@ def build_ai_evidence(
                 item,
                 family_by_id.get(family_id, {}),
                 correlation_by_id.get(family_id, {}),
-                missing_references,
+                quality,
             )
         )
 
@@ -415,6 +541,11 @@ def build_ai_evidence(
             "Treat priority as HA Audit's evidence-based ordering, not as severity or proof of a fault.",
             "Do not treat raw occurrence count as recurrence. Use the recurrence field.",
             "LOW or VERY LOW issues can still contain useful, user-fixable configuration evidence.",
+            (
+                "Configuration links identify exact Home Assistant objects or active YAML "
+                "references. They show where to investigate; they do not by themselves "
+                "prove that the linked configuration caused the issue."
+            ),
             (
                 "If power_expectation is UNKNOWN, do not assume an unavailable or "
                 "unreachable device should be powered. Recommend checking it only "
@@ -448,6 +579,9 @@ def build_ai_evidence(
             ),
             "issues_with_representative_messages": sum(
                 1 for item in issues if item["representative_messages"]
+            ),
+            "issues_with_configuration_links": sum(
+                1 for item in issues if item["configuration_links"]
             ),
             "device_local_issues_with_unknown_power_expectation": sum(
                 1
