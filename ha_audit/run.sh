@@ -132,6 +132,10 @@ run_quiet_python \
     "log_priority_final.py" \
     "System Log enriched priority"
 
+run_quiet_python \
+    "ai_evidence.py" \
+    "Structured AI evidence generation"
+
 
 if run_quiet_python \
     "summary_report.py" \
