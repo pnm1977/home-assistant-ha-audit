@@ -829,6 +829,81 @@ def test_specific_handoff_render():
         raise AssertionError("Specific guidance overrode explicit offline safeguard")
     print("Issue-specific handoff and recurrence transparency: PASS")
 
+
+
+def test_incomplete_core_guidance_is_not_a_blocker():
+    from upgrade_decision import build_core_update_decision
+    from readiness_guidance import STATE_INCOMPLETE, STATE_CLEAR, STATE_BLOCKER
+
+    base = dict(
+        core_guidance_status=STATE_INCOMPLETE,
+        config_result="VALID",
+        core_assessment_complete=False,
+        compatibility_rule_count=9,
+        compatibility_local_no_affected_count=4,
+        relevant_unignored_repairs=0,
+        compatibility_review_required_count=0,
+        compatibility_manual_review_count=0,
+    )
+
+    # Partial coverage with no flagged rule is neither a known blocker
+    # nor a safe-to-update recommendation.
+    decision = build_core_update_decision(**base)
+    assert decision["recommendation"] == "ASSESSMENT INCOMPLETE"
+    before = " ".join(decision["before_update"])
+    assert "checked compatibility rules" in before
+    assert "no specific update-related issue" in before
+    assert "cannot recommend proceeding" in before
+    assert "incomplete assessment does not itself mean" in " ".join(
+        decision["conditional_checks"]
+    ).lower()
+    assert "not by itself a detected blocker" in " ".join(
+        decision["why"]
+    )
+
+    # Genuine flags must not be presented as an ordinary coverage gap.
+    flagged = build_core_update_decision(
+        **(base | {
+            "relevant_unignored_repairs": 2,
+            "compatibility_review_required_count": 1,
+        })
+    )
+    flagged_before = " ".join(flagged["before_update"])
+    assert "no specific update-related issue" not in flagged_before
+    assert "2 unignored Repair" in flagged_before
+    assert "flagged compatibility rules" in flagged_before
+
+    # Invalid configuration is never described as a clean check.
+    invalid = build_core_update_decision(
+        **(base | {"config_result": "INVALID"})
+    )
+    assert "Check the Home Assistant configuration" in " ".join(
+        invalid["before_update"]
+    )
+
+    # Unknown/incomplete evidence without any checked rule is not clear.
+    unchecked = build_core_update_decision(
+        **(base | {"compatibility_rule_count": 0})
+    )
+    assert "no specific update-related issue" not in " ".join(
+        unchecked["before_update"]
+    )
+
+    # Previously established states remain untouched.
+    proceed = build_core_update_decision(
+        **(base | {
+            "core_guidance_status": STATE_CLEAR,
+            "core_assessment_complete": True,
+        })
+    )
+    assert proceed["recommendation"] == "PROCEED"
+    blocked = build_core_update_decision(
+        **(base | {"core_guidance_status": STATE_BLOCKER})
+    )
+    assert blocked["recommendation"] == "DELAY - BLOCKER EVIDENCE FOUND"
+    print("Incomplete Core readiness interpretation: PASS")
+
 if __name__ == "__main__":
     main()
     test_specific_handoff_render()
+    test_incomplete_core_guidance_is_not_a_blocker()
