@@ -376,6 +376,125 @@ def compact_repairs(correlation):
     }
 
 
+def build_reader_summary(issue):
+    """Plain-English facts for an AI to explain, not a diagnosis or repair plan."""
+    title = " ".join(str(issue.get("title") or "System Log issue").split())
+    recurrence = as_dict(issue.get("recurrence"))
+    recurrence_class = str(recurrence.get("class") or "").upper()
+
+    if recurrence_class == "RECURRING 24H+":
+        timing = "New activity was recorded across at least 24 hours."
+    elif recurrence_class == "SHORT-WINDOW REPEAT":
+        timing = "Entries repeated in a short window; recurrence across 24 hours was not established."
+    else:
+        timing = "Recurrence across 24 hours was not established by this evidence."
+
+    referenced = unique_strings(
+        as_list(issue.get("affected_entities"))
+        + [
+            item.get("entity_id")
+            for item in as_list(as_dict(issue.get("availability_context")).get("matches"))
+            if isinstance(item, dict)
+        ]
+        + as_list(issue.get("affected_automations"))
+        + as_list(issue.get("affected_scripts"))
+        + [
+            item.get("name") or ("an unnamed device" if item.get("device_id") else None)
+            for item in as_list(issue.get("affected_devices"))
+            if isinstance(item, dict)
+        ]
+    )
+    if referenced:
+        shown = ", ".join(referenced[:3])
+        remainder = len(referenced) - 3
+        if remainder > 0:
+            shown += f" (and {remainder} more)"
+        scope = f"Evidence names: {shown}."
+    else:
+        scope = "No exact affected Home Assistant entity, device, automation or script was identified."
+
+    linked = len(as_list(issue.get("configuration_links")))
+    if linked:
+        sources = (
+            f"{linked} matching configuration {'location' if linked == 1 else 'locations'} "
+            "can help locate relevant YAML, but are not proven causes."
+        )
+    else:
+        sources = "No matching active-YAML source was identified for this issue."
+
+    expectation = str(
+        as_dict(issue.get("availability_context")).get("power_expectation") or "UNKNOWN"
+    ).upper()
+    if expectation == "EXPECTED_OFFLINE":
+        uncertainty = (
+            "An affected device is explicitly labelled expected offline. "
+            "Do not assume it should currently be powered."
+        )
+    elif expectation == "MAINTENANCE":
+        uncertainty = (
+            "An affected device has a maintenance label. "
+            "Do not assume current unavailability is unexpected."
+        )
+    elif str(issue.get("ownership") or "").upper() == "DEVICE / LOCAL NETWORK":
+        uncertainty = (
+            "The report does not establish whether an unavailable device was expected "
+            "online or whether the problem is still happening."
+        )
+    else:
+        uncertainty = (
+            "The report does not establish current user-visible impact "
+            "or whether the problem is still happening."
+        )
+
+    if str(issue.get("direct_failure_evidence") or "").upper() == "OBSERVED":
+        observed = f"Home Assistant logged a failure grouped as '{title}'."
+    else:
+        observed = (
+            f"Home Assistant logged entries grouped as '{title}'; "
+            "a direct failure was not established."
+        )
+
+    return {
+        "observed": observed,
+        "recurrence": timing,
+        "referenced_objects": scope,
+        "configuration_context": sources,
+        "uncertainty": uncertainty,
+    }
+
+
+def build_assistant_briefing():
+    """Vendor-neutral instructions: convert evidence to useful, bounded advice."""
+    return {
+        "audience": "Home Assistant users; explain technical terms when needed.",
+        "goal": (
+            "Give a short, helpful explanation and a sensible next check. "
+            "Make clear what the audit observed, what is inferred, and what is unknown."
+        ),
+        "response_sequence": [
+            "State Core update guidance separately from general Home Assistant health.",
+            "Lead with the few findings most likely to need attention now; do not dump all issue families.",
+            "For each selected finding: say what was observed, whether impact is confirmed, and one non-destructive check.",
+            "Explain why that check follows from this report, using relevant entity or YAML links when present.",
+            "Say what the audit could not verify; ask for a specific report or user observation only when necessary.",
+            "Put paths, line numbers and raw logs in technical detail, not the opening user summary.",
+        ],
+        "safety_and_accuracy": [
+            "Do not infer a root cause solely from a configuration link or occurrence count.",
+            "Use recurrence.class rather than log count to describe persistence.",
+            "If power_expectation is UNKNOWN, ask whether the device was meant to be online before advising a power or network check.",
+            "Do not advise deleting or disabling entities, devices, automations or YAML on weak evidence.",
+            "Do not turn informational availability or history counts into required work.",
+            "Never describe Core updates as guaranteed safe, including when checks are clear.",
+        ],
+        "detail_levels": {
+            "user": "Plain English: short findings and the next useful check; no raw JSON unless asked.",
+            "technical": "Use exact entity IDs, configuration_links, source locations, log evidence and evidence gaps.",
+            "machine": "Preserve raw fields and classifications for automated comparison; do not replace them with prose.",
+        },
+    }
+
+
 def build_issue(final_item, family, correlation, quality):
     final_item = as_dict(final_item)
     family = as_dict(family)
@@ -451,7 +570,7 @@ def build_issue(final_item, family, correlation, quality):
 
     recurrence = as_dict(final_item.get("recurrence"))
 
-    return {
+    issue = {
         "stable_issue_id": final_item.get("stable_fingerprint"),
         "family_id": final_item.get("family_id"),
         "title": final_item.get("title") or family.get("title"),
@@ -486,6 +605,8 @@ def build_issue(final_item, family, correlation, quality):
         "configuration_links_truncated": configuration_links_truncated,
         "evidence_gaps": gaps,
     }
+    issue["reader_summary"] = build_reader_summary(issue)
+    return issue
 
 
 def issue_sort_key(item):
@@ -537,6 +658,7 @@ def build_ai_evidence(
             "investigation. HA Audit supplies facts and bounded classifications; "
             "the receiving AI decides what advice, if any, is appropriate."
         ),
+        "assistant_briefing": build_assistant_briefing(),
         "interpretation_rules": [
             "Treat priority as HA Audit's evidence-based ordering, not as severity or proof of a fault.",
             "Do not treat raw occurrence count as recurrence. Use the recurrence field.",
