@@ -1,4 +1,3 @@
-````markdown
 # HA Audit User Guide
 
 HA Audit is a read-only Home Assistant health, configuration, and upgrade-readiness auditing app.
@@ -863,4 +862,3 @@ Focus on actual problems, relevant upgrade risks, and changes in system behaviou
 There is no need to eliminate every warning, unavailable entity, or informational count.
 
 **Understand first. Change only when necessary.**
-````
