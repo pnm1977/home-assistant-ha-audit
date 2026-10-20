@@ -474,6 +474,46 @@ def main():
         "Evidence layer emitted an action recommendation.",
     )
 
+    # v0.8.2: receiving AIs should get facts in ordinary language,
+    # without invented root causes, generic clean-up, or power assumptions.
+    briefing = report["assistant_briefing"]
+    require(
+        briefing["detail_levels"]["user"].startswith("Plain English"),
+        "User-facing guidance is missing.",
+    )
+    require(
+        len(briefing["response_sequence"]) >= 4,
+        "The receiving AI lacks a concrete response plan.",
+    )
+    require(
+        "at least 24 hours" in zigbee["reader_summary"]["recurrence"],
+        "Durable recurrence was not explained plainly.",
+    )
+    require(
+        "not proven causes" in zigbee["reader_summary"]["configuration_context"],
+        "YAML links were mistaken for proven causes.",
+    )
+    require(
+        "switch.spare_room_plug" in powered_off["reader_summary"]["referenced_objects"],
+        "Availability target was lost from reader summary.",
+    )
+    require(
+        "expected offline" in powered_off["reader_summary"]["uncertainty"],
+        "Expected-offline safeguard was not explained.",
+    )
+    require(
+        "(and -" not in template["reader_summary"]["referenced_objects"],
+        "Reader summary contains a negative number of additional objects.",
+    )
+    require(
+        "not established" in template["reader_summary"]["observed"],
+        "An unclassified template warning was incorrectly called a proven failure.",
+    )
+    require(
+        "Recurrence across 24 hours was not established" in template["reader_summary"]["recurrence"],
+        "Unproven recurrence was promoted based on raw count.",
+    )
+
     require(
         report["privacy"]
         ["external_transmission_performed"]
