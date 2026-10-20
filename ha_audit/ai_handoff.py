@@ -831,6 +831,9 @@ def first_non_destructive_check(issue):
             "Check only if the device should now be available; its offline or "
             "maintenance label may explain the entry."
         )
+    specific = str(as_dict(item.get("reader_summary")).get("first_check") or "").strip()
+    if specific:
+        return specific
     if owner == "DEVICE / LOCAL NETWORK":
         return (
             "Check whether the device or integration is meant to be online; "
@@ -872,6 +875,15 @@ def render_structured_context(lines, issue):
     linked = first_source_links(issue)
     if linked:
         lines.append("  - **Where to look (not proven causes):** " + "; ".join(linked) + ".")
+    context = as_dict(as_dict(issue).get("recurrence_context"))
+    if context.get("historical_verification_needed"):
+        span = context.get("reported_log_timestamp_span_hours")
+        stamp = f"{span:g} hours" if isinstance(span, (int, float)) else "an unknown interval"
+        lines.append(
+            "  - **Timing caution:** Reported log timestamps cover " + stamp +
+            "; the 24h+ label depends on prior audit history, which is not reproduced "
+            "here. Verify `log_recurrence.json` if investigating persistence."
+        )
     if uncertainty:
         lines.append(f"  - **Still unknown:** {uncertainty}")
 
@@ -951,6 +963,12 @@ def render_system_issues(
         "- **Short-window repeats:** "
         f"{short_count}. These do not count as "
         "durable recurrence."
+    )
+    lines.append(
+        "- **Meaning of 24h+:** HA Audit uses independently observed new activity "
+        "across audit runs, not necessarily 24 hours between the first and last "
+        "messages listed in this report. Historical proof is in "
+        "`log_recurrence.json` and `log_issue_history.json`."
     )
 
     families = [
@@ -1210,8 +1228,9 @@ def build_ai_handoff(
         "on unavailable states, missing history, or stale references."
     )
     lines.append(
-        "- Use HA Audit's priorities and recurrence classifications; "
-        "high log counts alone do not prove a persistent problem."
+        "- Use HA Audit's priorities, but distinguish cross-run recurrence history "
+        "from timestamp spans in the current log sample. Ask for "
+        "`log_recurrence.json` if 24h+ recurrence needs verifying."
     )
     lines.append(
         "- Keep general Home Assistant health separate from Core update "
