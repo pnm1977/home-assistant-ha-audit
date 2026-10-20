@@ -8,6 +8,7 @@ on:
       - "ha_audit/ai_evidence.py"
       - "ha_audit/test_ai_evidence.py"
       - "ha_audit/ai_handoff.py"
+      - "ha_audit/upgrade_decision.py"
       - "ha_audit/test_ai_handoff.py"
       - ".github/workflows/ai-evidence-test.yml"
 
@@ -16,6 +17,7 @@ on:
       - "ha_audit/ai_evidence.py"
       - "ha_audit/test_ai_evidence.py"
       - "ha_audit/ai_handoff.py"
+      - "ha_audit/upgrade_decision.py"
       - "ha_audit/test_ai_handoff.py"
       - ".github/workflows/ai-evidence-test.yml"
 
