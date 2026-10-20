@@ -1,112 +1,265 @@
 # HA Audit
 
-HA Audit is a read-only Home Assistant health, configuration, and upgrade-readiness auditing app.
+**Understand your Home Assistant system. Identify problems. Make better maintenance and upgrade decisions.**
 
-It is designed to help you understand, maintain, troubleshoot, and improve a Home Assistant installation using evidence from the actual system.
+HA Audit is a free, read-only health, configuration, and upgrade-readiness auditing app for Home Assistant.
 
-## What it currently checks
+It examines your actual Home Assistant installation and provides clear, evidence-based findings to help you maintain, troubleshoot, and improve your system.
 
-- Home Assistant Core, Supervisor, and OS versions
-- Home Assistant health and configuration status
-- entity and device inventory
-- unavailable and unknown entities
-- available Core, OS, and other updates
-- Home Assistant Repairs context
-- Core upgrade-readiness evidence
-- official Home Assistant release and breaking-change evidence
-- local upgrade compatibility and impact
-- Home Assistant configuration validation
-- YAML configuration inventory and active include tree
-- missing include targets and missing entity references
-- duplicate automation IDs
-- duplicate automation aliases with live-state context
-- duplicate script aliases
-- large automations and scripts
-- entities no longer currently provided by integrations
-- active-YAML references to not-currently-provided entities
-- Recorder history available to the audit
-- availability context for ordinary unavailable entities
-- Recorder-history context for ordinary unavailable entities
-- Home Assistant System Log issue grouping and prioritisation
-- System Log persistence and recurrence across audit runs
-- System Log correlation with availability, Recorder, and Repairs context
+HA Audit is designed for everyday Home Assistant users, while also providing detailed technical evidence for more advanced investigations.
 
-## Current-run summary
+**No automatic changes. No automatic repairs. No automatic AI data sharing.**
 
-Each audit writes:
+---
 
-```text
-ha_audit_latest.txt
-```
+## What can HA Audit do?
 
-This contains the latest detailed user-facing audit summary, including the health overview, Core update guidance, important evidence, and suggested next actions.
+### System health
+- Check Home Assistant Core, Supervisor, and OS information.
+- Identify unavailable and unknown entities.
+- Distinguish whole-device unavailability from individual unavailable features.
+- Compare findings with previous audits.
+- Use available Recorder history to provide additional context.
 
-The Home Assistant app log also shows a shorter plain-English `USER SUMMARY` containing:
+### Configuration health
+- Validate Home Assistant configuration.
+- Examine active YAML files and their include relationships.
+- Identify missing include files and possible missing entity references.
+- Detect duplicate automation IDs, automation names, and script names.
+- Identify configuration that may no longer be actively used.
 
-```text
-STATUS
-SYSTEM ISSUES
-CORE UPDATE - WHAT TO DO
-```
+### System Log analysis
+- Group related warnings and errors into meaningful issue families.
+- Prioritise findings as HIGH, MEDIUM, LOW, or VERY LOW.
+- Distinguish isolated errors from recurring problems.
+- Track independently observed activity across audit runs.
+- Identify relevant automations, scripts, entities, and YAML locations where possible.
 
-General Home Assistant health and Core update guidance are kept separate so ordinary health findings do not automatically become Core update blockers.
+### Core update readiness
+- Identify available Home Assistant Core updates.
+- Retrieve relevant official Home Assistant release information.
+- Examine documented breaking changes.
+- Compare update requirements with the local installation.
+- Identify potential compatibility concerns.
+- Explain what was checked, what remains uncertain, and whether anything needs reviewing before updating.
 
-## System issues
+### AI-assisted investigation
+- Generate a structured handoff for ChatGPT, Claude, Gemini, and other AI assistants.
+- Explain findings in plain English.
+- Include supporting evidence and relevant configuration references.
+- Help AI assistants suggest sensible next checks without guessing at causes.
 
-HA Audit groups related Home Assistant System Log entries into issue families and gives them an evidence-based priority.
+---
 
-The concise user summary shows the highest-priority current findings first.
+## Installation
 
-Priority is not the same as log severity, and a high raw occurrence count does not by itself prove recurrence or make an issue more important.
+1. Open **Home Assistant → Settings → Apps**.
+2. Open the **App Store**.
+3. Open the menu and select **Repositories**.
+4. Add the repository:
 
-HA Audit distinguishes short-window repeats from recurrence proven across at least 24 hours.
+   `https://github.com/pnm1977/home-assistant-ha-audit`
 
-Detailed System Log evidence remains available in the generated JSON reports.
+5. Find **HA Audit** in the App Store.
+6. Install the app.
 
-## AI / LLM handoff
+HA Audit currently runs manually rather than continuously.
 
-Each audit also produces:
+---
 
-```text
-ha_audit_ai_handoff.md
-```
+## Running your first audit
 
-This is a concise, vendor-neutral handoff designed for use with ChatGPT, Claude, Gemini, local LLMs, or other AI assistants.
+1. Open **Settings → Apps → HA Audit**.
+2. Select **Start**.
+3. Allow the audit to complete.
+4. Open the **Log** tab.
+5. Find the latest **USER SUMMARY**.
 
-It contains selected evidence from the current audit together with instructions for the receiving AI to distinguish reported facts from inference, preserve uncertainty, avoid unsafe cleanup assumptions, and avoid presenting update safety as guaranteed.
+The app stops automatically when the audit finishes.
 
-The handoff also includes HA Audit's highest-priority current System issues and tells the receiving AI not to re-rank them solely from raw occurrence count.
+The recommended workflow is:
 
-HA Audit does not automatically send the handoff to any AI service.
+**Run → Read → Investigate → Act → Rerun**
 
-The file remains local until you choose to copy or upload it elsewhere.
+HA Audit identifies findings and provides evidence. You remain responsible for deciding whether any changes are appropriate.
 
-The handoff may contain Home Assistant device names, entity IDs, and other installation-specific information, so review it before sharing it with a third-party service.
+---
 
-## Availability and history
+## Understanding the results
 
-Unavailable does not automatically mean faulty.
+The USER SUMMARY is designed to be the starting point for most users.
 
-HA Audit distinguishes partial device availability, whole-device unavailability, and ungrouped unavailable entities. Optional Home Assistant labels may add expected-offline or maintenance context, but labels are not required.
+It contains three main sections:
 
-Recorder history is observational context only. Recent, old, or absent history does not by itself prove that an entity is faulty, stale, or safe to remove.
+### STATUS
 
-## Core upgrade readiness
+A quick overview of:
+- General Home Assistant health.
+- Core update guidance.
+- OS update availability.
+- Configuration validation.
 
-HA Audit combines official Home Assistant release evidence with evidence from the local installation.
+### SYSTEM ISSUES
 
-Its Core update guidance is deliberately conservative.
+Shows the most important current System Log findings.
 
-A result such as:
+HA Audit prioritises issues using evidence rather than simply counting errors.
 
-```text
-Core update: NO KNOWN BLOCKERS FOUND
-```
+For example, hundreds of repeated warnings do not necessarily represent hundreds of separate problems.
 
-means no known blockers were found in the evidence HA Audit inspected. It is not a guarantee that an update cannot cause a problem.
+An issue classified as `RECURRING 24H+` has evidence of independently observed new activity across at least 24 hours.
 
-## Safety
+This does not mean the issue was continuously failing throughout that period or is necessarily failing now.
 
-HA Audit does not make changes to Home Assistant.
+### CORE UPDATE - WHAT TO DO
 
-Configuration access is read-only and audit data remains local to the Home Assistant installation unless you choose to share a generated report or AI / LLM handoff.
+Explains the evidence relevant to an available Core update.
+
+Possible outcomes include:
+
+| Result | Meaning |
+|---|---|
+| NO CORE UPDATE PENDING | No Core update currently needs assessment. |
+| NO KNOWN BLOCKERS FOUND | No known blocker was identified in the evidence inspected. |
+| REVIEW BEFORE UPDATING | Specific findings deserve review before proceeding. |
+| ASSESSMENT INCOMPLETE | Some required evidence or compatibility coverage remains incomplete. |
+| KNOWN BLOCKER FOUND | Evidence indicates a reason to delay the update. |
+
+**ASSESSMENT INCOMPLETE does not automatically mean a problem was found.**
+
+HA Audit distinguishes between actual concerns and limitations in the evidence it was able to assess.
+
+Likewise, **NO KNOWN BLOCKERS FOUND does not guarantee that an update is safe**.
+
+---
+
+## Understanding unavailable entities
+
+An unavailable entity is not automatically faulty.
+
+For example:
+- A device may be deliberately switched off.
+- A device may be undergoing maintenance.
+- Only one feature of an otherwise working device may be unavailable.
+- An integration may temporarily lose connectivity.
+- An entity may no longer be provided by its integration.
+
+HA Audit considers device availability, configuration references, and available Recorder history before presenting findings for review.
+
+**HA Audit never recommends deleting entities solely because they are unavailable or have no recorded history.**
+
+---
+
+## Using HA Audit with AI
+
+Each successful audit generates:
+
+`ha_audit_ai_handoff.md`
+
+This file is designed to be uploaded to an AI assistant for further investigation.
+
+It includes:
+- Current health and Core update guidance.
+- Important System Log findings.
+- Plain-English explanations.
+- Relevant configuration references.
+- Suggested first checks.
+- Known evidence gaps and uncertainties.
+
+A companion file is also generated:
+
+`ha_audit_ai_evidence.json`
+
+This contains structured evidence for more detailed AI analysis.
+
+### How to use it
+
+1. Run HA Audit.
+2. Locate `ha_audit_ai_handoff.md`.
+3. Upload it to your preferred AI assistant.
+4. Ask the assistant to review your Home Assistant health.
+
+The handoff already includes instructions explaining how the AI should interpret the evidence.
+
+You do not need to write a complicated prompt.
+
+**HA Audit does not automatically transmit your reports to an AI provider.**
+
+Review files before sharing them because they may contain installation-specific device names, entity IDs, and configuration information.
+
+---
+
+## Detailed reports
+
+Every successful audit generates:
+
+`ha_audit_latest.txt`
+
+This contains the latest detailed human-readable audit summary.
+
+Additional JSON reports provide the underlying technical evidence.
+
+For example:
+- `quality_audit.json` — configuration findings.
+- `availability_audit.json` — unavailable device context.
+- `log_priority_final.json` — prioritised System Log findings.
+- `ha_audit_ai_evidence.json` — structured AI evidence.
+
+Reports are stored in HA Audit's private Home Assistant app configuration folder.
+
+If your file editor supports access to `/addon_configs`, open that location and find the folder ending in `_ha_audit`.
+
+See the **User Guide** for more information about interpreting results and accessing individual reports.
+
+---
+
+## Safety and privacy
+
+HA Audit is designed to be read-only.
+
+It does not:
+- Modify Home Assistant configuration.
+- Delete entities or devices.
+- Restart Home Assistant.
+- Automatically update Home Assistant.
+- Execute repairs.
+- Automatically upload reports to an AI service.
+
+Configuration scanning excludes sensitive locations and files such as `secrets.yaml`.
+
+Audit reports remain on your Home Assistant installation unless you choose to share them.
+
+### Important limitations
+
+HA Audit cannot guarantee that your installation is fault-free.
+
+It does not currently:
+- Inspect every UI-managed configuration setting.
+- Guarantee compatibility with every integration.
+- Verify that a successful backup or restore is available.
+- Provide a complete historical archive of Home Assistant logs.
+- Perform automated scheduled audits.
+- Provide the same depth of upgrade assessment for Home Assistant OS as for Core.
+
+These limitations are reported conservatively rather than treated as evidence that everything is working.
+
+---
+
+## Documentation
+
+For more information, see:
+
+- **User Guide** — running audits, interpreting results, and investigating findings.
+- **Changelog** — release history and improvements.
+
+---
+
+## Project status
+
+HA Audit is under active development.
+
+The aim is to provide reliable, understandable, evidence-based Home Assistant auditing without unnecessary complexity or automated changes.
+
+Future improvements will focus on genuine user needs, reliability, and maintaining compatibility with Home Assistant.
+
+**Understand first. Change only when necessary.**
