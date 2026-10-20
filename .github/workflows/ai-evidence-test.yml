@@ -7,12 +7,16 @@ on:
     paths:
       - "ha_audit/ai_evidence.py"
       - "ha_audit/test_ai_evidence.py"
+      - "ha_audit/ai_handoff.py"
+      - "ha_audit/test_ai_handoff.py"
       - ".github/workflows/ai-evidence-test.yml"
 
   pull_request:
     paths:
       - "ha_audit/ai_evidence.py"
       - "ha_audit/test_ai_evidence.py"
+      - "ha_audit/ai_handoff.py"
+      - "ha_audit/test_ai_handoff.py"
       - ".github/workflows/ai-evidence-test.yml"
 
 jobs:
@@ -30,3 +34,6 @@ jobs:
 
       - name: Run AI evidence contract test
         run: python3 ha_audit/test_ai_evidence.py
+
+      - name: Run readable AI handoff test
+        run: python3 ha_audit/test_ai_handoff.py
