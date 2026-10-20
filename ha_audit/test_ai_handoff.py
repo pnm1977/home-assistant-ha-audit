@@ -413,7 +413,97 @@ def forbid(
         )
 
 
+
+def check_structured_ai_evidence():
+    """Same-run structured data improves the handoff without creating new diagnoses."""
+    issue = {
+        "family_id": "zigbee_delivery",
+        "reader_summary": {
+            "observed": "Home Assistant logged a Zigbee delivery failure.",
+            "referenced_objects": "Evidence names: automation.hue_switch_bedroom.",
+            "uncertainty": "The current impact has not been established.",
+        },
+        "ownership": "DEVICE / LOCAL NETWORK",
+        "local_action_path": "LOCAL INVESTIGATION",
+        "availability_context": {"power_expectation": "UNKNOWN"},
+        "configuration_links": [
+            {
+                "link_type": "AUTOMATION_SOURCE",
+                "entity_id": "automation.hue_switch_bedroom",
+                "alias": "Hue Switch - Bedroom",
+                "source": "automations.yaml",
+                "line": 7222,
+                "causal_link_established": False,
+            },
+            {
+                "link_type": "SCRIPT_SOURCE",
+                "entity_id": "script.dim_to_off_kitchen",
+                "alias": "Dim to Off - Kitchen",
+                "source": "scripts.yaml",
+                "line": 732,
+                "causal_link_established": False,
+            },
+        ],
+    }
+    structured = {
+        "audit_version": "test",
+        "generated_at": "2026-10-06T20:00:02+00:00",
+        "system_issues": [issue],
+    }
+
+    def make_result(ai_evidence):
+        return build_ai_handoff(
+            summary_text=SUMMARY_TEXT,
+            update_readiness=UPDATE_READINESS,
+            compatibility=COMPATIBILITY,
+            availability=AVAILABILITY,
+            version="test",
+            log_priority_final=LOG_PRIORITY_FINAL,
+            ai_evidence=ai_evidence,
+            generated_at="2026-10-06T20:00:00+00:00",
+        )
+
+    output = make_result(structured)
+    require(output, "**Observed:** Home Assistant logged a Zigbee delivery failure.")
+    require(output, "**Useful first check:** Check whether the device or integration is meant")
+    require(output, "automations.yaml:7222")
+    require(output, "scripts.yaml:732")
+    require(output, "Where to look (not proven causes)")
+    require(output, "The current impact has not been established.")
+    forbid(output, "**Structured evidence note:** Matching same-run")
+
+    wrong_version = dict(structured, audit_version="different")
+    output = make_result(wrong_version)
+    require(output, "Matching same-run AI evidence was not available")
+    forbid(output, "automations.yaml:7222")
+
+    stale = dict(structured, generated_at="2026-10-01T20:00:00+00:00")
+    output = make_result(stale)
+    require(output, "Matching same-run AI evidence was not available")
+    forbid(output, "scripts.yaml:732")
+
+    # Unavailable structured evidence must never prevent a regular handoff.
+    nearby_previous = dict(structured, generated_at="2026-10-06T19:50:00+00:00")
+    output = make_result(nearby_previous)
+    require(output, "Matching same-run AI evidence was not available")
+    forbid(output, "automations.yaml:7222")
+
+    output = make_result({})
+    require(output, "## System issues")
+    require(output, "**HIGH — Zigbee / ZHA delivery failures**")
+    forbid(output, "automations.yaml:7222")
+
+    # Power labels are not permission to assume a device should be switched on.
+    issue_offline = dict(issue, availability_context={"power_expectation": "EXPECTED_OFFLINE"})
+    from ai_handoff import first_non_destructive_check
+    check = first_non_destructive_check(issue_offline)
+    if "Check only if" not in check:
+        raise AssertionError("Expected-offline safety language missing")
+    print("Same-run structured link and fallback tests: PASS")
+
+
 def main():
+    check_structured_ai_evidence()
     output = build_ai_handoff(
         summary_text=SUMMARY_TEXT,
         update_readiness=UPDATE_READINESS,
