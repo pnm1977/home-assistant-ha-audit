@@ -376,90 +376,262 @@ def compact_repairs(correlation):
     }
 
 
+def safe_log_names(messages, pattern, *, limit=3):
+    """Only repeat bounded, directly logged device names, never IP addresses."""
+    names = []
+    regex = re.compile(pattern, re.IGNORECASE)
+    for message in as_list(messages):
+        for match in regex.finditer(str(message or "")):
+            name = " ".join(match.group(1).split()).strip(" ,.:;")
+            if name and len(name) <= 72 and "<IP_ADDRESS>" not in name:
+                names.append(name)
+    return unique_strings(names)[:limit]
+
+
+def name_phrase(names):
+    if not names:
+        return ""
+    if len(names) == 1:
+        return names[0]
+    if len(names) == 2:
+        return f"{names[0]} and {names[1]}"
+    return f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def recurrence_context(issue):
+    """Distinguish snapshot log timestamps from persistent cross-audit history.
+
+    The upstream 24h label comes from log_recurrence_scan.py's history
+    first_audit_seen -> last_repeat_activity_at, not family first_seen/last_seen.
+    This handoff cannot independently confirm that history without its source.
+    """
+    recurrence = as_dict(issue.get("recurrence"))
+    classification = str(recurrence.get("class") or "NOT ESTABLISHED")
+    span = None
+    try:
+        first = datetime.fromisoformat(str(issue.get("first_seen") or "").replace("Z", "+00:00"))
+        last = datetime.fromisoformat(str(issue.get("last_seen") or "").replace("Z", "+00:00"))
+        if first.utcoffset() is not None and last.utcoffset() is not None:
+            difference = (last - first).total_seconds() / 3600.0
+            if difference >= 0:
+                span = round(difference, 2)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    reported_history_span = recurrence.get("observation_span_hours")
+    if classification == "RECURRING 24H+":
+        meaning = (
+            "24h+ was classified using independent activity across audit runs, "
+            "not necessarily the first and last logged messages in this snapshot. "
+            "Verify the historical observations in log_recurrence.json and "
+            "log_issue_history.json if the timing matters."
+        )
+    else:
+        meaning = "This run does not establish 24h+ recurrence."
+    needs_history = classification == "RECURRING 24H+" and (span is None or span < 24)
+    return {
+        "classification": classification,
+        "cross_audit_observation_span_hours": reported_history_span,
+        "reported_log_timestamp_span_hours": span,
+        "historical_verification_needed": needs_history,
+        "interpretation": meaning,
+    }
+
+
+def issue_specific_guidance(issue):
+    """Non-destructive, evidence-backed wording. Unknown patterns stay generic."""
+    family = str(issue.get("family_id") or "")
+    messages = as_list(issue.get("representative_messages"))
+    message_text = " ".join(str(m) for m in messages)
+    names = []
+    observed = ""
+    check = ""
+
+    if family == "lg_tv_off" and "Device is off and cannot be controlled" in message_text:
+        aliases = [link.get("alias") for link in as_list(issue.get("configuration_links"))
+                   if isinstance(link, dict) and link.get("link_type") == "AUTOMATION_SOURCE" and link.get("alias")]
+        automation = aliases[0] if aliases else "An automation"
+        observed = f"{automation} tried to change the LG TV input while the television was off."
+        check = (
+            "Check whether that input change should occur when the TV is off; "
+            "inspect the automation's trigger before considering a condition."
+        )
+    elif family == "shelly" and "Error fetching" in message_text:
+        names = safe_log_names(messages, r"Error fetching ([A-Za-z0-9 _-]{1,65}) data")
+        target = name_phrase(names) if names else "Shelly"
+        observed = f"Home Assistant failed to retrieve data from {target}."
+        check = (
+            f"If {target} is meant to be reporting, check its current readings "
+            "and whether new retrieval errors are appearing."
+        )
+    elif family == "sonos" and ("cannot reach" in message_text.lower() or "Subscription renewal failed" in message_text):
+        names = safe_log_names(messages, r"cannot reach ([^,\n]{1,65}), marking unavailable")
+        names += safe_log_names(messages, r"Subscription renewal failed for ([^:]{1,65}):")
+        names = unique_strings(names)[:3]
+        target = name_phrase(names) if names else "a Sonos speaker"
+        if "cannot reach" in message_text.lower() and "Subscription renewal failed" in message_text:
+            observed = f"Home Assistant could not reach {target}, and Sonos connection renewal failed."
+        elif "cannot reach" in message_text.lower():
+            observed = f"Home Assistant could not reach {target} and marked the speaker unavailable."
+        else:
+            observed = f"Home Assistant could not renew its Sonos connection to {target}."
+        check = (
+            f"Confirm whether {target} should have been online at the time; "
+            "if so, check its present availability in Home Assistant."
+        )
+    elif family == "apple_tv" and "Connection lost to Apple TV" in message_text:
+        names = safe_log_names(messages, r'Connection lost to Apple TV "([^"\n]{1,72})"')
+        target = name_phrase(names) if names else "an Apple TV"
+        observed = f"Home Assistant reported losing its connection to {target}."
+        subject = "those devices are" if len(names) > 1 else "that device is"
+        check = (
+            f"If {target} should be reachable, check whether {subject} currently "
+            "available in Home Assistant and whether connection-loss entries are still appearing."
+        )
+    elif family == "hue_sync" and "Timeout fetching Philips Hue Play HDMI Sync Box" in message_text:
+        names = safe_log_names(messages, r"Timeout fetching Philips Hue Play HDMI Sync Box \(([^()]{1,72}?) at <IP_ADDRESS>\)")
+        target = name_phrase(names) if names else "a Hue Sync Box"
+        observed = f"Home Assistant timed out fetching status from {target}."
+        check = (
+            f"If {target} should be available, check current status in Home Assistant "
+            "and whether new timeouts occur."
+        )
+    elif family == "esphome" and "ESPHome API for" in message_text:
+        names = safe_log_names(messages, r"ESPHome API for ([a-z0-9_-]{1,72}) @")
+        target = name_phrase(names) if names else "an ESPHome device"
+        observed = f"Home Assistant could not establish an ESPHome API connection to {target}."
+        check = (
+            f"If {target} should be connected, check current Home Assistant "
+            "availability before investigating the network."
+        )
+    elif family == "zigbee_delivery" and ("Failed to deliver packet" in message_text or "Failed to send request" in message_text):
+        statuses = []
+        if "NWK_ROUTE_DISCOVERY_FAILED" in message_text:
+            statuses.append("route discovery")
+        if "MAC_CHANNEL_ACCESS_FAILURE" in message_text:
+            statuses.append("wireless-channel access")
+        suffix = f" The logs reported {' and '.join(statuses)} errors." if statuses else ""
+        observed = "Home Assistant failed to deliver one or more Zigbee commands." + suffix
+        check = (
+            "When an affected Zigbee light or switch is expected to respond, "
+            "test it once and check for a fresh delivery error. "
+            "The named automations may be callers, not the faulty devices."
+        )
+    elif family == "missing_targets" and "are missing or not currently available" in message_text:
+        named = [str(x) for x in as_list(issue.get("affected_entities"))][:2]
+        target = name_phrase(named) if named else "some entities or devices"
+        observed = f"Home Assistant received service calls referencing {target} while targets were unavailable."
+        check = (
+            "Confirm whether the named entities are deliberately unused or expected "
+            "to be available before inspecting the calling automation or script."
+        )
+
+    elif "Received invalid sensor state:" in message_text and "expected a number" in message_text:
+        matched = re.search(
+            r"Received invalid sensor state:\s*([^,\n]{1,32})\s+for entity\s+([a-z0-9_]+\.[a-z0-9_]+),\s*expected a number",
+            message_text,
+            re.IGNORECASE,
+        )
+        if matched:
+            bad_value, entity_id = matched.groups()
+            observed = f"Home Assistant rejected the value '{bad_value}' from {entity_id} because a number was required."
+            check = (
+                f"Check whether {entity_id} now provides a number, and whether "
+                "its template allows for temporary unknown or unavailable states."
+            )
+    elif "music-assistant:8094" in message_text and "Failed to connect" in message_text:
+        observed = "Home Assistant could not connect to Music Assistant's WebSocket service."
+        check = (
+            "If Music Assistant should be running, check the add-on and integration "
+            "status; use fresh logs to distinguish a temporary interruption from "
+            "a continuing connection problem."
+        )
+    elif "Connection timeout to host" in message_text and "/clip/v2/resource/light/" in message_text:
+        names = safe_log_names(messages, r"^([^:]{1,72}):\s*(?:Parallel|Error)")
+        target = name_phrase(names) if names else "a lighting script"
+        observed = f"{target} hit a connection timeout while sending a command to a Hue light."
+        check = (
+            f"If {target} should work now, check whether the script completes "
+            "without another timeout before changing its YAML."
+        )
+    elif family == "invalid_auth" and "invalid authentication" in message_text:
+        names = safe_log_names(messages, r"invalid authentication from ([a-zA-Z0-9_.-]{1,72})\s*\(")
+        origin = f" from {name_phrase(names)}" if names else ""
+        observed = f"Home Assistant rejected an authentication request{origin}."
+        check = (
+            "Check whether you recognise that client and whether it is still "
+            "attempting to sign in; don't weaken authentication to stop the warning."
+        )
+    elif "Timeout error while pinging peer" in message_text:
+        observed = "An integration timed out while checking whether a peer was reachable."
+        check = (
+            "If something is affected, use the related logger and current "
+            "device status to identify the peer before changing settings."
+        )
+
+    if not observed:
+        title = " ".join(str(issue.get("title") or "System Log issue").split())
+        if str(issue.get("direct_failure_evidence") or "").upper() == "OBSERVED":
+            observed = f"Home Assistant reported a failure in the '{title}' category."
+        else:
+            observed = f"Home Assistant recorded entries in the '{title}' category; a direct failure is not established."
+    return observed, check
+
+
 def build_reader_summary(issue):
-    """Plain-English facts for an AI to explain, not a diagnosis or repair plan."""
-    title = " ".join(str(issue.get("title") or "System Log issue").split())
+    """Plain-English facts for any receiving AI, not a diagnosis."""
     recurrence = as_dict(issue.get("recurrence"))
     recurrence_class = str(recurrence.get("class") or "").upper()
-
     if recurrence_class == "RECURRING 24H+":
-        timing = "New activity was recorded across at least 24 hours."
+        timing = (
+            "New activity was classified across audit runs spanning 24h+; "
+            "the log messages shown here may cover a shorter period."
+        )
     elif recurrence_class == "SHORT-WINDOW REPEAT":
-        timing = "Entries repeated in a short window; recurrence across 24 hours was not established."
+        timing = "Entries repeated in a short window; 24h+ recurrence was not established."
     else:
         timing = "Recurrence across 24 hours was not established by this evidence."
 
     referenced = unique_strings(
         as_list(issue.get("affected_entities"))
-        + [
-            item.get("entity_id")
-            for item in as_list(as_dict(issue.get("availability_context")).get("matches"))
-            if isinstance(item, dict)
-        ]
+        + [item.get("entity_id") for item in as_list(as_dict(issue.get("availability_context")).get("matches"))
+           if isinstance(item, dict)]
         + as_list(issue.get("affected_automations"))
         + as_list(issue.get("affected_scripts"))
-        + [
-            item.get("name") or ("an unnamed device" if item.get("device_id") else None)
-            for item in as_list(issue.get("affected_devices"))
-            if isinstance(item, dict)
-        ]
+        + [item.get("name") or ("an unnamed device" if item.get("device_id") else None)
+           for item in as_list(issue.get("affected_devices")) if isinstance(item, dict)]
     )
     if referenced:
         shown = ", ".join(referenced[:3])
-        remainder = len(referenced) - 3
-        if remainder > 0:
-            shown += f" (and {remainder} more)"
+        remaining = len(referenced) - 3
+        if remaining > 0:
+            shown += f" (and {remaining} more)"
         scope = f"Evidence names: {shown}."
     else:
         scope = "No exact affected Home Assistant entity, device, automation or script was identified."
 
-    linked = len(as_list(issue.get("configuration_links")))
-    if linked:
-        sources = (
-            f"{linked} matching configuration {'location' if linked == 1 else 'locations'} "
-            "can help locate relevant YAML, but are not proven causes."
-        )
-    else:
-        sources = "No matching active-YAML source was identified for this issue."
-
-    expectation = str(
-        as_dict(issue.get("availability_context")).get("power_expectation") or "UNKNOWN"
-    ).upper()
+    links = as_list(issue.get("configuration_links"))
+    sources = (
+        f"{len(links)} matching configuration references identify possible inspection locations, not proven causes."
+        if links else "No matching active-YAML source was identified for this issue."
+    )
+    expectation = str(as_dict(issue.get("availability_context")).get("power_expectation") or "UNKNOWN").upper()
     if expectation == "EXPECTED_OFFLINE":
-        uncertainty = (
-            "An affected device is explicitly labelled expected offline. "
-            "Do not assume it should currently be powered."
-        )
+        unknown = "An affected device is labelled expected offline; do not assume it should be powered."
     elif expectation == "MAINTENANCE":
-        uncertainty = (
-            "An affected device has a maintenance label. "
-            "Do not assume current unavailability is unexpected."
-        )
+        unknown = "An affected device is labelled for maintenance; it may intentionally be offline."
     elif str(issue.get("ownership") or "").upper() == "DEVICE / LOCAL NETWORK":
-        uncertainty = (
-            "The report does not establish whether an unavailable device was expected "
-            "online or whether the problem is still happening."
-        )
+        unknown = "Whether the affected device was expected online and whether the problem still occurs are not established."
     else:
-        uncertainty = (
-            "The report does not establish current user-visible impact "
-            "or whether the problem is still happening."
-        )
+        unknown = "Current user-visible impact and whether the problem still occurs are not established."
 
-    if str(issue.get("direct_failure_evidence") or "").upper() == "OBSERVED":
-        observed = f"Home Assistant logged a failure grouped as '{title}'."
-    else:
-        observed = (
-            f"Home Assistant logged entries grouped as '{title}'; "
-            "a direct failure was not established."
-        )
-
+    observed, first_check = issue_specific_guidance(issue)
     return {
         "observed": observed,
         "recurrence": timing,
         "referenced_objects": scope,
         "configuration_context": sources,
-        "uncertainty": uncertainty,
+        "first_check": first_check,
+        "uncertainty": unknown,
     }
 
 
@@ -481,7 +653,9 @@ def build_assistant_briefing():
         ],
         "safety_and_accuracy": [
             "Do not infer a root cause solely from a configuration link or occurrence count.",
-            "Use recurrence.class rather than log count to describe persistence.",
+            "Use recurrence.class rather than log count to describe persistence. "
+            "RECURRING 24H+ uses independent activity across audit runs; "
+            "do not interpret reported first_seen/last_seen as proof of 24h+ duration.",
             "If power_expectation is UNKNOWN, ask whether the device was meant to be online before advising a power or network check.",
             "Do not advise deleting or disabling entities, devices, automations or YAML on weak evidence.",
             "Do not turn informational availability or history counts into required work.",
@@ -589,6 +763,7 @@ def build_issue(final_item, family, correlation, quality):
             "class": recurrence.get("class"),
             "observation_span_hours": recurrence.get("observation_span_hours"),
         },
+        "recurrence_context": None,
         "direct_failure_evidence": final_item.get("direct_failure_evidence"),
         "recovery_evidence": final_item.get("recovery_evidence"),
         "fallback_evidence": final_item.get("fallback_evidence"),
@@ -605,6 +780,9 @@ def build_issue(final_item, family, correlation, quality):
         "configuration_links_truncated": configuration_links_truncated,
         "evidence_gaps": gaps,
     }
+    issue["recurrence_context"] = recurrence_context(issue)
+    if issue["recurrence_context"]["historical_verification_needed"]:
+        issue["evidence_gaps"].append("CROSS_RUN_RECURRENCE_NEEDS_HISTORY_CHECK")
     issue["reader_summary"] = build_reader_summary(issue)
     return issue
 
