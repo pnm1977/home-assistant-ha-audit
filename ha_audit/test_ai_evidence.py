@@ -486,7 +486,7 @@ def main():
         "The receiving AI lacks a concrete response plan.",
     )
     require(
-        "at least 24 hours" in zigbee["reader_summary"]["recurrence"],
+        "across audit runs spanning 24h+" in zigbee["reader_summary"]["recurrence"],
         "Durable recurrence was not explained plainly.",
     )
     require(
@@ -526,5 +526,61 @@ def main():
     )
 
 
+
+
+def test_specific_reader_guidance():
+    from ai_evidence import build_reader_summary, issue_specific_guidance, recurrence_context
+
+    base = {
+        "direct_failure_evidence": "OBSERVED",
+        "availability_context": {"power_expectation": "UNKNOWN"},
+        "ownership": "DEVICE / LOCAL NETWORK",
+        "recurrence": {"class": "RECURRING 24H+", "observation_span_hours": 262.77},
+        "first_seen": "2026-10-19T08:00:00+00:00",
+        "last_seen": "2026-10-19T09:00:00+00:00",
+        "configuration_links": [],
+    }
+
+    def check(family, messages, expected, expected_check):
+        item = dict(base, family_id=family, representative_messages=messages)
+        observed, first_check = issue_specific_guidance(item)
+        require(expected in observed, f"{family}: concrete observation missing: {observed}")
+        require(expected_check in first_check, f"{family}: actionable first check missing: {first_check}")
+        require("<IP_ADDRESS>" not in observed, f"{family}: address leaked into user summary")
+        return item
+
+    check("shelly", ["Error fetching Shelly EM data: a retrieval error"], "Shelly EM", "current readings")
+    check("sonos", ["No recent activity and cannot reach Backroom, marking unavailable"], "Backroom", "should have been online")
+    check("apple_tv", ['Connection lost to Apple TV "Kitchen"', 'Connection lost to Apple TV "Living Room (2)"'], "Kitchen and Living Room (2)", "currently available in Home Assistant")
+    check("esphome", ["Can't connect to ESPHome API for everything-presence-one-d4e0cc @ <IP_ADDRESS>"], "everything-presence-one-d4e0cc", "before investigating the network")
+    check("hue_sync", ["Timeout fetching Philips Hue Play HDMI Sync Box (Hue Sync - BR at <IP_ADDRESS>) data"], "Hue Sync - BR", "current status")
+    check("zigbee_delivery", ["Failed to deliver packet: <TXStatus.NWK_ROUTE_DISCOVERY_FAILED: 208>"], "Zigbee commands", "callers, not the faulty devices")
+    check("unclassified_sensor", ["Received invalid sensor state: unknown for entity sensor.ashp_flow_temp, expected a number"], "sensor.ashp_flow_temp", "temporary unknown")
+    check("unclassified_music", ["Failed to connect to ws://d5369777-music-assistant:8094/ws: Connection timeout"], "Music Assistant's WebSocket service", "add-on and integration")
+    check("unclassified_hue", ["Living Room Colour 3: Error executing script: Connection timeout to host https://<IP_ADDRESS>/clip/v2/resource/light/uuid"], "Living Room Colour 3", "changing its YAML")
+    check("invalid_auth", ["Login attempt or request with invalid authentication from MacBookAir.lan (<IP_ADDRESS>)."], "MacBookAir.lan", "recognise that client")
+    check("ping_issue", ["Timeout error while pinging peer"], "timed out while checking", "identify the peer")
+    lg = dict(base, family_id="lg_tv_off", representative_messages=["Device is off and cannot be controlled"],
+              configuration_links=[{"link_type":"AUTOMATION_SOURCE","alias":"TV & Events"}])
+    lg_observed, lg_check = issue_specific_guidance(lg)
+    require("TV & Events tried to change the LG TV input" in lg_observed, "LG TV summary not specific")
+    require("before considering a condition" in lg_check, "LG advice suggests unverified changes")
+
+    verified = recurrence_context(base)
+    require(verified["historical_verification_needed"], "Cross-run history caveat missing")
+    require(verified["reported_log_timestamp_span_hours"] == 1.0, "Log timestamps were misread")
+    require(verified["cross_audit_observation_span_hours"] == 262.77, "Upstream span lost")
+    require("log_recurrence.json" in verified["interpretation"], "Historical verification source not named")
+    longer = recurrence_context(dict(base, first_seen="2026-10-17T08:00:00+00:00"))
+    require(not longer["historical_verification_needed"], "Over-24h log span incorrectly flagged")
+    unknown = recurrence_context(dict(base, first_seen=None))
+    require(unknown["historical_verification_needed"], "Missing timestamp silently treated as verified")
+    no_cause = build_reader_summary(dict(base, family_id="unrecognised", representative_messages=[]))
+    require("not established" not in no_cause["observed"], "Observed failure was incorrectly negated")
+    not_failure = build_reader_summary(dict(base, family_id="unrecognised", representative_messages=[], direct_failure_evidence="NOT OBSERVED"))
+    require("not established" in not_failure["observed"], "Unconfirmed failure was claimed")
+    print("Issue-specific explanations and cross-audit timing tests passed.")
+
 if __name__ == "__main__":
     main()
+    test_specific_reader_guidance()
