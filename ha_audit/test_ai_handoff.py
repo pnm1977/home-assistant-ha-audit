@@ -795,5 +795,40 @@ def main():
     print("=" * 62)
 
 
+
+
+def test_specific_handoff_render():
+    from ai_handoff import first_non_destructive_check, render_structured_context
+    issue = {
+        "ownership": "USER / LOCAL CONFIGURATION",
+        "availability_context": {"power_expectation": "UNKNOWN"},
+        "reader_summary": {
+            "observed": "TV & Events tried to change the LG TV input while the television was off.",
+            "first_check": "Inspect the TV & Events trigger before considering a condition.",
+            "uncertainty": "Current user-visible impact is not established.",
+        },
+        "configuration_links": [
+            {"link_type": "AUTOMATION_SOURCE", "alias": "TV & Events", "source": "automations.yaml", "line": 2871}
+        ],
+        "recurrence_context": {
+            "historical_verification_needed": True,
+            "reported_log_timestamp_span_hours": 2.0,
+        },
+    }
+    lines = []
+    render_structured_context(lines, issue)
+    rendered = "\n".join(lines)
+    require(rendered, "TV & Events tried to change the LG TV input")
+    require(rendered, "Inspect the TV & Events trigger")
+    require(rendered, "automations.yaml:2871")
+    require(rendered, "Timing caution:")
+    require(rendered, "log_recurrence.json")
+    offline = dict(issue, availability_context={"power_expectation": "EXPECTED_OFFLINE"})
+    result = first_non_destructive_check(offline)
+    if "Check only if" not in result:
+        raise AssertionError("Specific guidance overrode explicit offline safeguard")
+    print("Issue-specific handoff and recurrence transparency: PASS")
+
 if __name__ == "__main__":
     main()
+    test_specific_handoff_render()
