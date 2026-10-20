@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.8.x
+
+- Added structured AI evidence in `ha_audit_ai_evidence.json` to complement the existing human-readable AI / LLM handoff.
+- Added machine-readable evidence covering system information, configuration findings, System Log issues, recurrence, availability, Repairs, and identified evidence gaps.
+- Added interpretation guidance to help receiving AI assistants distinguish observations from inference and uncertainty.
+- Added exact configuration associations between System Log issue families and relevant automations, scripts, entities, and active YAML references.
+- Included source filenames and line numbers where available to help users locate relevant configuration.
+- Explicitly distinguished configuration associations from proven causes.
+- Improved the AI / LLM handoff and structured evidence to provide clearer, more actionable troubleshooting information.
+- Added issue-specific explanations and useful first checks for common integration, device-connectivity, automation, and Zigbee communication problems.
+- Improved plain-English System Log descriptions while preserving technical evidence in the detailed reports.
+- Improved recurrence explanations to distinguish independent activity across audit runs from the timestamps of messages in the current log sample.
+- Added historical recurrence context and guidance for verifying 24-hour recurrence classifications.
+- Validated recurrence classifications against historical audit records.
+- Improved Core update decision explanations to distinguish:
+  - Completed checks that found no specific update-related concern.
+  - Actual findings requiring investigation.
+  - Incomplete evidence or compatibility coverage.
+- Clarified that `ASSESSMENT INCOMPLETE` does not automatically mean an update blocker was found.
+- Preserved the conservative Core update decision model and separation between general system health and upgrade readiness.
+- Extended automated AI evidence and handoff regression testing.
+- Updated the GitHub Actions AI evidence contract testing workflow.
+- Validated the 0.8.x improvements against live Home Assistant audit results.
+- Preserved read-only operation, local evidence storage, and the requirement for users to choose whether to share reports with external AI services.
+
 ## 0.7.x
 
 - Added the Core upgrade-readiness evidence foundation.
