@@ -141,10 +141,62 @@ def build_core_update_decision(
             RECOMMENDATION_INCOMPLETE
         )
 
-        before_update.append(
-            "Resolve or review the incomplete "
-            "assessment evidence before relying on "
-            "HA Audit for the update decision."
+        # Explain the evidence already checked without upgrading an
+        # incomplete assessment into a PROCEED recommendation.
+        checked_without_flags = (
+            config_label == "VALID"
+            and compatibility_rule_count > 0
+            and relevant_unignored_repairs == 0
+            and compatibility_review_required_count == 0
+            and compatibility_manual_review_count == 0
+        )
+
+        if checked_without_flags:
+            before_update.append(
+                "Configuration passed, and the checked "
+                "compatibility rules and Repairs found "
+                "no specific update-related issue."
+            )
+            before_update.append(
+                "Other Core update evidence or coverage "
+                "remains incomplete. Review relevant "
+                "unassessed changes before deciding; "
+                "HA Audit cannot recommend proceeding."
+            )
+        else:
+            before_update.append(
+                "The Core update assessment is incomplete. "
+                "Review the specific findings and evidence "
+                "gaps before deciding whether to update."
+            )
+
+            if config_label != "VALID":
+                before_update.append(
+                    "Check the Home Assistant configuration "
+                    "validation result."
+                )
+
+            if relevant_unignored_repairs:
+                before_update.append(
+                    f"Review {relevant_unignored_repairs} "
+                    "unignored Repair issue(s) linked "
+                    "to the Core update."
+                )
+
+            if (
+                compatibility_review_required_count
+                or compatibility_manual_review_count
+            ):
+                before_update.append(
+                    "Review the flagged compatibility rules "
+                    "before updating."
+                )
+
+        conditional_checks.append(
+            "An incomplete assessment does not itself mean "
+            "a blocker was found. The detailed update-" 
+            "readiness and compatibility reports show "
+            "which evidence was checked or is missing."
         )
 
     elif core_guidance_status == STATE_REVIEW:
@@ -229,11 +281,12 @@ def build_core_update_decision(
 
     why.append(
         (
-            "Required Core evidence collection "
+            "Full Core update readiness evidence "
             + (
                 "completed."
                 if core_assessment_complete
-                else "did not complete."
+                else "remains incomplete; this is not "
+                "by itself a detected blocker."
             )
         )
     )
