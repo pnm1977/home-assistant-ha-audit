@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from upgrade_decision import (
     build_core_update_decision,
@@ -41,6 +41,10 @@ AVAILABILITY_FILE = (
 
 LOG_PRIORITY_FINAL_FILE = (
     "/config/log_priority_final.json"
+)
+
+AI_EVIDENCE_FILE = (
+    "/config/ha_audit_ai_evidence.json"
 )
 
 OUTPUT_FILE = (
@@ -757,9 +761,125 @@ def get_priority_counts(
     }
 
 
+def as_dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def as_list(value):
+    return value if isinstance(value, list) else []
+
+
+def evidence_for_current_run(ai_evidence, *, version, generated_at):
+    """Never merge structured evidence from a different audit run."""
+    report = as_dict(ai_evidence)
+    if not report or str(report.get("audit_version")) != str(version):
+        return {}
+    if not isinstance(report.get("system_issues"), list):
+        return {}
+
+    try:
+        evidence_time = datetime.fromisoformat(str(report["generated_at"]).replace("Z", "+00:00"))
+        handoff_time = datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
+        if evidence_time.utcoffset() is None or handoff_time.utcoffset() is None:
+            return {}
+        if abs(evidence_time - handoff_time) > timedelta(minutes=5):
+            return {}
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return {}
+    return report
+
+
+def first_source_links(issue, limit=3):
+    """Give pointers, never claim that a referenced YAML line caused the error."""
+    selected = []
+    for link in as_list(as_dict(issue).get("configuration_links")):
+        if not isinstance(link, dict):
+            continue
+        link_type = str(link.get("link_type") or "")
+        if link_type in ("AUTOMATION_SOURCE", "SCRIPT_SOURCE"):
+            path = link.get("source")
+            line = link.get("line")
+            label = link.get("alias") or link.get("entity_id")
+            if path and isinstance(line, int) and line > 0:
+                selected.append(f"{label}: `{path}:{line}`")
+        elif link_type == "ACTIVE_YAML_ENTITY_REFERENCE":
+            entity_id = link.get("entity_id")
+            for location in as_list(link.get("locations")):
+                if not isinstance(location, dict):
+                    continue
+                path = location.get("file")
+                lines = as_list(location.get("lines"))
+                first_line = next((n for n in lines if isinstance(n, int) and n > 0), None)
+                if path and first_line:
+                    selected.append(f"{entity_id}: `{path}:{first_line}`")
+                    break
+        if len(selected) >= limit:
+            break
+    return selected[:limit]
+
+
+def first_non_destructive_check(issue):
+    """Choose a bounded check from evidence metadata, never a presumed fix."""
+    item = as_dict(issue)
+    owner = str(item.get("ownership") or "").upper()
+    local_path = str(item.get("local_action_path") or "").upper()
+    availability = as_dict(item.get("availability_context"))
+    expectation = str(availability.get("power_expectation") or "UNKNOWN").upper()
+
+    if expectation in ("EXPECTED_OFFLINE", "MAINTENANCE"):
+        return (
+            "Check only if the device should now be available; its offline or "
+            "maintenance label may explain the entry."
+        )
+    if owner == "DEVICE / LOCAL NETWORK":
+        return (
+            "Check whether the device or integration is meant to be online; "
+            "if so, check its current state and whether the error is still occurring."
+        )
+    if owner == "USER / LOCAL CONFIGURATION" and as_list(item.get("configuration_links")):
+        return (
+            "Inspect the named automation/script and its target's current state; "
+            "compare with the logged error before making any changes."
+        )
+    if local_path == "LIMITED LOCAL CONTROL":
+        return (
+            "Check whether the integration or external service is currently "
+            "working; do not assume a local configuration fault."
+        )
+    if as_list(item.get("affected_entities")):
+        return "Check whether the named entity is available now and whether the error still occurs."
+    return (
+        "Confirm whether this issue affects anything in use. If so, check its "
+        "current status and collect a fresh log entry before changing settings."
+    )
+
+
+def render_structured_context(lines, issue):
+    """Provide readable guidance without replacing observations with diagnosis."""
+    summary = as_dict(as_dict(issue).get("reader_summary"))
+    if not summary:
+        return
+
+    observed = str(summary.get("observed") or "").strip()
+    affected = str(summary.get("referenced_objects") or "").strip()
+    uncertainty = str(summary.get("uncertainty") or "").strip()
+    if observed:
+        lines.append(f"  - **Observed:** {observed}")
+    if affected and not affected.startswith("No exact affected"):
+        clean_affected = affected.removeprefix("Evidence names: ")
+        lines.append(f"  - **Named in evidence:** {clean_affected}")
+    lines.append(f"  - **Useful first check:** {first_non_destructive_check(issue)}")
+    linked = first_source_links(issue)
+    if linked:
+        lines.append("  - **Where to look (not proven causes):** " + "; ".join(linked) + ".")
+    if uncertainty:
+        lines.append(f"  - **Still unknown:** {uncertainty}")
+
+
 def render_system_issues(
     lines,
     report,
+    ai_evidence=None,
 ):
     lines.append(
         "## System issues"
@@ -767,7 +887,7 @@ def render_system_issues(
     lines.append("")
 
     if not log_priority_available(
-        report
+        as_dict(report)
     ):
         lines.append(
             "Final System Log prioritisation was "
@@ -865,6 +985,13 @@ def render_system_issues(
         :ATTENTION_LIMIT
     ]
 
+    # Only exact family identifiers are used to join both reports.
+    structured_by_family = {
+        item.get("family_id"): item
+        for item in as_list(as_dict(ai_evidence).get("system_issues"))
+        if isinstance(item, dict) and item.get("family_id")
+    }
+
     lines.append("")
     lines.append(
         "### Attention first"
@@ -925,6 +1052,9 @@ def render_system_issues(
                 "  - **Evidence note:** "
                 f"{issue_note(item)}"
             )
+            structured_issue = structured_by_family.get(item.get("family_id"))
+            if structured_issue:
+                render_structured_context(lines, structured_issue)
 
     shown_medium = sum(
         1
@@ -994,6 +1124,7 @@ def build_ai_handoff(
     availability,
     version,
     log_priority_final=None,
+    ai_evidence=None,
     generated_at=None,
 ):
     if generated_at is None:
@@ -1002,6 +1133,11 @@ def build_ai_handoff(
                 timezone.utc
             ).isoformat()
         )
+
+    # Ignore absent or stale evidence rather than blend two audit runs.
+    current_ai_evidence = evidence_for_current_run(
+        ai_evidence, version=version, generated_at=generated_at
+    )
 
     decision = build_decision(
         summary_text=summary_text,
@@ -1053,81 +1189,57 @@ def build_ai_handoff(
     )
 
     lines.append("")
+    lines.append("## How the receiving AI should help")
+    lines.append("")
     lines.append(
-        "## Instructions for the receiving AI"
+        "Use plain English. Lead with the current Core update position, "
+        "then no more than three important health findings and a useful first check. "
+        "Offer technical YAML references only when they help explain the check."
     )
     lines.append("")
     lines.append(
-        "- Treat HA Audit findings as evidence, "
-        "not as proof of a fault or guarantee of safety."
+        "- Separate **what HA Audit observed**, **what you infer**, and "
+        "**what remains unknown**. Do not turn a matching YAML line into a proven cause."
     )
     lines.append(
-        "- Clearly distinguish facts reported by "
-        "HA Audit from your own inference or advice."
+        "- Ask whether an unavailable device is meant to be powered or online "
+        "before suggesting device or network troubleshooting."
     )
     lines.append(
-        "- Do not claim that a Home Assistant "
-        "update is guaranteed safe."
+        "- Do not recommend deleting configuration or entities based only "
+        "on unavailable states, missing history, or stale references."
     )
     lines.append(
-        "- Treat the Core update recommendation as "
-        "HA Audit's interpretation of its evidence, "
-        "not as independent proof."
+        "- Use HA Audit's priorities and recurrence classifications; "
+        "high log counts alone do not prove a persistent problem."
     )
     lines.append(
-        "- If the recommendation conflicts with the "
-        "supporting evidence or limitations, call out "
-        "that conflict rather than repeating it."
+        "- Keep general Home Assistant health separate from Core update "
+        "readiness. Never promise that an update is safe."
     )
     lines.append(
-        "- Do not recommend deleting entities, "
-        "devices, YAML, automations, scripts, or "
-        "configuration solely because they are "
-        "unavailable, unknown, or not currently provided."
+        "- If evidence is incomplete or contradictory, name the missing "
+        "evidence; request the specific detailed report instead of guessing."
     )
     lines.append(
-        "- Treat availability and Recorder-history "
-        "findings as context unless stronger evidence "
-        "shows an actual fault."
+        "- Suggest one non-destructive next check at a time unless the user "
+        "asks for a fuller investigation. Keep raw log lines and JSON for technical follow-up."
     )
+    lines.append("")
     lines.append(
-        "- Respect HA Audit's distinction between "
-        "general Home Assistant health and Core "
-        "update guidance."
+        "The structured companion file `ha_audit_ai_evidence.json` contains "
+        "machine-readable evidence, including exact configuration links and gaps."
     )
-    lines.append(
-        "- If evidence collection is incomplete, "
-        "say what is missing rather than filling the "
-        "gap with an assumption."
-    )
-    lines.append(
-        "- For each locally relevant compatibility "
-        "finding, explain why it was cleared or why "
-        "review is still required."
-    )
-    lines.append(
-        "- Prioritise concrete findings that deserve "
-        "attention before informational observations."
-    )
-    lines.append(
-        "- Use the System issues section as HA Audit's "
-        "current prioritisation; do not re-rank issues "
-        "solely from raw occurrence counts."
-    )
-    lines.append(
-        "- Treat SHORT-WINDOW REPEAT as distinct from "
-        "durable 24-hour recurrence."
-    )
-    lines.append(
-        "- Explain findings in normal Home Assistant "
-        "language suitable for a smart-home enthusiast."
-    )
-    lines.append(
-        "- When suggesting a change, explain which "
-        "HA Audit evidence supports that suggestion."
-    )
+    lines.append("")
+    if not current_ai_evidence:
+        lines.append(
+            "**Structured evidence note:** Matching same-run AI evidence was "
+            "not available or could not be verified. Treat issue descriptions "
+            "below as summary-only and request `ha_audit_ai_evidence.json` "
+            "if exact targets or source locations are needed."
+        )
+        lines.append("")
 
-    lines.append("")
     lines.append(
         "## Important limitations"
     )
@@ -1181,6 +1293,7 @@ def build_ai_handoff(
     render_system_issues(
         lines,
         log_priority_final,
+        ai_evidence=current_ai_evidence,
     )
 
     lines.append("")
@@ -1279,6 +1392,10 @@ def main():
         LOG_PRIORITY_FINAL_FILE
     )
 
+    ai_evidence = load_json_optional(
+        AI_EVIDENCE_FILE
+    )
+
     output = build_ai_handoff(
         summary_text=summary_text,
         update_readiness=update_readiness,
@@ -1286,6 +1403,7 @@ def main():
         availability=availability,
         version=VERSION,
         log_priority_final=log_priority_final,
+        ai_evidence=ai_evidence,
     )
 
     with open(
