@@ -123,7 +123,7 @@ Possible outcomes include:
 | NO KNOWN BLOCKERS FOUND | No known blocker was identified in the evidence inspected. |
 | REVIEW BEFORE UPDATING | Specific findings deserve review before proceeding. |
 | ASSESSMENT INCOMPLETE | Some required evidence or compatibility coverage remains incomplete. |
-| KNOWN BLOCKER FOUND | Evidence indicates a reason to delay the update. |
+| DELAY - BLOCKER EVIDENCE FOUND | Evidence indicates a reason to delay the update. |
 
 **ASSESSMENT INCOMPLETE does not automatically mean a problem was found.**
 
