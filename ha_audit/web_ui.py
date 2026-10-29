@@ -26,8 +26,8 @@ CONTEXT = Path("/config/investigation_context.json")
 MAX_REPORT_BYTES = 256 * 1024
 MAX_HANDOFF_BYTES = 256 * 1024
 MAX_JSON_BYTES = 1024 * 1024
-MAX_POST_BYTES = 2048
-MAX_NOTE_LENGTH = 500
+MAX_POST_BYTES = 65536
+MAX_NOTE_LENGTH = 4000
 INGRESS_PROXY = "172.30.32.2"
 ALLOW_LOCALHOST = os.environ.get("HA_AUDIT_WEB_TEST_LOCAL", "") == "1"
 STATUSES = ("Investigating", "Monitoring", "Explained", "Resolved")
@@ -363,7 +363,7 @@ def build_issues() -> str:
             '<input type="hidden" name="fingerprint" value="' + escape(fingerprint) + '">'
             '<label>Status <select name="status">' + options + '</select></label>'
             '<label>What did you establish or change? '
-            '<textarea name="note" maxlength="500" rows="3" required placeholder="What happened, why, or what to monitor next?">'
+            '<textarea name="note" maxlength="' + str(MAX_NOTE_LENGTH) + '" rows="8" required placeholder="What happened, why, or what to monitor next?">'
             + escape(old_note) + '</textarea></label>'
             '<button type="submit">Save feedback</button></form></details>'
         )
@@ -403,6 +403,7 @@ form{display:grid;gap:.6rem;margin-top:.5rem;min-width:230px}label{display:grid;
 .full-summary>summary{font-size:1.18rem;font-weight:700}
 .full-summary>pre{margin-top:1rem}
 select,textarea,button{font:inherit;padding:.4rem;border-radius:5px}button{cursor:pointer;justify-self:start}
+form textarea{box-sizing:border-box;width:100%;min-height:11rem;line-height:1.5;resize:vertical}
 #ai-handoff-text{width:100%;box-sizing:border-box;margin:.6rem 0 1rem;font: .88rem ui-monospace,monospace;white-space:pre}
 #copy-result{margin-left:.5rem;font-size:.9rem}a{color:LinkText}
 .focus-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem}
