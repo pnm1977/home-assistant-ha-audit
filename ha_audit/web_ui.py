@@ -238,6 +238,85 @@ def save_feedback(fingerprint: str, status: str, note: str) -> tuple[int, str]:
     return 200, "Investigation feedback saved. It will be available after restarting HA Audit."
 
 
+def build_focus() -> str:
+    """Separate investigation attention from the original technical priority.
+
+    This is deliberately a UI-only triage view. Feedback is user-reported,
+    not proof of a root cause or a reason to suppress errors. Do not write
+    to log_priority_final.json or change any existing investigation record.
+    """
+    context = load_context()
+    if context is None:
+        return (
+            '<h2>Where to focus</h2>'
+            '<p class="error">Saved investigation context cannot be read. '
+            'No attention guidance has been calculated.</p>'
+        )
+
+    families = [family for family in current_families()
+                if family.get("final_priority") in ("VERY HIGH", "HIGH", "MEDIUM")]
+    if not families:
+        return (
+            '<h2>Where to focus</h2>'
+            '<p class="muted">No current HIGH or MEDIUM findings to review.</p>'
+        )
+
+    investigations = context["investigations"]
+    priority_order = {"VERY HIGH": 0, "HIGH": 1, "MEDIUM": 2}
+    groups: dict[str, list[dict]] = {
+        "Investigate / continue": [], "Monitoring": [], "Explanation to verify": []
+    }
+    for family in families:
+        key = family.get("stable_fingerprint")
+        if not isinstance(key, str) or not key:
+            continue
+        saved = investigations.get(key, {})
+        status = saved.get("status") if isinstance(saved, dict) else None
+        if status == "Monitoring":
+            group = "Monitoring"
+        elif status in ("Explained", "Resolved"):
+            group = "Explanation to verify"
+        else:
+            # Unreviewed findings and investigations in progress are actionable.
+            group = "Investigate / continue"
+        groups[group].append(family)
+
+    for group in groups.values():
+        group.sort(key=lambda f: (
+            priority_order.get(f.get("final_priority"), 99),
+            str(f.get("title", "")),
+        ))
+
+    card_text = {
+        "Investigate / continue": "No conclusion recorded yet, or investigation in progress.",
+        "Monitoring": "A change or observation is being monitored; check for fresh evidence.",
+        "Explanation to verify": "User has marked these explained or resolved; check that new errors agree with the explanation.",
+    }
+    cards: list[str] = []
+    for title, group in groups.items():
+        count = len(group)
+        examples = "".join(
+            '<li><strong>' + escape(item.get("final_priority", "")) + '</strong> '
+            + escape(item.get("title", "Unnamed finding")) + '</li>'
+            for item in group[:4]
+        )
+        extra = ('<p class="muted">And ' + str(count - 4) + ' more below.</p>') if count > 4 else ''
+        cards.append(
+            '<section class="focus-card"><h3>' + escape(title)
+            + ' <span class="focus-count">(' + str(count) + ')</span></h3>'
+            '<p class="muted">' + escape(card_text[title]) + '</p>'
+            + ('<ul>' + examples + '</ul>' if examples else '<p>None.</p>')
+            + extra + '</section>'
+        )
+    return (
+        '<h2>Where to focus</h2>'
+        '<p class="muted">Suggested investigation workflow based on saved user feedback. '
+        'This is <strong>not</strong> a verified cause, severity reduction or '
+        'replacement for the original audit priority.</p>'
+        '<div class="focus-grid">' + ''.join(cards) + '</div>'
+    )
+
+
 def build_issues() -> str:
     families = current_families()
     if not families:
@@ -326,11 +405,17 @@ form{display:grid;gap:.6rem;margin-top:.5rem;min-width:230px}label{display:grid;
 select,textarea,button{font:inherit;padding:.4rem;border-radius:5px}button{cursor:pointer;justify-self:start}
 #ai-handoff-text{width:100%;box-sizing:border-box;margin:.6rem 0 1rem;font: .88rem ui-monospace,monospace;white-space:pre}
 #copy-result{margin-left:.5rem;font-size:.9rem}a{color:LinkText}
+.focus-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem}
+.focus-card{border:1px solid GrayText;border-radius:8px;padding:.65rem 1rem}
+.focus-card h3{font-size:1rem;margin:.35rem 0}
+.focus-card p{margin:.5rem 0}.focus-card ul{padding-left:1.4rem;margin:.65rem 0}
+.focus-card li{font-size:.9rem;margin:.35rem 0}
+.focus-count{font-weight:400;opacity:.75}
 pre{border:1px solid GrayText;border-radius:8px;padding:1rem;white-space:pre-wrap;
 overflow-wrap:anywhere;line-height:1.5;font-size:.9rem}.notice{font-weight:700}
 .error{font-weight:700;color:#b3261e}
-</style></head><body><header><h1>HA Audit</h1><p class="muted">Investigation feedback · foundation</p></header>
-<main>""" + notice + build_ai_export() + '<h2>Issues needing review</h2>' + build_issues() + """
+</style></head><body><header><h1>HA Audit</h1><p class="muted">Investigation feedback · focused review</p></header>
+<main>""" + notice + build_ai_export() + build_focus() + '<h2>Issues needing review</h2>' + build_issues() + """
 <details class="full-summary"><summary>Show complete latest audit summary</summary><pre>""" + escape(read_summary()) + """</pre></details>
 <p class="muted">Investigation feedback is stored privately and preserved across audit runs.</p>
 </main><script src="copy.js" defer></script></body></html>"""
