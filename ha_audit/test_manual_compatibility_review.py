@@ -1,7 +1,7 @@
-"""Step 134: fail-closed contract for explicit manual Core-change reviews.
+"""Regression tests for explicit manual Core-change review evidence.
 
 These tests do not treat a chat conversation, absent Repair, or generic notes as
-verified evidence. They document a narrowly scoped future opt-in input to the
+verified evidence. They exercise the narrowly scoped optional input to the
 existing readiness reconciler. A confirmation must be explicitly recorded by
 the user, bound to an installed/target upgrade window and an exact official
 change group. It is not a guarantee that a Core update is safe.
@@ -10,7 +10,6 @@ Run: python -m unittest -v test_manual_compatibility_review
 """
 
 import copy
-import inspect
 import unittest
 
 import readiness_guidance as guidance
@@ -45,22 +44,13 @@ def manual_report(*, installed=INSTALLED, target=TARGET):
 
 def reconcile_with_optional_manual(report, *, dynamic=None, generic=True,
                                    installed=INSTALLED, target=TARGET):
-    """Run existing guidance until a manual-review input is implemented.
-
-    Baseline safety checks must pass before production code is modified; the
-    three positive contract tests intentionally fail until this is supported.
-    """
-    kwargs = {
-        "installed_version": installed,
-        "target_version": target,
-    }
-    if "manual_review_report" in inspect.signature(
-            guidance.reconcile_dynamic_insufficient_evidence).parameters:
-        kwargs["manual_review_report"] = report
+    """Call the reconciler with explicit, version-bound user review evidence."""
     return guidance.reconcile_dynamic_insufficient_evidence(
         dynamic if dynamic is not None else dynamic_report(),
         generic_report() if generic else None,
-        **kwargs,
+        installed_version=installed,
+        target_version=target,
+        manual_review_report=report,
     )
 
 
@@ -110,7 +100,6 @@ class ManualReviewSafetyBaseline(unittest.TestCase):
         candidate["reviews"].append(copy.deepcopy(candidate["reviews"][0]))
         self.check_auth_remains_unresolved(candidate)
 
-    @unittest.expectedFailure
     def test_explicit_review_resolves_exact_auth_group_only(self):
         outcome = reconcile_with_optional_manual(manual_report(), generic=False)
         self.assertEqual(outcome["remaining_insufficient_count"], 1)
@@ -123,7 +112,6 @@ class ManualReviewSafetyBaseline(unittest.TestCase):
             for entry in outcome["resolved_groups"]
         ))
 
-    @unittest.expectedFailure
     def test_manual_auth_plus_automatic_state_resolves_both_with_provenance(self):
         outcome = reconcile_with_optional_manual(manual_report())
         self.assertEqual(outcome["remaining_insufficient_count"], 0)
@@ -134,7 +122,6 @@ class ManualReviewSafetyBaseline(unittest.TestCase):
         self.assertEqual(manual[0]["source"], "explicit_user_confirmation")
         self.assertEqual(manual[0]["outcome"], "user_checked_no_issue")
 
-    @unittest.expectedFailure
     def test_manual_review_does_not_depend_on_a_release_specific_rule_pack(self):
         future_installed, future_target = "2026.12.3", "2027.1.0"
         reviewed = manual_report(installed=future_installed, target=future_target)
