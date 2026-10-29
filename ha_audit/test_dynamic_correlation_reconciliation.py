@@ -1,8 +1,7 @@
 """Regression contract for reconciling dynamic Core uncertainty with local checks.
 
-The first two tests guard existing behaviour. Tests marked expectedFailure
-specify the upcoming integration contract, and must be made normal passing
-regressions after the readiness-guidance implementation lands.
+The baseline tests guard existing behaviour. Reconciliation tests enforce
+precise matching of official changes to completed local compatibility checks.
 
 Run: python -m unittest -v test_dynamic_correlation_reconciliation
 
@@ -126,7 +125,7 @@ class ExistingSafetyBaseline(unittest.TestCase):
 
 
 class ReconciliationContract(unittest.TestCase):
-    """These intentionally fail until the generic reconciliation is implemented."""
+    """Enforce the generic reconciliation and fail-closed evidence policy."""
 
     def reconcile(self, dynamic=None, generic=None):
         return guidance.reconcile_dynamic_insufficient_evidence(
@@ -136,7 +135,6 @@ class ReconciliationContract(unittest.TestCase):
             target_version=TARGET,
         )
 
-    @unittest.expectedFailure
     def test_only_exactly_matching_state_conditions_is_resolved(self):
         result = self.reconcile()
         self.assertEqual(result["status"], "reconciled")
@@ -151,27 +149,23 @@ class ReconciliationContract(unittest.TestCase):
             "outcome": "no_affected_usage_found",
         }])
 
-    @unittest.expectedFailure
     def test_affected_local_configuration_is_not_hidden(self):
         result = self.reconcile(generic=generic_report(affected=True))
         self.assertEqual(result["remaining_insufficient_count"], 1)
         self.assertEqual(result["resolved_groups"][0]["outcome"], "review_required")
 
-    @unittest.expectedFailure
     def test_same_heading_different_release_is_not_resolved(self):
         rows = [group(*AUTH_GROUP), group("2027.1", "State conditions")]
         result = self.reconcile(dynamic=dynamic_report(*rows))
         self.assertEqual(result["remaining_insufficient_count"], 2)
         self.assertEqual(result["resolved_groups"], [])
 
-    @unittest.expectedFailure
     def test_similar_heading_is_not_treated_as_exact_match(self):
         rows = [group(*AUTH_GROUP), group("2026.10", "State condition")]
         result = self.reconcile(dynamic=dynamic_report(*rows))
         self.assertEqual(result["remaining_insufficient_count"], 2)
         self.assertEqual(result["resolved_groups"], [])
 
-    @unittest.expectedFailure
     def test_unregistered_rule_id_cannot_resolve_official_group(self):
         fake = generic_report()
         fake["rules"][0]["rule_id"] = "unregistered_fake_check"
@@ -179,7 +173,6 @@ class ReconciliationContract(unittest.TestCase):
         self.assertNotEqual(result["status"], "reconciled")
         self.assertEqual(result["remaining_insufficient_count"], 2)
 
-    @unittest.expectedFailure
     def test_mismatched_upgrade_window_cannot_resolve(self):
         stale = generic_report()
         stale["target_version"] = "2026.10.1"
@@ -187,7 +180,6 @@ class ReconciliationContract(unittest.TestCase):
         self.assertNotEqual(result["status"], "reconciled")
         self.assertEqual(result["remaining_insufficient_count"], 2)
 
-    @unittest.expectedFailure
     def test_failed_local_check_cannot_resolve(self):
         incomplete = generic_report()
         incomplete["rules"][0]["read_failures"] = [{"file": "automations.yaml"}]
@@ -195,7 +187,6 @@ class ReconciliationContract(unittest.TestCase):
         self.assertNotEqual(result["status"], "reconciled")
         self.assertEqual(result["remaining_insufficient_count"], 2)
 
-    @unittest.expectedFailure
     def test_inconsistent_dynamic_count_fails_closed(self):
         inconsistent = dynamic_report()
         inconsistent["summary"]["insufficient_evidence_count"] = 0
@@ -203,14 +194,12 @@ class ReconciliationContract(unittest.TestCase):
         self.assertEqual(result["status"], "incomplete")
         self.assertEqual(result["remaining_insufficient_count"], 2)
 
-    @unittest.expectedFailure
     def test_duplicate_official_group_cannot_silently_clear_both(self):
         rows = [group(*AUTH_GROUP), group(*STATE_GROUP), group(*STATE_GROUP)]
         result = self.reconcile(dynamic=dynamic_report(*rows))
         self.assertEqual(result["status"], "incomplete")
         self.assertEqual(result["remaining_insufficient_count"], 3)
 
-    @unittest.expectedFailure
     def test_guidance_remains_incomplete_when_authentication_is_unresolved(self):
         inputs = base_guidance_inputs()
         inputs["dynamic_correlation_report"] = dynamic_report()
@@ -220,7 +209,6 @@ class ReconciliationContract(unittest.TestCase):
         # The resolved group and remaining count must be exposed for review.
         self.assertEqual(result["dynamic_reconciliation"]["remaining_insufficient_count"], 1)
 
-    @unittest.expectedFailure
     def test_fully_resolved_dynamic_uncertainty_only_with_matching_evidence(self):
         inputs = base_guidance_inputs()
         inputs["dynamic_correlation_insufficient_count"] = 1
