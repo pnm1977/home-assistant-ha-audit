@@ -15,6 +15,8 @@ on:
       - "ha_audit/test_report_freshness.py"
       - "ha_audit/core_compatibility_checks.py"
       - "ha_audit/core_compatibility_rules.py"
+      - "ha_audit/core_compatibility_runner.py"
+      - "ha_audit/test_core_compatibility_runner.py"
       - "ha_audit/test_core_compatibility_framework.py"
       - "ha_audit/run.sh"
       - ".github/workflows/investigation-evidence-test.yml"
@@ -31,6 +33,8 @@ on:
       - "ha_audit/test_report_freshness.py"
       - "ha_audit/core_compatibility_checks.py"
       - "ha_audit/core_compatibility_rules.py"
+      - "ha_audit/core_compatibility_runner.py"
+      - "ha_audit/test_core_compatibility_runner.py"
       - "ha_audit/test_core_compatibility_framework.py"
       - "ha_audit/run.sh"
       - ".github/workflows/investigation-evidence-test.yml"
@@ -68,3 +72,6 @@ jobs:
 
       - name: Run generic Core compatibility framework regression tests
         run: python3 ha_audit/test_core_compatibility_framework.py
+
+      - name: Run generic Core compatibility runner regression tests
+        run: python3 ha_audit/test_core_compatibility_runner.py
