@@ -23,6 +23,7 @@ COPY unavailable_history_scan.py /
 COPY update_readiness_scan.py /
 COPY upgrade_impact_scan.py /
 COPY upgrade_compatibility_scan.py /
+COPY core_2026_10_state_conditions.py /
 COPY release_evidence_scan.py /
 COPY compatibility_coverage_scan.py /
 COPY upgrade_correlation_scan.py /
