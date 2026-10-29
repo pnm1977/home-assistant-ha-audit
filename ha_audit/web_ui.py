@@ -34,6 +34,7 @@ CONTEXT = Path("/config/investigation_context.json")
 POWER_SNAPSHOT = Path("/config/investigation_evidence.json")
 MAINTENANCE_SNAPSHOT = Path("/config/investigation_maintenance_evidence.json")
 RECURRENCE_REPORT = Path("/config/log_recurrence.json")
+RUN_STATE = Path("/config/ha_audit_run_status.json")
 MAX_REPORT_BYTES = 256 * 1024
 MAX_HANDOFF_BYTES = 256 * 1024
 MAX_JSON_BYTES = 1024 * 1024
@@ -95,7 +96,42 @@ def read_json(path: Path) -> dict | None:
         return None
 
 
+def report_is_current(kind: str, path: Path) -> bool:
+    """Fail closed when a run marker says the latest audit is not complete.
+
+    Older installations without a run marker remain readable until the
+    runtime begins creating one. Once the marker exists, malformed status,
+    a failed stage, or a report older than the run cannot be treated as
+    evidence from the latest audit.
+    """
+    if not RUN_STATE.exists():
+        return True  # Legacy reports, before run-state tracking is enabled.
+    state = read_json(RUN_STATE)
+    if not state or state.get("status") != "complete":
+        return False
+    if state.get({
+        "summary": "summary_status",
+        "handoff": "handoff_status",
+        "issues": "issues_status",
+    }[kind]) != "ok":
+        return False
+    try:
+        started = datetime.fromisoformat(
+            str(state["run_started_at_utc"]).replace("Z", "+00:00")
+        )
+        if started.tzinfo is None:
+            return False
+        # Allow the filesystem's timestamp precision to vary slightly.
+        return path.stat().st_mtime + 2 >= started.timestamp()
+    except (KeyError, TypeError, ValueError, OverflowError, OSError):
+        return False
+
+
 def read_summary() -> str:
+    if not report_is_current("summary", REPORT):
+        return ("The latest audit is incomplete or its report is not verified. "
+                "Previous audit results are not displayed as current. "
+                "Check the app Log for failed stages, then restart the audit.")
     try:
         if REPORT.stat().st_size > MAX_REPORT_BYTES:
             return "The latest report is too large to display."
@@ -108,6 +144,8 @@ def read_summary() -> str:
 
 def read_handoff() -> str | None:
     """Return the generated AI handoff, including saved investigation feedback."""
+    if not report_is_current("handoff", HANDOFF):
+        return None
     try:
         if HANDOFF.stat().st_size > MAX_HANDOFF_BYTES:
             return None
@@ -194,6 +232,8 @@ COPY_JS = r"""(function () {
 
 
 def current_families() -> list[dict]:
+    if not report_is_current("issues", ISSUES):
+        return []
     payload = read_json(ISSUES)
     if not payload or not isinstance(payload.get("families"), list):
         return []
@@ -1142,6 +1182,12 @@ def build_issues() -> str:
 
 
 def render_page(message: str = "", *, error: bool = False) -> bytes:
+    if not report_is_current("summary", REPORT):
+        status_note = ('<p class="error" role="alert">Latest audit incomplete or '
+                       'unverified. Earlier reports are hidden; check the app Log '
+                       'and restart the audit.</p>')
+    else:
+        status_note = ""
     notice = ('<p role="status" class="' + ('error' if error else 'notice') + '">'
               + escape(message) + '</p>') if message else ""
     page = """<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -1182,7 +1228,7 @@ pre{border:1px solid GrayText;border-radius:8px;padding:1rem;white-space:pre-wra
 overflow-wrap:anywhere;line-height:1.5;font-size:.9rem}.notice{font-weight:700}
 .error{font-weight:700;color:#b3261e}
 </style></head><body><header><h1>HA Audit</h1><p class="muted">Investigation feedback · focused review</p></header>
-<main>""" + notice + build_ai_export() + build_focus() + '<h2>Issues needing review</h2>' + build_issues() + """
+<main>""" + status_note + notice + build_ai_export() + build_focus() + '<h2>Issues needing review</h2>' + build_issues() + """
 <details class="full-summary"><summary>Show complete latest audit summary</summary><pre>""" + escape(read_summary()) + """</pre></details>
 <p class="muted">Investigation feedback is stored privately and preserved across audit runs.</p>
 </main><script src="copy.js" defer></script></body></html>"""
