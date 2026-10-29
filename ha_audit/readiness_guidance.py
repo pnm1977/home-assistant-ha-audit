@@ -80,6 +80,122 @@ def classify_generic_compatibility_evidence(report, *, installed_version, target
     return "review" if actual_review else "checked"
 
 
+def reconcile_dynamic_insufficient_evidence(
+    dynamic_report, generic_report, *, installed_version, target_version
+):
+    """Reconcile only *exact* official change groups with completed local rules.
+
+    A generic check cannot clear unrelated official changes. A partial,
+    corrupted, stale or unregistered report fails closed: original dynamic
+    uncertainty is preserved. This is evidence reconciliation, not a verdict.
+    """
+    from core_compatibility_rules import select_compatibility_rules
+
+    rows = dynamic_report.get("correlations") if isinstance(dynamic_report, dict) else None
+    summary = dynamic_report.get("summary") if isinstance(dynamic_report, dict) else None
+    recorded_count = (summary.get("insufficient_evidence_count")
+                      if isinstance(summary, dict) else None)
+    observed = []
+    rows_valid = isinstance(rows, list) and all(isinstance(r, dict) for r in rows)
+    if rows_valid:
+        for row in rows:
+            if row.get("correlation_status") == "insufficient_evidence":
+                observed.append({
+                    "release_family": row.get("release_family"),
+                    "heading": row.get("heading"),
+                })
+
+    # Retain the larger count if one source disagrees, never drop uncertainty.
+    original_count = max(
+        len(observed),
+        recorded_count if type(recorded_count) is int and recorded_count >= 0 else 0,
+    )
+    result = {
+        "status": "incomplete",
+        "original_insufficient_count": original_count,
+        "remaining_insufficient_count": original_count,
+        "resolved_groups": [],
+        "unresolved_groups": observed,
+    }
+    if (not rows_valid or type(recorded_count) is not int
+            or recorded_count != len(observed)
+            or any(not isinstance(x["release_family"], str)
+                   or not isinstance(x["heading"], str)
+                   or not x["release_family"] or not x["heading"] for x in observed)):
+        return result
+    official_total = summary.get("official_crossed_group_count")
+    if (official_total is not None
+            and (type(official_total) is not int or official_total != len(rows))):
+        return result
+    # Duplicate official groups make one-to-one attribution impossible.
+    keys = [(r["release_family"], r["heading"]) for r in observed]
+    if len(keys) != len(set(keys)):
+        return result
+    scope = dynamic_report.get("scope")
+    if (not isinstance(scope, dict)
+            or scope.get("dynamic_correlation_performed") is not True):
+        return result
+    collector = dynamic_report.get("collector_status")
+    if collector is not None and (not isinstance(collector, dict)
+                                  or collector.get("overall") != "ok"):
+        return result
+
+    if (classify_generic_compatibility_evidence(
+            generic_report, installed_version=installed_version,
+            target_version=target_version) not in ("checked", "review")):
+        return result
+    try:
+        selection = select_compatibility_rules(installed_version, target_version)
+    except (TypeError, ValueError):
+        return result
+    if selection.get("status") != "selected":
+        return result
+
+    registered = {r["rule_id"]: r for r in selection["selected_rules"]}
+    generic_rules = generic_report["rules"]
+    if len(generic_rules) != len(registered):
+        return result
+    matched = {}
+    for checked in generic_rules:
+        selected = registered.get(checked.get("rule_id"))
+        if (selected is None
+                or checked.get("introduced_in") != selected["introduced_in"]
+                or checked.get("official_group") != selected["official_group"]
+                or checked.get("policy_applied_from") != selected.get("policy_applied_from")
+                or checked["rule_id"] in matched):
+            return result
+        matched[checked["rule_id"]] = checked
+
+    # A descriptor is a deliberate exact mapping to an official group;
+    # generic heading/text similarity cannot establish equivalence.
+    evidence_by_group = {
+        (registered[rule_id]["introduced_in"], registered[rule_id]["official_group"]):
+            (rule_id, checked)
+        for rule_id, checked in matched.items()
+    }
+    if len(evidence_by_group) != len(matched):
+        # A group with several registered checks needs an explicit aggregation
+        # policy; never silently rely on the last result.
+        return result
+    resolved, unresolved = [], []
+    for row in observed:
+        evidence = evidence_by_group.get((row["release_family"], row["heading"]))
+        if evidence is None:
+            unresolved.append(row)
+        else:
+            rule_id, checked = evidence
+            resolved.append({
+                **row, "rule_id": rule_id, "outcome": checked["status"],
+            })
+    result.update({
+        "status": "reconciled" if resolved else "unchanged",
+        "remaining_insufficient_count": len(unresolved),
+        "resolved_groups": resolved,
+        "unresolved_groups": unresolved,
+    })
+    return result
+
+
 def evaluate_core_update_guidance(
     *,
     core_update_pending,
@@ -102,6 +218,7 @@ def evaluate_core_update_guidance(
     generic_check_report=None,
     generic_installed_version=None,
     generic_target_version=None,
+    dynamic_correlation_report=None,
 ):
     """Return conservative top-level Core update guidance.
 
@@ -172,12 +289,32 @@ def evaluate_core_update_guidance(
             "dynamic_correlation_incomplete"
         )
 
-    if _count(
-        dynamic_correlation_insufficient_count
-    ):
-        incomplete.append(
-            "dynamic_correlation_insufficient_evidence"
+    # Backward compatible: without a detailed dynamic report, retain the
+    # original aggregate insufficient count. This is intentionally fail-closed.
+    unresolved_dynamic_count = _count(dynamic_correlation_insufficient_count)
+    dynamic_reconciliation = None
+    if dynamic_correlation_report is not None:
+        dynamic_reconciliation = reconcile_dynamic_insufficient_evidence(
+            dynamic_correlation_report, generic_check_report,
+            installed_version=generic_installed_version,
+            target_version=generic_target_version,
         )
+        if (dynamic_reconciliation["status"] == "incomplete"
+                or dynamic_reconciliation["original_insufficient_count"]
+                != unresolved_dynamic_count):
+            # Disagreeing reports cannot reduce or conceal uncertainty.
+            incomplete.append("dynamic_reconciliation_incomplete")
+            unresolved_dynamic_count = max(
+                unresolved_dynamic_count,
+                dynamic_reconciliation["remaining_insufficient_count"],
+            )
+        else:
+            unresolved_dynamic_count = dynamic_reconciliation[
+                "remaining_insufficient_count"
+            ]
+
+    if unresolved_dynamic_count:
+        incomplete.append("dynamic_correlation_insufficient_evidence")
 
     if not correlation_validation_usable:
         incomplete.append(
@@ -215,11 +352,14 @@ def evaluate_core_update_guidance(
                 incomplete.append("generic_compatibility_review_required")
 
     if incomplete:
-        return {
+        result = {
             "status": STATE_INCOMPLETE,
             "assessment_complete": False,
             "reason_codes": incomplete,
         }
+        if dynamic_reconciliation is not None:
+            result["dynamic_reconciliation"] = dynamic_reconciliation
+        return result
 
     review = []
 
@@ -253,14 +393,20 @@ def evaluate_core_update_guidance(
         )
 
     if review:
-        return {
+        result = {
             "status": STATE_REVIEW,
             "assessment_complete": True,
             "reason_codes": review,
         }
+        if dynamic_reconciliation is not None:
+            result["dynamic_reconciliation"] = dynamic_reconciliation
+        return result
 
-    return {
+    result = {
         "status": STATE_CLEAR,
         "assessment_complete": True,
         "reason_codes": [],
     }
+    if dynamic_reconciliation is not None:
+        result["dynamic_reconciliation"] = dynamic_reconciliation
+    return result
