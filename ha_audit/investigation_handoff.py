@@ -17,6 +17,7 @@ import tempfile
 from datetime import datetime, timezone
 
 from power_state_evidence import check_power_state
+from maintenance_window_evidence import check_maintenance_window
 from pathlib import Path
 
 CONTEXT_FILE = Path("/config/investigation_context.json")
@@ -27,7 +28,9 @@ END_MARKER = "<!-- HA_AUDIT_INVESTIGATION_CONTEXT_END -->"
 MAX_BYTES = 1024 * 1024
 MAX_FEEDBACK_ITEMS = 200
 MAX_POWER_CHECKS = 4  # Bound Recorder requests during the audit.
+MAX_MAINTENANCE_CHECKS = 8  # Bounded local-file checks; no extra HA requests.
 EVIDENCE_FILE = Path("/config/investigation_evidence.json")
+MAINTENANCE_EVIDENCE_FILE = Path("/config/investigation_maintenance_evidence.json")
 SWITCH_ID = re.compile(r"switch\.[a-z0-9_]+\Z")
 VALID_STATUSES = {"Investigating", "Monitoring", "Explained", "Resolved"}
 
@@ -183,6 +186,195 @@ def save_evidence_snapshot(report: dict) -> bool:
                 pass
 
 
+def gather_maintenance_evidence(context: dict, findings: dict) -> dict:
+    """Check each current finding with a saved recurring maintenance schedule.
+
+    This is *time correlation*, not verification that a reboot took place.
+    Only the actual source-record first/last timestamps can be classified;
+    HA's deduplicated occurrence counts are not a series of event times.
+    """
+    report: dict = {
+        "schema_version": 1,
+        "generated_at_utc": utc_now(),
+        "source": "Home Assistant System Log source-record timestamps",
+        "scope": "Up to four first/last timestamps per finding; unsampled errors unassessed",
+        "changes_audit_priorities": False,
+        "findings": {},
+    }
+    investigations = context.get("investigations")
+    families = findings.get("families")
+    if not isinstance(investigations, dict) or not isinstance(families, list):
+        return report
+
+    for family in families:
+        if len(report["findings"]) >= MAX_MAINTENANCE_CHECKS:
+            break
+        if not isinstance(family, dict):
+            continue
+        fingerprint, family_id = family.get("stable_fingerprint"), family.get("family_id")
+        if not isinstance(fingerprint, str) or not isinstance(family_id, str):
+            continue
+        saved = investigations.get(fingerprint)
+        if not isinstance(saved, dict):
+            continue
+        window = saved.get("maintenance_window")
+        if not isinstance(window, dict):
+            continue
+
+        try:
+            checked = check_maintenance_window(family_id, window)
+        except Exception:
+            # A malformed schedule or evidence file must not stop the audit.
+            checked = {
+                "status": "unavailable", "message": "Maintenance check failed",
+                "samples": [],
+            }
+
+        raw_samples = checked.get("samples")
+        if not isinstance(raw_samples, list):
+            raw_samples = []
+        counts = {"inside": 0, "outside": 0, "unknown": 0}
+        samples = []
+        for raw in raw_samples[:4]:
+            if not isinstance(raw, dict):
+                continue
+            match = raw.get("window_match")
+            match = match if match in counts else "unknown"
+            counts[match] += 1
+            samples.append({
+                "observed_at_utc": one_line(raw.get("observed_at_utc", ""), 50),
+                "observed_at_local": one_line(raw.get("observed_at_local", ""), 50),
+                "window_match": match,
+                "evidence": one_line(raw.get("evidence", ""), 140),
+            })
+
+        if checked.get("status") != "ok":
+            interpretation = "Unable to verify scheduled maintenance against log timestamps"
+            recommendation = "Keep monitoring; do not assume errors occurred during maintenance."
+        elif counts["outside"]:
+            interpretation = "Some sampled errors occurred outside scheduled maintenance"
+            recommendation = "Investigate outside-window samples; keep monitoring."
+        elif counts["unknown"]:
+            interpretation = "Some sampled timestamps cannot be classified"
+            recommendation = "Verify UNKNOWN samples before drawing a conclusion."
+        elif counts["inside"]:
+            interpretation = "All sampled timestamps match the configured schedule"
+            recommendation = "Time matches support, but do not prove, a maintenance explanation. Keep monitoring."
+        else:
+            interpretation = "No usable timestamps were sampled"
+            recommendation = "Keep monitoring until timestamp evidence is available."
+
+        occurrences = checked.get("source_occurrence_count")
+        if type(occurrences) is not int or not 0 <= occurrences <= 1_000_000_000:
+            occurrences = None
+        report["findings"][fingerprint] = {
+            "title": one_line(family.get("title", "Unnamed finding"), 150),
+            "family_id": family_id,
+            "audit_priority": one_line(family.get("final_priority", ""), 20),
+            "user_status": one_line(saved.get("status", ""), 20),
+            "feedback_updated_at_utc": one_line(saved.get("updated_at_utc", ""), 50),
+            "maintenance_window": window,
+            "source_status": one_line(checked.get("status", "unavailable"), 32),
+            "source_message": one_line(checked.get("message", ""), 200),
+            "source_occurrence_count": occurrences,
+            "sample_count": len(samples),
+            "counts": counts,
+            "interpretation": interpretation,
+            "recommendation": recommendation,
+            "samples": samples,
+        }
+    return report
+
+
+def save_maintenance_snapshot(report: dict) -> bool:
+    """Save a *separate* atomic snapshot, without touching Sonos evidence."""
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(
+            prefix=".ha-audit-maintenance-", suffix=".tmp",
+            dir=MAINTENANCE_EVIDENCE_FILE.parent,
+        )
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(report, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, MAINTENANCE_EVIDENCE_FILE)
+        return True
+    except OSError:
+        return False
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def describe_maintenance_window(window: dict) -> str:
+    """Render saved user schedule as data, not as an independently proven event."""
+    frequency = one_line(window.get("schedule", "daily"), 32)
+    weekdays = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    if frequency == "weekly":
+        selected = window.get("weekdays", [])
+        if isinstance(selected, list):
+            frequency += " (" + ", ".join(weekdays[d] for d in selected
+                  if type(d) is int and 0 <= d <= 6) + ")"
+    elif frequency == "monthly_date":
+        frequency += " (day " + one_line(window.get("day_of_month", "?"), 4) + ")"
+    elif frequency == "monthly_weekday":
+        day = window.get("weekday")
+        weekday = weekdays[day] if type(day) is int and 0 <= day <= 6 else "?"
+        frequency += " (" + one_line(window.get("occurrence", "?"), 10) + " " + weekday + ")"
+    return (frequency + ", " + one_line(window.get("start_local", "?"), 5)
+            + "–" + one_line(window.get("end_local", "?"), 5)
+            + " (" + one_line(window.get("timezone", "?"), 64) + ")")
+
+
+def maintenance_evidence_lines(fingerprint: str, report: dict) -> list[str]:
+    evidence = report.get("findings", {}).get(fingerprint)
+    if not isinstance(evidence, dict):
+        return []
+    counts = evidence["counts"]
+    lines = [
+        "- **Automatic maintenance-window check (UTC):** "
+        + one_line(report.get("generated_at_utc", ""), 50),
+        "- **User-configured maintenance schedule:** "
+        + describe_maintenance_window(evidence["maintenance_window"]),
+        "- **Sampled source-record timestamps:** "
+        + str(evidence["sample_count"])
+        + "; INSIDE " + str(counts["inside"])
+        + ", OUTSIDE " + str(counts["outside"])
+        + ", UNKNOWN " + str(counts["unknown"]),
+    ]
+    occurrences = evidence.get("source_occurrence_count")
+    if occurrences is not None:
+        lines.append("- **Grouped log occurrences:** " + str(occurrences)
+                     + " (not individually timestamped or classified)")
+    lines.extend([
+        "- **Maintenance interpretation:** " + evidence["interpretation"],
+        "- **Suggested next action:** " + evidence["recommendation"],
+    ])
+    if not evidence["samples"]:
+        lines.append("- **Evidence availability:** " + (
+            evidence["source_message"] or "No usable source timestamps"))
+    else:
+        for sample in evidence["samples"]:
+            lines.append(
+                "  - `" + sample["observed_at_utc"] + "` (UTC) — "
+                + sample["window_match"].upper() + " (local: `"
+                + sample["observed_at_local"] + "`)"
+            )
+    lines.append(
+        "- **Limitation:** Time matching does not prove a scheduled reboot "
+        "happened or caused the error. Only sampled first/last log timestamps "
+        "were checked. All other occurrences are unassessed. "
+        "Original audit priority and user status unchanged."
+    )
+    return lines
+
+
 def evidence_lines(fingerprint: str, report: dict) -> list[str]:
     evidence = report.get("findings", {}).get(fingerprint)
     if not isinstance(evidence, dict):
@@ -216,7 +408,8 @@ def evidence_lines(fingerprint: str, report: dict) -> list[str]:
     return lines
 
 
-def make_appendix(context: dict, findings: dict, evidence: dict | None = None) -> str:
+def make_appendix(context: dict, findings: dict, evidence: dict | None = None,
+                  maintenance_evidence: dict | None = None) -> str:
     investigations = context.get("investigations")
     if context.get("schema_version") != 1 or not isinstance(investigations, dict):
         return ""
@@ -229,6 +422,7 @@ def make_appendix(context: dict, findings: dict, evidence: dict | None = None) -
     } if isinstance(found, list) else {}
 
     evidence = evidence or {}
+    maintenance_evidence = maintenance_evidence or {}
     records = []
     for fingerprint, data in list(investigations.items())[:MAX_FEEDBACK_ITEMS]:
         if not isinstance(fingerprint, str) or not isinstance(data, dict):
@@ -289,6 +483,12 @@ def make_appendix(context: dict, findings: dict, evidence: dict | None = None) -
             if verification:
                 lines.extend(verification)
                 lines.append("")
+            maintenance_verification = maintenance_evidence_lines(
+                row["fingerprint"], maintenance_evidence
+            )
+            if maintenance_verification:
+                lines.extend(maintenance_verification)
+                lines.append("")
     lines += [END_MARKER, ""]
     return "\n".join(lines)
 
@@ -338,7 +538,9 @@ def main() -> None:
     # This checks Recorder at audit time; it does not modify audit findings.
     evidence = gather_power_evidence(context, findings)
     save_evidence_snapshot(evidence)
-    appendix = make_appendix(context, findings, evidence)
+    maintenance_evidence = gather_maintenance_evidence(context, findings)
+    save_maintenance_snapshot(maintenance_evidence)
+    appendix = make_appendix(context, findings, evidence, maintenance_evidence)
     update_handoff(HANDOFF_FILE, appendix)
 
 
