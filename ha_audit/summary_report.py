@@ -28,6 +28,7 @@ RELEASE_EVIDENCE_FILE = "/config/release_evidence_audit.json"
 COMPATIBILITY_COVERAGE_FILE = "/config/compatibility_coverage_audit.json"
 UPGRADE_CORRELATION_FILE = "/config/upgrade_correlation_audit.json"
 CORRELATION_VALIDATION_FILE = "/config/correlation_validation_audit.json"
+GENERIC_CORE_CHECKS_FILE = "/config/core_compatibility_checks_audit.json"
 OUTPUT_FILE = "/config/ha_audit_latest.txt"
 
 def load_json(path):
@@ -234,6 +235,9 @@ upgrade_correlation_report = load_json_optional(
 )
 correlation_validation_report = load_json_optional(
     CORRELATION_VALIDATION_FILE
+)
+generic_core_checks = load_json_optional(
+    GENERIC_CORE_CHECKS_FILE
 )
 
 # ------------------------------------------------------------
@@ -1910,6 +1914,45 @@ render_upgrade_sections(
     add,
     locals(),
 )
+
+# Local generic compatibility checks supplement the established Core guidance.
+# Only display results for the exact pending upgrade. In particular, a clean
+# YAML-only check must not silently clear unrelated dynamic evidence gaps.
+if core_update_pending:
+    add("")
+    add("GENERIC CORE COMPATIBILITY CHECKS")
+    add("-" * 58)
+    generic_status = generic_core_checks.get("status")
+    generic_matches_window = (
+        generic_core_checks.get("installed_version") == core_installed_version
+        and generic_core_checks.get("target_version") == core_target_version
+    )
+    generic_rules = generic_core_checks.get("rules", [])
+    generic_summary = generic_core_checks.get("summary", {})
+    if not isinstance(generic_rules, list):
+        generic_rules = []
+    if not isinstance(generic_summary, dict):
+        generic_summary = {}
+    if not generic_matches_window or not generic_status:
+        add("Local checks:              UNAVAILABLE / DIFFERENT UPGRADE")
+    elif generic_status != "local_checks_completed":
+        add("Local checks:              INCOMPLETE")
+        add("See core_compatibility_checks_audit.json for details.")
+    else:
+        check_count = generic_core_checks.get("selected_rule_count", 0)
+        affected = generic_summary.get("review_required_count", 0)
+        incomplete = generic_summary.get("incomplete_rule_count", 0)
+        inspected = generic_summary.get("checked_yaml_file_count", 0)
+        add(f"Selected checks:            {check_count}")
+        add(f"Checked YAML files:         {inspected}")
+        add(f"Checks requiring review:    {affected}")
+        add(f"Incomplete checks:          {incomplete}")
+        if affected:
+            add("See core_compatibility_checks_audit.json for exact findings.")
+        elif not incomplete and check_count:
+            add("No affected usage found by selected checks only.")
+    add("These checks do not replace the Core readiness assessment.")
+
 # Configuration
 # ------------------------------------------------------------
 
