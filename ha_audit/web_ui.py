@@ -5,7 +5,8 @@ Feedback is deliberately separate from audit evidence and priority calculations.
 Physical power-control relationships and recurring maintenance schedules can
 be recorded as structured user context, not treated as verified causes.
 Last-audit power and maintenance-window checks are shown as sampled evidence
-only, never proof of cause or reasons to suppress issues.
+only, never proof of cause or reasons to suppress issues. Latest-activity
+indicators reuse HA Audit's independent cross-audit recurrence evidence.
 It is stored in the app's private /config directory and survives audit runs.
 """
 
@@ -32,6 +33,7 @@ HANDOFF = Path("/config/ha_audit_ai_handoff.md")
 CONTEXT = Path("/config/investigation_context.json")
 POWER_SNAPSHOT = Path("/config/investigation_evidence.json")
 MAINTENANCE_SNAPSHOT = Path("/config/investigation_maintenance_evidence.json")
+RECURRENCE_REPORT = Path("/config/log_recurrence.json")
 MAX_REPORT_BYTES = 256 * 1024
 MAX_HANDOFF_BYTES = 256 * 1024
 MAX_JSON_BYTES = 1024 * 1024
@@ -196,6 +198,96 @@ def current_families() -> list[dict]:
     if not payload or not isinstance(payload.get("families"), list):
         return []
     return [family for family in payload["families"] if isinstance(family, dict)]
+
+
+
+def latest_activity_by_fingerprint() -> dict[str, str] | None:
+    """Read the existing independent cross-audit recurrence evidence.
+
+    Home Assistant retains deduplicated System Log records. A historical
+    RECURRING 24H+ class does not say whether this *audit* found new activity.
+    Reuse log_recurrence.json's last_activity_status instead of inferring
+    fresh errors from first/last timestamps or cumulative occurrence counts.
+
+    Require both reports to come from the same audit run. If this cannot be
+    established, omit activity claims rather than reporting 'no new errors'.
+    """
+    report = read_json(RECURRENCE_REPORT)
+    issues = read_json(ISSUES)
+    if (not report or not issues or report.get("status") != "ok"
+            or not isinstance(report.get("families"), list)
+            or report.get("audit_version") != issues.get("audit_version")):
+        return None
+    try:
+        recurrence_at = datetime.fromisoformat(
+            str(report["generated_at"]).replace("Z", "+00:00")
+        )
+        priority_at = datetime.fromisoformat(
+            str(issues["generated_at"]).replace("Z", "+00:00")
+        )
+        difference = (priority_at - recurrence_at).total_seconds()
+        if (recurrence_at.tzinfo is None or priority_at.tzinfo is None
+                or not 0 <= difference <= 30):
+            return None
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+    # Only current, securely matched records. History may also include
+    # findings which are no longer present in this audit.
+    current = {
+        family.get("stable_fingerprint"): family.get("family_id")
+        for family in issues.get("families", [])
+        if isinstance(family, dict)
+        and isinstance(family.get("stable_fingerprint"), str)
+        and isinstance(family.get("family_id"), str)
+    }
+    statuses = {}
+    for row in report["families"]:
+        if not isinstance(row, dict) or row.get("seen_in_latest_audit") is not True:
+            continue
+        key = row.get("stable_fingerprint")
+        if (not isinstance(key, str)
+                or row.get("family_id") != current.get(key)):
+            continue
+        status = row.get("last_activity_status")
+        if status in ("NEW ACTIVITY", "RETAINED EVIDENCE", "BASELINE"):
+            statuses[key] = status
+    return statuses
+
+
+def activity_status_line(family: dict, statuses: dict[str, str] | None) -> str:
+    """Careful run-to-run context, never a fault verdict or priority change."""
+    key = family.get("stable_fingerprint")
+    status = statuses.get(key) if statuses is not None else None
+    messages = {
+        "NEW ACTIVITY": (
+            "New System Log activity observed since the previous audit. "
+            "The timestamp of any user repair is not assessed."
+        ),
+        "RETAINED EVIDENCE": (
+            "Retained log evidence; no independently new activity detected in "
+            "this audit. This does not prove the errors have stopped."
+        ),
+        "BASELINE": (
+            "First audit observation; no earlier comparison available."
+        ),
+    }
+    if status not in messages:
+        return ''
+    return ('<div class="activity-evidence muted"><strong>Latest audit activity:</strong> '
+            + escape(messages[status]) + '</div>')
+
+
+def activity_focus_hint(family: dict, statuses: dict[str, str] | None) -> str:
+    """A short *last run* indicator for already-monitored/explained issues."""
+    status = statuses.get(family.get("stable_fingerprint")) if statuses else None
+    if status == "NEW ACTIVITY":
+        return "new activity in latest audit"
+    if status == "RETAINED EVIDENCE":
+        return "no new activity detected in latest audit"
+    if status == "BASELINE":
+        return "first observation; no comparison yet"
+    return ""
 
 
 def load_context() -> dict | None:
@@ -786,6 +878,7 @@ def build_focus() -> str:
     investigations = context["investigations"]
     power_snapshot = last_audit_power_snapshot()
     maintenance_snapshot = last_audit_maintenance_snapshot()
+    activity_statuses = latest_activity_by_fingerprint()
     priority_order = {"VERY HIGH": 0, "HIGH": 1, "MEDIUM": 2}
     groups: dict[str, list[dict]] = {
         "Investigate / continue": [],
@@ -861,6 +954,10 @@ def build_focus() -> str:
                 maintenance_label = maintenance_focus_label(item, saved, maintenance_snapshot)
                 if maintenance_label:
                     extra += ' <span class="muted">(' + escape(maintenance_label) + ')</span>'
+            if title in ("Monitoring", "Explanation to verify", "Sampled power-off — no immediate action"):
+                hint = activity_focus_hint(item, activity_statuses)
+                if hint:
+                    extra += ' <span class="muted">(' + escape(hint) + ')</span>'
             examples.append(
                 '<li><strong>' + escape(item.get("final_priority", "")) + '</strong> '
                 + escape(item.get("title", "Unnamed finding")) + extra + '</li>'
@@ -876,7 +973,9 @@ def build_focus() -> str:
     return (
         '<h2>Where to focus</h2>'
         '<p class="muted">Investigation recommendations consider saved feedback '
-        'and last-audit sampled power/maintenance evidence. A most-recent sample '
+        'and last-audit sampled power/maintenance evidence. Latest activity '
+        'indicators use independent run-to-run System Log comparisons when available. '
+        'A most-recent sample '
         'is not proof of new activity; historical outside-window evidence remains '
         'visible. This does <strong>not</strong> '
         'change original technical priority, recurrence, investigation status, '
@@ -894,6 +993,7 @@ def build_issues() -> str:
     investigations = context.get("investigations", {}) if context else {}
     power_snapshot = last_audit_power_snapshot()
     maintenance_snapshot = last_audit_maintenance_snapshot()
+    activity_statuses = latest_activity_by_fingerprint()
     if not context:
         return '<p class="error">Investigation storage cannot be read. Feedback is disabled.</p>'
 
@@ -979,6 +1079,7 @@ def build_issues() -> str:
         # Keep the overview concise: notes stay inside Review / update.
         # Show last-run evidence without a live Recorder request on page load.
         summary = (escape(old_status)
+                   + activity_status_line(family, activity_statuses)
                    + show_power_summary(family, saved, power_snapshot)
                    + show_maintenance_summary(family, saved, maintenance_snapshot))
         feedback_form = (
