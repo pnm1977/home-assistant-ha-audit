@@ -18,6 +18,9 @@ on:
       - "ha_audit/core_compatibility_runner.py"
       - "ha_audit/test_core_compatibility_runner.py"
       - "ha_audit/test_core_compatibility_framework.py"
+      - "ha_audit/summary_report.py"
+      - "ha_audit/readiness_guidance.py"
+      - "ha_audit/test_generic_readiness_guidance.py"
       - "ha_audit/run.sh"
       - ".github/workflows/investigation-evidence-test.yml"
 
@@ -36,6 +39,9 @@ on:
       - "ha_audit/core_compatibility_runner.py"
       - "ha_audit/test_core_compatibility_runner.py"
       - "ha_audit/test_core_compatibility_framework.py"
+      - "ha_audit/summary_report.py"
+      - "ha_audit/readiness_guidance.py"
+      - "ha_audit/test_generic_readiness_guidance.py"
       - "ha_audit/run.sh"
       - ".github/workflows/investigation-evidence-test.yml"
 
@@ -75,3 +81,6 @@ jobs:
 
       - name: Run generic Core compatibility runner regression tests
         run: python3 ha_audit/test_core_compatibility_runner.py
+
+      - name: Run generic Core readiness guidance regression tests
+        run: python3 ha_audit/test_generic_readiness_guidance.py
