@@ -2,8 +2,9 @@
 """HA Audit Ingress UI: findings and persistent user investigation feedback.
 
 Feedback is deliberately separate from audit evidence and priority calculations.
-Physical power-control relationships can be recorded as structured user context,
-but are not accepted as verified evidence or reasons to suppress issues.
+Physical power-control relationships can be recorded as structured user context.
+Last-audit Recorder checks are shown as sampled evidence only, never proof of
+cause or reasons to suppress issues.
 It is stored in the app's private /config directory and survives audit runs.
 """
 
@@ -28,6 +29,7 @@ REPORT = Path("/config/ha_audit_latest.txt")
 ISSUES = Path("/config/log_priority_final.json")
 HANDOFF = Path("/config/ha_audit_ai_handoff.md")
 CONTEXT = Path("/config/investigation_context.json")
+POWER_SNAPSHOT = Path("/config/investigation_evidence.json")
 MAX_REPORT_BYTES = 256 * 1024
 MAX_HANDOFF_BYTES = 256 * 1024
 MAX_JSON_BYTES = 1024 * 1024
@@ -175,6 +177,90 @@ def load_context() -> dict | None:
             or not isinstance(data.get("investigations"), dict)):
         return None
     return data
+
+
+def last_audit_power_snapshot() -> dict | None:
+    """Read last audit's saved evidence; never query Recorder on page load.
+
+    Ensure a new log-priority run cannot accidentally display evidence saved
+    by an earlier run when the power-evidence stage did not complete.
+    """
+    snapshot = read_json(POWER_SNAPSHOT)
+    if (not snapshot or snapshot.get("schema_version") != 1
+            or not isinstance(snapshot.get("findings"), dict)):
+        return None
+    try:
+        if POWER_SNAPSHOT.stat().st_mtime + 2 < ISSUES.stat().st_mtime:
+            return None
+    except OSError:
+        return None
+    return snapshot
+
+
+def evidence_for_current_finding(family: dict, saved: dict,
+                                 snapshot: dict | None) -> dict | None:
+    """Only show evidence for the same current issue and saved relationship."""
+    if not snapshot:
+        return None
+    key = family.get("stable_fingerprint")
+    candidate = snapshot["findings"].get(key) if isinstance(key, str) else None
+    if not isinstance(candidate, dict):
+        return None
+    if (candidate.get("family_id") != family.get("family_id")
+            or candidate.get("power_entity_id") != saved.get("power_entity_id")
+            or candidate.get("feedback_updated_at_utc") != saved.get("updated_at_utc")
+            or candidate.get("audit_priority") != family.get("final_priority")):
+        return None
+    counts = candidate.get("counts")
+    count = candidate.get("sample_count")
+    if (not isinstance(counts, dict) or not isinstance(count, int)
+            or isinstance(count, bool) or not 0 <= count <= 4):
+        return None
+    if any(type(counts.get(state)) is not int or not 0 <= counts[state] <= 4
+           for state in ("off", "on", "unknown")):
+        return None
+    if sum(counts[state] for state in ("off", "on", "unknown")) != count:
+        return None
+    return candidate
+
+
+def show_power_summary(family: dict, saved: dict, snapshot: dict | None) -> str:
+    """A short last-audit evidence line beside the user's investigation.
+
+    The original HIGH/MEDIUM priority always remains in its own column.
+    This is evidence about *sampled* log timestamps, not a fault verdict.
+    """
+    power_id = saved.get("power_entity_id")
+    if not isinstance(power_id, str) or not re.fullmatch(r"switch\.[a-z0-9_]+", power_id):
+        return ""
+    fingerprint = family.get("stable_fingerprint", "")
+    link = ('<a href="verify-power?fingerprint=' + escape(quote(fingerprint, safe=""))
+            + '">Check current evidence</a>')
+    sample = evidence_for_current_finding(family, saved, snapshot)
+    if sample is None:
+        return ('<div class="power-evidence"><strong>Power evidence:</strong> '
+                'No matching completed-audit check available. ' + link + '</div>')
+    counts = sample["counts"]
+    off, on, unknown = counts["off"], counts["on"], counts["unknown"]
+    if on:
+        judgement = "Some sampled errors happened with power ON; investigate."
+    elif unknown:
+        judgement = "Power history is incomplete; do not dismiss unknown samples."
+    elif off:
+        judgement = "All sampled errors happened with power OFF; consistent with intentional shutdown."
+    else:
+        judgement = "No usable log timestamp samples; no conclusion."
+    timestamp = snapshot.get("generated_at_utc", "") if snapshot else ""
+    checked = ""
+    if isinstance(timestamp, str) and len(timestamp) <= 40:
+        checked = '<div class="muted">Last audit check: ' + escape(timestamp) + '</div>'
+    return (
+        '<div class="power-evidence"><strong>Power evidence — sampled log times:</strong> '
+        'OFF ' + str(off) + ' · ON ' + str(on) + ' · UNKNOWN ' + str(unknown)
+        + '<div>' + escape(judgement) + '</div>'
+        + '<div class="muted">Not every error was checked. Original priority unchanged.</div>'
+        + checked + link + '</div>'
+    )
 
 
 def atomic_save(data: dict) -> None:
@@ -404,6 +490,7 @@ def build_issues() -> str:
 
     context = load_context()
     investigations = context.get("investigations", {}) if context else {}
+    power_snapshot = last_audit_power_snapshot()
     if not context:
         return '<p class="error">Investigation storage cannot be read. Feedback is disabled.</p>'
 
@@ -437,12 +524,9 @@ def build_issues() -> str:
             + '>' + escape(item) + '</option>'
             for item in STATUSES
         )
-        # Keep the overview concise: details and existing notes stay inside Review / update.
-        summary = escape(old_status)
-        if re.fullmatch(r"switch\.[a-z0-9_]+", old_power_entity):
-            summary += ('<div><a href="verify-power?fingerprint='
-                        + escape(quote(fingerprint, safe=""))
-                        + '">Check power-state evidence</a></div>')
+        # Keep the overview concise: notes stay inside Review / update.
+        # Show last-run evidence without a live Recorder request on page load.
+        summary = escape(old_status) + show_power_summary(family, saved, power_snapshot)
         feedback_form = (
             '<details><summary>Review / update</summary>'
             '<form method="post" action="">'
@@ -505,6 +589,9 @@ form textarea{box-sizing:border-box;width:100%;min-height:11rem;line-height:1.5;
 .focus-card p{margin:.5rem 0}.focus-card ul{padding-left:1.4rem;margin:.65rem 0}
 .focus-card li{font-size:.9rem;margin:.35rem 0}
 .focus-count{font-weight:400;opacity:.75}
+.power-evidence{border-left:3px solid GrayText;padding:.35rem 0 .35rem .65rem;margin-top:.6rem;
+font-size:.87rem;line-height:1.5;max-width:370px}
+.power-evidence a{display:inline-block;margin-top:.25rem}
 pre{border:1px solid GrayText;border-radius:8px;padding:1rem;white-space:pre-wrap;
 overflow-wrap:anywhere;line-height:1.5;font-size:.9rem}.notice{font-weight:700}
 .error{font-weight:700;color:#b3261e}
