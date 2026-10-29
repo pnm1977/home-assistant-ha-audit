@@ -37,6 +37,7 @@ RECURRENCE_REPORT = Path("/config/log_recurrence.json")
 RUN_STATE = Path("/config/ha_audit_run_status.json")
 CORE_READINESS = Path("/config/update_readiness_audit.json")
 CORE_CORRELATION = Path("/config/upgrade_correlation_audit.json")
+CORE_GENERIC_CHECKS = Path("/config/core_compatibility_checks_audit.json")
 MAX_REPORT_BYTES = 256 * 1024
 MAX_HANDOFF_BYTES = 256 * 1024
 MAX_JSON_BYTES = 1024 * 1024
@@ -367,6 +368,7 @@ def current_manual_review_scope() -> tuple[str, str, list[dict]] | None:
             or not isinstance(target, str) or not target):
         return None
     # When audit run state exists, both inputs must belong to this run.
+    run_started_timestamp = None
     if RUN_STATE.exists():
         state = read_json(RUN_STATE)
         try:
@@ -375,6 +377,7 @@ def current_manual_review_scope() -> tuple[str, str, list[dict]] | None:
                     or any(path.stat().st_mtime + 2 < started.timestamp()
                            for path in (CORE_READINESS, CORE_CORRELATION))):
                 return None
+            run_started_timestamp = started.timestamp()
         except (KeyError, TypeError, ValueError, OSError, OverflowError):
             return None
     groups, seen = [], set()
@@ -392,6 +395,34 @@ def current_manual_review_scope() -> tuple[str, str, list[dict]] | None:
         groups.append({"release_family": release, "heading": heading})
     if len(groups) != summary["insufficient_evidence_count"]:
         return None
+
+    # Dynamic correlation records the *raw* insufficient-evidence groups.
+    # The readiness engine separately reconciles them against completed
+    # generic compatibility checks. Use that same engine here rather than
+    # asking the user to manually confirm a change already assessed locally.
+    generic = read_json(CORE_GENERIC_CHECKS)
+    if generic is not None and run_started_timestamp is not None:
+        try:
+            if CORE_GENERIC_CHECKS.stat().st_mtime + 2 < run_started_timestamp:
+                generic = None  # Do not display an earlier run's clearance.
+        except OSError:
+            generic = None
+    if generic is not None:
+        from readiness_guidance import reconcile_dynamic_insufficient_evidence
+        reconciled = reconcile_dynamic_insufficient_evidence(
+            correlation, generic,
+            installed_version=installed, target_version=target,
+        )
+        if (reconciled.get("status") == "reconciled"
+                and reconciled.get("original_insufficient_count") == len(groups)
+                and reconciled.get("remaining_insufficient_count")
+                == len(reconciled.get("unresolved_groups", []))):
+            remaining = {
+                (row["release_family"], row["heading"])
+                for row in reconciled["unresolved_groups"]
+            }
+            groups = [row for row in groups
+                      if (row["release_family"], row["heading"]) in remaining]
     return installed, target, groups
 
 
