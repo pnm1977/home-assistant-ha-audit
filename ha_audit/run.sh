@@ -155,3 +155,8 @@ else
 fi
 
 bashio::log.info "HA Audit finished"
+
+
+# Keep the app running after the audit so Home Assistant Ingress can serve the latest report.
+bashio::log.info "Starting HA Audit read-only web interface"
+exec python3 /web_ui.py
