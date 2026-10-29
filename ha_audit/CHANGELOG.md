@@ -1,6 +1,41 @@
 # Changelog
 
-## 0.8.x
+## 0.8.x — Investigation Web UI and evidence-based guidance (through v0.8.23, 29 October 2026)
+
+### Web UI and investigation workflow
+
+- Added a Home Assistant Ingress Web UI that remains available after an audit completes while the app is running. Starting the app runs an audit; keeping the Web UI open does not continuously rescan Home Assistant.
+- Added **Where to focus** to separate practical investigation recommendations from underlying System Log priorities.
+- Added persistent per-finding investigation statuses: **Investigating**, **Monitoring**, **Explained**, and **Resolved**.
+- Added user-editable investigation notes (up to 4,000 characters), with saved change history retained in the app's private configuration storage across runs and updates when that storage is preserved.
+- Added in-app access to the latest audit report and **Copy for AI** / **Download handoff** actions.
+- Kept user-entered context separate from independently collected evidence. Marking a finding Explained or Resolved does not automatically prove that future errors are harmless.
+
+### Independent evidence checks
+
+- Added an optional **power-control switch** relationship for findings involving deliberately powered-off devices.
+- Added read-only comparison of **sampled** System Log timestamps against the linked switch's Recorder state, reporting **OFF**, **ON**, or **UNKNOWN**.
+- Added a cautious **Sampled power-off — no immediate action** investigation category for explained findings whose checked samples all occurred with the switch OFF. ON, UNKNOWN, or insufficient evidence still requires appropriate follow-up.
+- Added configurable scheduled-maintenance windows with **daily**, **selected weekdays**, **monthly calendar date**, and **monthly weekday occurrence** frequencies.
+- Added time-zone-aware maintenance matching, including daylight-saving and overnight windows, reporting **INSIDE**, **OUTSIDE**, or **UNKNOWN** for sampled log timestamps.
+- Added maintenance-evidence explanations that distinguish the most recent sampled timestamp from older outside-window evidence.
+- Added **NEW ACTIVITY**, **RETAINED EVIDENCE**, and **BASELINE** labels based on existing cross-audit System Log history, avoiding the assumption that retained log entries represent new failures.
+
+### Evidence presentation and safety
+
+- Displayed sampled power and maintenance evidence directly alongside investigation notes and recommendations, with a way to inspect detailed verification results.
+- Included saved investigation context, structured relationships, sampled evidence, limitations, and suggested next checks in the AI / LLM handoff.
+- Preserved original technical priorities, recurrence classifications, raw findings, and investigation statuses when adding evidence-based guidance.
+- Explicitly identified Home Assistant System Log deduplication and limited timestamp sampling: a match does **not** classify every grouped occurrence or prove causation.
+- Kept absent Recorder history, unverified timestamps, and missing or stale evidence as **unknown**, not proof of a harmless error.
+- Continued to operate read-only with respect to Home Assistant; investigation feedback changes only HA Audit's private records.
+
+### Documentation
+
+- Refreshed the main README and User Guide for the persistent Web UI, investigation workflow, optional evidence settings, AI handoff, and safety limitations.
+- Clarified that the app's Web UI remains available after the audit finishes and that a new audit requires restarting the app.
+
+## 0.8.x — Earlier improvements
 
 - Added structured AI evidence in `ha_audit_ai_evidence.json` to complement the existing human-readable AI / LLM handoff.
 - Added machine-readable evidence covering system information, configuration findings, System Log issues, recurrence, availability, Repairs, and identified evidence gaps.
