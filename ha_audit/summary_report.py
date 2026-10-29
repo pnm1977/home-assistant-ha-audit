@@ -29,6 +29,7 @@ COMPATIBILITY_COVERAGE_FILE = "/config/compatibility_coverage_audit.json"
 UPGRADE_CORRELATION_FILE = "/config/upgrade_correlation_audit.json"
 CORRELATION_VALIDATION_FILE = "/config/correlation_validation_audit.json"
 GENERIC_CORE_CHECKS_FILE = "/config/core_compatibility_checks_audit.json"
+INVESTIGATION_CONTEXT_FILE = "/config/investigation_context.json"
 OUTPUT_FILE = "/config/ha_audit_latest.txt"
 
 def load_json(path):
@@ -238,6 +239,20 @@ correlation_validation_report = load_json_optional(
 )
 generic_core_checks = load_json_optional(
     GENERIC_CORE_CHECKS_FILE
+)
+
+# Read only the opt-in, persistent manual Core-change reviews. The full
+# investigation context is never treated as automatic compatibility evidence.
+# readiness_guidance independently checks each review's identity, timestamp,
+# user-confirmation provenance and exact installed/target Core window.
+saved_context = load_json_optional(
+    INVESTIGATION_CONTEXT_FILE
+)
+manual_compatibility_reviews = (
+    saved_context.get("manual_compatibility_review")
+    if saved_context.get("schema_version") == 1
+    and isinstance(saved_context.get("investigations"), dict)
+    else None
 )
 
 # ------------------------------------------------------------
@@ -1788,6 +1803,7 @@ core_guidance = evaluate_core_update_guidance(
     generic_installed_version=core_installed_version,
     generic_target_version=core_target_version,
     dynamic_correlation_report=upgrade_correlation_report,
+    manual_review_report=manual_compatibility_reviews,
 )
 
 core_guidance_status = core_guidance.get(
