@@ -39,6 +39,7 @@ COPY log_correlation_scan.py /
 COPY log_priority_final.py /
 COPY ai_evidence.py /
 COPY web_ui.py /
+COPY power_state_evidence.py /
 COPY investigation_handoff.py /
 COPY readiness_guidance.py /
 COPY health_guidance.py /
