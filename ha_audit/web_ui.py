@@ -224,6 +224,31 @@ def evidence_for_current_finding(family: dict, saved: dict,
     return candidate
 
 
+def power_sample_assessment(family: dict, saved: dict,
+                            snapshot: dict | None) -> str:
+    """Triage *sampled* power evidence, never technical priority or all errors.
+
+    Returns one of: on, unknown, off_only, unverified. An OFF-only outcome
+    means ONLY that the checked timestamps agree with deliberate power loss.
+    Any ON sample takes precedence over OFF/UNKNOWN samples.
+    """
+    power_id = saved.get("power_entity_id")
+    if (not isinstance(power_id, str)
+            or not re.fullmatch(r"switch\.[a-z0-9_]+", power_id)):
+        return "unverified"
+    sample = evidence_for_current_finding(family, saved, snapshot)
+    if sample is None or sample.get("source_status", "ok") != "ok":
+        return "unverified"
+    counts = sample["counts"]
+    if counts["on"] > 0:
+        return "on"
+    if counts["unknown"] > 0:
+        return "unknown"
+    if counts["off"] > 0:
+        return "off_only"
+    return "unverified"
+
+
 def show_power_summary(family: dict, saved: dict, snapshot: dict | None) -> str:
     """A short last-audit evidence line beside the user's investigation.
 
@@ -238,18 +263,43 @@ def show_power_summary(family: dict, saved: dict, snapshot: dict | None) -> str:
             + '">Check current evidence</a>')
     sample = evidence_for_current_finding(family, saved, snapshot)
     if sample is None:
-        return ('<div class="power-evidence"><strong>Power evidence:</strong> '
-                'No matching completed-audit check available. ' + link + '</div>')
+        return (
+            '<div class="power-evidence"><strong>Power evidence:</strong> '
+            'No matching completed-audit check available.'
+            '<div><strong>Investigation recommendation:</strong> '
+            'Keep the existing investigation open to verification until new '
+            'power-state evidence is available.</div>' + link + '</div>'
+        )
     counts = sample["counts"]
     off, on, unknown = counts["off"], counts["on"], counts["unknown"]
-    if on:
+    assessment = power_sample_assessment(family, saved, snapshot)
+    if assessment == "on":
         judgement = "Some sampled errors happened with power ON; investigate."
-    elif unknown:
+        recommendation = (
+            "Investigate the power-ON samples, even if this finding was previously "
+            "marked Explained or Resolved."
+        )
+    elif assessment == "unknown":
         judgement = "Power history is incomplete; do not dismiss unknown samples."
-    elif off:
+        recommendation = (
+            "Verify the UNKNOWN samples. The saved explanation does not yet "
+            "cover those timestamps."
+        )
+    elif assessment == "off_only":
         judgement = "All sampled errors happened with power OFF; consistent with intentional shutdown."
+        if saved.get("status") in ("Explained", "Resolved"):
+            recommendation = (
+                "No immediate action indicated for these sampled OFF-only events. "
+                "Watch for new ON or UNKNOWN errors."
+            )
+        else:
+            recommendation = (
+                "OFF-only samples support the proposed explanation; "
+                "the investigation itself is still open."
+            )
     else:
         judgement = "No usable log timestamp samples; no conclusion."
+        recommendation = "Retain investigation attention until useful evidence is available."
     timestamp = snapshot.get("generated_at_utc", "") if snapshot else ""
     checked = ""
     if isinstance(timestamp, str) and len(timestamp) <= 40:
@@ -258,6 +308,8 @@ def show_power_summary(family: dict, saved: dict, snapshot: dict | None) -> str:
         '<div class="power-evidence"><strong>Power evidence — sampled log times:</strong> '
         'OFF ' + str(off) + ' · ON ' + str(on) + ' · UNKNOWN ' + str(unknown)
         + '<div>' + escape(judgement) + '</div>'
+        + '<div><strong>Investigation recommendation:</strong> '
+        + escape(recommendation) + '</div>'
         + '<div class="muted">Not every error was checked. Original priority unchanged.</div>'
         + checked + link + '</div>'
     )
@@ -405,11 +457,12 @@ def render_power_evidence(fingerprint: str) -> tuple[int, bytes]:
 
 
 def build_focus() -> str:
-    """Separate investigation attention from the original technical priority.
+    """Put evidenced investigation attention first, without suppressing logs.
 
-    This is deliberately a UI-only triage view. Feedback is user-reported,
-    not proof of a root cause or a reason to suppress errors. Do not write
-    to log_priority_final.json or change any existing investigation record.
+    Saved feedback is user-reported. A matching, completed-audit check can
+    direct review to power-ON or UNKNOWN samples. Only a user-explained or
+    resolved finding with exclusively OFF samples is put in the lower-action
+    group; its unexamined errors, priority and original data remain visible.
     """
     context = load_context()
     if context is None:
@@ -428,57 +481,95 @@ def build_focus() -> str:
         )
 
     investigations = context["investigations"]
+    power_snapshot = last_audit_power_snapshot()
     priority_order = {"VERY HIGH": 0, "HIGH": 1, "MEDIUM": 2}
     groups: dict[str, list[dict]] = {
-        "Investigate / continue": [], "Monitoring": [], "Explanation to verify": []
+        "Investigate / continue": [],
+        "Monitoring": [],
+        "Explanation to verify": [],
+        "Sampled power-off — no immediate action": [],
     }
+    assessments: dict[str, str] = {}
     for family in families:
         key = family.get("stable_fingerprint")
         if not isinstance(key, str) or not key:
             continue
         saved = investigations.get(key, {})
-        status = saved.get("status") if isinstance(saved, dict) else None
-        if status == "Monitoring":
+        if not isinstance(saved, dict):
+            saved = {}
+        status = saved.get("status")
+        assessment = power_sample_assessment(family, saved, power_snapshot)
+        assessments[key] = assessment
+        if assessment == "on":
+            # Fresh evidence overrides user-reported 'Explained'/'Monitoring'
+            # in triage only; their saved investigation status is untouched.
+            group = "Investigate / continue"
+        elif status == "Monitoring":
             group = "Monitoring"
         elif status in ("Explained", "Resolved"):
-            group = "Explanation to verify"
+            group = ("Sampled power-off — no immediate action"
+                     if assessment == "off_only" else "Explanation to verify")
         else:
-            # Unreviewed findings and investigations in progress are actionable.
+            # Unreviewed findings and investigations in progress stay actionable.
             group = "Investigate / continue"
         groups[group].append(family)
 
     for group in groups.values():
         group.sort(key=lambda f: (
             priority_order.get(f.get("final_priority"), 99),
+            0 if assessments.get(f.get("stable_fingerprint")) == "on" else 1,
             str(f.get("title", "")),
         ))
 
     card_text = {
-        "Investigate / continue": "No conclusion recorded yet, or investigation in progress.",
-        "Monitoring": "A change or observation is being monitored; check for fresh evidence.",
-        "Explanation to verify": "User has marked these explained or resolved; check that new errors agree with the explanation.",
+        "Investigate / continue": (
+            "Unreviewed/open issues or sampled errors while their controlling "
+            "switch was ON. Prioritise these investigations."
+        ),
+        "Monitoring": (
+            "A change or observation is being monitored; check for fresh evidence."
+        ),
+        "Explanation to verify": (
+            "User marked these Explained/Resolved, but the latest power evidence "
+            "is missing, incomplete or unknown. Confirm before dismissing errors."
+        ),
+        "Sampled power-off — no immediate action": (
+            "Previously explained findings with exclusively OFF samples. "
+            "No immediate action is indicated for those samples; unchecked "
+            "errors and future ON/UNKNOWN events still need review."
+        ),
     }
     cards: list[str] = []
     for title, group in groups.items():
         count = len(group)
-        examples = "".join(
-            '<li><strong>' + escape(item.get("final_priority", "")) + '</strong> '
-            + escape(item.get("title", "Unnamed finding")) + '</li>'
-            for item in group[:4]
-        )
-        extra = ('<p class="muted">And ' + str(count - 4) + ' more below.</p>') if count > 4 else ''
+        examples: list[str] = []
+        for item in group[:4]:
+            assessment = assessments.get(item.get("stable_fingerprint"), "unverified")
+            extra = ""
+            if assessment == "on":
+                extra = ' <span class="focus-flag">(power ON during sampled error)</span>'
+            elif assessment == "unknown":
+                extra = ' <span class="muted">(power state unknown for some samples)</span>'
+            elif assessment == "off_only" and title == "Sampled power-off — no immediate action":
+                extra = ' <span class="muted">(checked samples OFF only)</span>'
+            examples.append(
+                '<li><strong>' + escape(item.get("final_priority", "")) + '</strong> '
+                + escape(item.get("title", "Unnamed finding")) + extra + '</li>'
+            )
+        more = ('<p class="muted">And ' + str(count - 4) + ' more below.</p>') if count > 4 else ''
         cards.append(
             '<section class="focus-card"><h3>' + escape(title)
             + ' <span class="focus-count">(' + str(count) + ')</span></h3>'
             '<p class="muted">' + escape(card_text[title]) + '</p>'
-            + ('<ul>' + examples + '</ul>' if examples else '<p>None.</p>')
-            + extra + '</section>'
+            + ('<ul>' + ''.join(examples) + '</ul>' if examples else '<p>None.</p>')
+            + more + '</section>'
         )
     return (
         '<h2>Where to focus</h2>'
-        '<p class="muted">Suggested investigation workflow based on saved user feedback. '
-        'This is <strong>not</strong> a verified cause, severity reduction or '
-        'replacement for the original audit priority.</p>'
+        '<p class="muted">Investigation recommendations consider saved feedback '
+        'and matching sampled Recorder evidence. This does <strong>not</strong> '
+        'change original technical priority, recurrence, investigation status, '
+        'or underlying System Log evidence.</p>'
         '<div class="focus-grid">' + ''.join(cards) + '</div>'
     )
 
@@ -589,6 +680,7 @@ form textarea{box-sizing:border-box;width:100%;min-height:11rem;line-height:1.5;
 .focus-card p{margin:.5rem 0}.focus-card ul{padding-left:1.4rem;margin:.65rem 0}
 .focus-card li{font-size:.9rem;margin:.35rem 0}
 .focus-count{font-weight:400;opacity:.75}
+.focus-flag{font-weight:600}
 .power-evidence{border-left:3px solid GrayText;padding:.35rem 0 .35rem .65rem;margin-top:.6rem;
 font-size:.87rem;line-height:1.5;max-width:370px}
 .power-evidence a{display:inline-block;margin-top:.25rem}
