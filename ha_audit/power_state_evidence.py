@@ -130,9 +130,37 @@ def check_power_state(family_id: str, switch_id: str,
     if not times:
         return {'status': 'insufficient_evidence',
                 'message': 'No individual source-record timestamps available', 'samples': []}
+
+    # A family can combine messages from different physical devices. The saved
+    # switch belongs to a user-identified device, not necessarily every source
+    # record in that family. This report does not provide a verified device ID
+    # for each member, so fail closed when multiple records or message variants
+    # are grouped together. An OFF switch must not explain another device's
+    # connectivity error. This does not alter the raw log or its priority.
+    data = _read_json(log_file, MAX_LOG_JSON_BYTES)
+    family = next((item for item in data.get('families', [])
+                   if isinstance(item, dict) and item.get('family_id') == family_id),
+                  None) if isinstance(data, dict) and isinstance(data.get('families'), list) else None
+    members = family.get('members', []) if isinstance(family, dict) else []
+    message_samples = family.get('message_samples', []) if isinstance(family, dict) else []
+    entry_count = family.get('source_entry_count') if isinstance(family, dict) else None
+    mixed_sources = (
+        isinstance(members, list) and len(members) > 1
+        or type(entry_count) is int and entry_count > 1
+        or isinstance(message_samples, list) and len(message_samples) > 1
+    )
+
     samples = []
     for observed_at in times:
-        state, basis = _get_recorded_state(switch_id, observed_at)
+        if mixed_sources:
+            # UNKNOWN is about the *error-to-device relationship*. A switch
+            # state could be queried, but would not identify which device
+            # generated the sampled error. Avoid misleading OFF-only guidance.
+            state = 'unknown'
+            basis = ('Multiple source records or messages share this issue '
+                     'family; the sampled error cannot be tied to this switch')
+        else:
+            state, basis = _get_recorded_state(switch_id, observed_at)
         samples.append({
             'observed_at_utc': observed_at.isoformat(timespec='seconds'),
             'power_state': state,
@@ -149,5 +177,6 @@ def check_power_state(family_id: str, switch_id: str,
         'limitation': ('Only first/last timestamps from sampled System Log records '
                        'are checked, not every occurrence. An OFF match is compatible '
                        'with the user explanation but does not prove its cause or '
-                       'explain other errors. Missing Recorder data means UNKNOWN.'),
+                       'explain other errors. Grouped records whose device identity cannot '
+                       'be verified are UNKNOWN, as is missing Recorder data.'),
     }
