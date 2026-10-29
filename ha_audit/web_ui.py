@@ -2,8 +2,8 @@
 """HA Audit Ingress UI: findings and persistent user investigation feedback.
 
 Feedback is deliberately separate from audit evidence and priority calculations.
-Physical power-control relationships and daily maintenance schedules can be
-recorded as structured user context, without treating them as verified causes.
+Physical power-control relationships and recurring maintenance schedules can
+be recorded as structured user context, not treated as verified causes.
 Last-audit Recorder checks are shown as sampled evidence only, never proof of
 cause or reasons to suppress issues.
 It is stored in the app's private /config directory and survives audit runs.
@@ -40,6 +40,9 @@ MAX_POWER_ENTITY_LENGTH = 128
 MAX_MAINTENANCE_TZ_LENGTH = 64
 MAINTENANCE_TIME = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]\Z")
 MAINTENANCE_TZ = re.compile(r"(?:UTC|[A-Za-z][A-Za-z0-9_+\-]*(?:/[A-Za-z0-9_+\-]+){1,3})\Z")
+MAINTENANCE_FREQUENCIES = ("daily", "weekly", "monthly_date", "monthly_weekday")
+MAINTENANCE_OCCURRENCES = ("first", "second", "third", "fourth", "last")
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 INGRESS_PROXY = "172.30.32.2"
 ALLOW_LOCALHOST = os.environ.get("HA_AUDIT_WEB_TEST_LOCAL", "") == "1"
 STATUSES = ("Investigating", "Monitoring", "Explained", "Resolved")
@@ -164,6 +167,25 @@ COPY_JS = r"""(function () {
       } catch (_) {}
       result.textContent = ' Select the text below and copy it manually.';
     }
+  });
+}());
+
+// Each investigation has its own schedule selector. Keep irrelevant fields
+// out of view without removing them from the form; server validation always
+// checks only the fields relevant to the selected frequency.
+(function () {
+  'use strict';
+  document.querySelectorAll('.maintenance-settings').forEach(function (fieldset) {
+    const frequency = fieldset.querySelector('select[name="maintenance_frequency"]');
+    if (!frequency) return;
+    const sections = fieldset.querySelectorAll('[data-maintenance-for]');
+    function update() {
+      sections.forEach(function (section) {
+        section.hidden = section.getAttribute('data-maintenance-for') !== frequency.value;
+      });
+    }
+    frequency.addEventListener('change', update);
+    update();
   });
 }());"""
 
@@ -340,13 +362,20 @@ def atomic_save(data: dict) -> None:
                 pass
 
 
-def validate_maintenance_window(start: str, end: str,
-                                timezone_name: str) -> tuple[dict | None, str | None]:
-    """Validate an optional user-entered daily local-time maintenance window.
+def validate_maintenance_window(
+    start: str, end: str, timezone_name: str,
+    frequency: str | None = None,
+    weekdays: list[str] | None = None,
+    month_day: str | None = None,
+    occurrence: str | None = None,
+    weekday: str | None = None,
+) -> tuple[dict | None, str | None]:
+    """Validate a local-time recurring maintenance schedule without using it as evidence.
 
-    This is schedule *context*, not proof that maintenance really occurred.
-    We store the IANA-style timezone name verbatim so future timestamp checks
-    can handle daylight saving correctly; no comparisons are made in this step.
+    Weekday numbers use Python/ISO ordering (Monday=0, Sunday=6).
+    An overnight window belongs to its *start* day's schedule. Monthly day 31
+    is valid but does not run in shorter months. Timezone/DST handling is for
+    the future verifier; this stage only saves user-reported configuration.
     """
     start, end, timezone_name = start.strip(), end.strip(), timezone_name.strip()
     if not (start or end or timezone_name):
@@ -360,19 +389,50 @@ def validate_maintenance_window(start: str, end: str,
     if (len(timezone_name) > MAX_MAINTENANCE_TZ_LENGTH
             or not MAINTENANCE_TZ.fullmatch(timezone_name)):
         return None, "Enter an IANA timezone such as Europe/London."
-    return {
-        "schedule": "daily",
+
+    frequency = "daily" if frequency is None else frequency.strip()
+    if frequency not in MAINTENANCE_FREQUENCIES:
+        return None, "Choose a valid maintenance frequency."
+
+    result = {
+        "schedule": frequency,
         "start_local": start,
         "end_local": end,
         "timezone": timezone_name,
-    }, None
+    }
+    if frequency == "weekly":
+        if not isinstance(weekdays, list) or not weekdays or len(weekdays) > 7:
+            return None, "Choose at least one weekday for weekly maintenance."
+        if any(day not in ("0", "1", "2", "3", "4", "5", "6") for day in weekdays):
+            return None, "Choose valid weekdays for weekly maintenance."
+        days = sorted({int(day) for day in weekdays})
+        if len(days) != len(weekdays):
+            return None, "A weekday was selected more than once."
+        result["weekdays"] = days
+    elif frequency == "monthly_date":
+        if not isinstance(month_day, str) or not re.fullmatch(r"[1-9]|[12][0-9]|3[01]", month_day):
+            return None, "Enter a calendar day from 1 to 31 for monthly maintenance."
+        result["day_of_month"] = int(month_day)
+    elif frequency == "monthly_weekday":
+        if occurrence not in MAINTENANCE_OCCURRENCES:
+            return None, "Choose first, second, third, fourth or last for monthly maintenance."
+        if weekday not in ("0", "1", "2", "3", "4", "5", "6"):
+            return None, "Choose a weekday for monthly maintenance."
+        result["occurrence"] = occurrence
+        result["weekday"] = int(weekday)
+    return result, None
 
 
 def save_feedback(fingerprint: str, status: str, note: str,
                   power_entity_id: str = "",
                   maintenance_start_local: str | None = None,
                   maintenance_end_local: str | None = None,
-                  maintenance_timezone: str | None = None) -> tuple[int, str]:
+                  maintenance_timezone: str | None = None,
+                  maintenance_frequency: str | None = None,
+                  maintenance_weekdays: list[str] | None = None,
+                  maintenance_month_day: str | None = None,
+                  maintenance_occurrence: str | None = None,
+                  maintenance_weekday: str | None = None) -> tuple[int, str]:
     if status not in STATUSES:
         return 400, "Choose a valid investigation status."
     note = note.strip()
@@ -385,21 +445,27 @@ def save_feedback(fingerprint: str, status: str, note: str,
     if not fingerprint or len(fingerprint) > 100:
         return 400, "Invalid finding identifier."
 
-    # Old forms/callers without maintenance fields leave the existing schedule
-    # untouched. The new UI sends all three fields (even when intentionally
-    # cleared), so blanking them removes a previously saved schedule.
+    # Older callers that do not include maintenance fields preserve the saved
+    # schedule. Older daily-only forms still save as 'daily'. Clearing all
+    # three time fields explicitly removes the schedule without data loss.
     has_maintenance_fields = any(value is not None for value in (
-        maintenance_start_local, maintenance_end_local, maintenance_timezone
+        maintenance_start_local, maintenance_end_local, maintenance_timezone,
+        maintenance_frequency, maintenance_weekdays, maintenance_month_day,
+        maintenance_occurrence, maintenance_weekday,
     ))
     maintenance_window = None
     if has_maintenance_fields:
         if not all(isinstance(value, str) for value in (
-                maintenance_start_local, maintenance_end_local,
-                maintenance_timezone)):
+                maintenance_start_local, maintenance_end_local, maintenance_timezone)):
+            return 400, "Invalid maintenance fields."
+        if any(value is not None and not isinstance(value, str) for value in (
+                maintenance_frequency, maintenance_month_day,
+                maintenance_occurrence, maintenance_weekday)):
             return 400, "Invalid maintenance fields."
         maintenance_window, error = validate_maintenance_window(
-            maintenance_start_local, maintenance_end_local,
-            maintenance_timezone
+            maintenance_start_local, maintenance_end_local, maintenance_timezone,
+            maintenance_frequency, maintenance_weekdays, maintenance_month_day,
+            maintenance_occurrence, maintenance_weekday,
         )
         if error:
             return 400, error
@@ -668,11 +734,19 @@ def build_issues() -> str:
         old_note = saved.get("note", "")
         old_power_entity = saved.get("power_entity_id", "")
         old_window = saved.get("maintenance_window", {})
-        if not isinstance(old_window, dict) or old_window.get("schedule") != "daily":
+        if (not isinstance(old_window, dict)
+                or old_window.get("schedule") not in MAINTENANCE_FREQUENCIES):
             old_window = {}
         old_maintenance_start = old_window.get("start_local", "")
         old_maintenance_end = old_window.get("end_local", "")
         old_maintenance_tz = old_window.get("timezone", "")
+        old_frequency = old_window.get("schedule", "daily")
+        old_weekdays = old_window.get("weekdays", [])
+        if not isinstance(old_weekdays, list):
+            old_weekdays = []
+        old_month_day = old_window.get("day_of_month", "")
+        old_occurrence = old_window.get("occurrence", "")
+        old_weekday = old_window.get("weekday", "")
         if not isinstance(old_status, str) or old_status not in STATUSES:
             old_status = "Not reviewed"
         if not isinstance(old_note, str):
@@ -691,6 +765,35 @@ def build_issues() -> str:
             + '>' + escape(item) + '</option>'
             for item in STATUSES
         )
+        frequency_labels = (
+            ("daily", "Daily"),
+            ("weekly", "Weekly — selected weekdays"),
+            ("monthly_date", "Monthly — calendar date"),
+            ("monthly_weekday", "Monthly — nth weekday"),
+        )
+        frequency_options = "".join(
+            '<option value="' + value + '"' + (' selected' if value == old_frequency else '')
+            + '>' + label + '</option>'
+            for value, label in frequency_labels
+        )
+        weekly_checks = "".join(
+            '<label><input type="checkbox" name="maintenance_weekdays" value="'
+            + str(index) + '"' + (' checked' if index in old_weekdays else '')
+            + '>' + escape(label) + '</label>'
+            for index, label in enumerate(WEEKDAYS)
+        )
+        occurrence_options = "<option value=\"\">Select…</option>" + "".join(
+            '<option value="' + item + '"'
+            + (' selected' if item == old_occurrence else '')
+            + '>' + item.capitalize() + '</option>'
+            for item in MAINTENANCE_OCCURRENCES
+        )
+        weekday_options = '<option value="">Select…</option>' + "".join(
+            '<option value="' + str(index) + '"'
+            + (' selected' if index == old_weekday else '')
+            + '>' + escape(label) + '</option>'
+            for index, label in enumerate(WEEKDAYS)
+        )
         # Keep the overview concise: notes stay inside Review / update.
         # Show last-run evidence without a live Recorder request on page load.
         summary = escape(old_status) + show_power_summary(family, saved, power_snapshot)
@@ -706,10 +809,22 @@ def build_issues() -> str:
             'value="' + escape(old_power_entity) + '"></label>'
             '<p class="muted">Only enter a switch you have confirmed physically powers this device. '
             'This relationship is user-reported until verified against Home Assistant evidence.</p>'
-            '<fieldset><legend>Scheduled maintenance (optional — daily)</legend>'
-            '<p class="muted">Enter all three fields, or leave all blank. Times are local to the '
-            'specified timezone. Overnight windows are supported. This saves a user-reported '
-            'schedule only; automatic timestamp verification is not enabled yet.</p>'
+            '<fieldset class="maintenance-settings"><legend>Scheduled maintenance (optional)</legend>'
+            '<p class="muted">Save a recurring local-time schedule; this is user-reported context, '
+            'not proof maintenance occurred. To remove a schedule, clear Start, End and Time zone. '
+            'Overnight windows belong to the day they start. Automatic verification comes later.</p>'
+            '<label>Frequency <select name="maintenance_frequency">' + frequency_options + '</select></label>'
+            '<div class="maintenance-extra" data-maintenance-for="weekly">'
+            '<span>Days of week</span><div class="weekday-options">' + weekly_checks + '</div></div>'
+            '<div class="maintenance-extra" data-maintenance-for="monthly_date">'
+            '<label>Day of month (1–31) <input name="maintenance_month_day" type="number" '
+            'min="1" max="31" step="1" placeholder="1–31" '
+            'value="' + escape(old_month_day) + '"></label>'
+            '<small class="muted">Day 31 is skipped in months without a 31st.</small></div>'
+            '<div class="maintenance-extra" data-maintenance-for="monthly_weekday">'
+            '<label>Occurrence <select name="maintenance_occurrence">' + occurrence_options + '</select></label>'
+            '<label>Weekday <select name="maintenance_weekday">' + weekday_options + '</select></label>'
+            '</div>'
             '<label>Start (local time) <input name="maintenance_start_local" type="time" step="60" '
             'value="' + escape(old_maintenance_start) + '"></label>'
             '<label>End (local time) <input name="maintenance_end_local" type="time" step="60" '
@@ -761,6 +876,10 @@ form{display:grid;gap:.6rem;margin-top:.5rem;min-width:230px}label{display:grid;
 select,textarea,input,button{font:inherit;padding:.4rem;border-radius:5px}
 fieldset{border:1px solid GrayText;border-radius:6px;display:grid;gap:.5rem;min-width:0}
 fieldset p{margin:.1rem 0 .3rem}button{cursor:pointer;justify-self:start}
+[hidden]{display:none!important}.maintenance-extra{display:grid;gap:.4rem}
+.weekday-options{display:flex;gap:.6rem;flex-wrap:wrap}
+.weekday-options label{display:inline-flex;gap:.2rem;align-items:center;white-space:nowrap;font-size:.9rem}
+.weekday-options input{margin:0}
 form textarea{box-sizing:border-box;width:100%;min-height:11rem;line-height:1.5;resize:vertical}
 #ai-handoff-text{width:100%;box-sizing:border-box;margin:.6rem 0 1rem;font: .88rem ui-monospace,monospace;white-space:pre}
 #copy-result{margin-left:.5rem;font-size:.9rem}a{color:LinkText}
@@ -861,7 +980,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(413, b"Invalid form size", "text/plain; charset=utf-8")
             return
         try:
-            fields = parse_qs(self.rfile.read(length).decode("utf-8"), keep_blank_values=True, max_num_fields=8)
+            fields = parse_qs(self.rfile.read(length).decode("utf-8"), keep_blank_values=True, max_num_fields=24)
         except (UnicodeDecodeError, ValueError):
             self._send(400, b"Invalid form", "text/plain; charset=utf-8")
             return
@@ -870,10 +989,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         required = ("fingerprint", "status", "note")
         optional = ("power_entity_id", "maintenance_start_local",
-                    "maintenance_end_local", "maintenance_timezone")
+                    "maintenance_end_local", "maintenance_timezone",
+                    "maintenance_frequency", "maintenance_month_day",
+                    "maintenance_occurrence", "maintenance_weekday")
+        multi = "maintenance_weekdays"
         if (any(len(fields.get(field, [])) != 1 for field in required)
                 or any(len(fields.get(field, [])) > 1 for field in optional)
-                or any(field not in (*required, *optional, "token") for field in fields)):
+                or len(fields.get(multi, [])) > 7
+                or any(field not in (*required, *optional, multi, "token") for field in fields)):
             self._send(400, b"Invalid fields", "text/plain; charset=utf-8")
             return
         status, message = save_feedback(
@@ -881,7 +1004,10 @@ class Handler(BaseHTTPRequestHandler):
             fields.get("power_entity_id", [""])[0],
             *(fields[field][0] if field in fields else None for field in (
                 "maintenance_start_local", "maintenance_end_local",
-                "maintenance_timezone")),
+                "maintenance_timezone", "maintenance_frequency")),
+            fields.get("maintenance_weekdays", []),
+            *(fields[field][0] if field in fields else None for field in (
+                "maintenance_month_day", "maintenance_occurrence", "maintenance_weekday")),
         )
         self._send(status, render_page(message, error=status != 200), "text/html; charset=utf-8")
 
