@@ -32,7 +32,7 @@ class ManualCompatibilityWebUITests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
-        for name in ("CORE_READINESS", "CORE_CORRELATION", "RUN_STATE", "CONTEXT", "REPORT"):
+        for name in ("CORE_READINESS", "CORE_CORRELATION", "CORE_GENERIC_CHECKS", "RUN_STATE", "CONTEXT", "REPORT"):
             patcher = patch.object(ui, name, self.root / getattr(ui, name).name)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -70,6 +70,70 @@ class ManualCompatibilityWebUITests(unittest.TestCase):
 
     def review(self, group=AUTH, decision="confirmed"):
         return ui.save_manual_core_review(group[0], group[1], decision)
+
+    def generic_result(self, *, target=TARGET, status="no_affected_usage_found"):
+        """Synthetic checked generic rule for the same official change group."""
+        findings = ([{"file": "automations.yaml", "line": 7}]
+                    if status == "review_required" else [])
+        result = {
+            "schema_version": 1,
+            "installed_version": INSTALLED,
+            "target_version": target,
+            "status": "local_checks_completed",
+            "selected_rule_count": 1,
+            "read_failures": [],
+            "rules": [{
+                "rule_id": "core_2026_10_state_conditions_for",
+                "introduced_in": "2026.10",
+                "official_group": "State conditions",
+                "policy_applied_from": "2026.10.2",
+                "status": status,
+                "files_checked": 139,
+                "findings": findings,
+                "read_failures": [],
+            }],
+            "summary": {
+                "review_required_count": int(status == "review_required"),
+                "incomplete_rule_count": 0,
+                "checked_yaml_file_count": 139,
+            },
+        }
+        self.write_json(ui.CORE_GENERIC_CHECKS, result)
+        return result
+
+    def test_automatically_checked_group_no_longer_requires_manual_confirmation(self):
+        self.generic_result()
+        page = ui.build_manual_core_review()
+        self.assertIn("Authentication", page)
+        self.assertNotIn("State conditions", page)
+        scope = ui.current_manual_review_scope()
+        self.assertEqual(scope[2], [{"release_family": AUTH[0], "heading": AUTH[1]}])
+
+    def test_cannot_manually_clear_group_already_checked_by_generic_rule(self):
+        self.generic_result()
+        self.assertEqual(self.review(STATE)[0], 400)
+        self.assertNotIn("manual_compatibility_review", ui.load_context())
+
+    def test_manual_authentication_review_remains_revokeable_after_generic_check(self):
+        self.generic_result()
+        self.assertEqual(self.review(AUTH)[0], 200)
+        page = ui.build_manual_core_review()
+        self.assertIn("Revoke my confirmation", page)
+        self.assertNotIn("State conditions", page)
+        self.assertEqual(self.review(AUTH, "remove")[0], 200)
+
+    def test_outdated_generic_check_does_not_suppress_manual_option(self):
+        self.generic_result(target="2026.11.0")
+        page = ui.build_manual_core_review()
+        self.assertIn("State conditions", page)
+        self.assertEqual(self.review(STATE)[0], 200)
+
+    def test_generic_check_with_findings_is_not_presented_as_unassessed(self):
+        self.generic_result(status="review_required")
+        page = ui.build_manual_core_review()
+        self.assertNotIn("State conditions", page)
+        self.assertIn("Authentication", page)
+        self.assertEqual(self.review(STATE)[0], 400)
 
     def test_shows_only_insufficient_official_groups_and_upgrade_window(self):
         page = ui.build_manual_core_review()
