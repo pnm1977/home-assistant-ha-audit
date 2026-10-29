@@ -153,17 +153,12 @@ class InvestigationEvidenceTests(unittest.TestCase):
         self.assertEqual(self.check_power(switch="sensor.fake")["status"], "invalid")
         self.assertEqual(self.check_power(family_id="../../config")["status"], "invalid")
 
-    @unittest.expectedFailure
     def test_power_off_in_mixed_device_family_is_not_device_verified(self):
-        """Known limitation: a family may include more than one Sonos speaker.
+        """Do not attribute multi-speaker log records to one smart plug.
 
-        This is intentionally an expected failure until source-record identity
-        validation is implemented. GitHub CI remains green, while the defect
-        remains visible as an expected failure rather than being concealed.
-
-        The real family-report members currently contain timestamps and logger
-        information, not a guaranteed per-device association. A user-confirmed
-        Backroom smart plug must not explain a different speaker's log record.
+        When a family contains records for different devices, the link between
+        a sampled error and the saved power switch cannot be established.
+        Fail closed as UNKNOWN even if the physical switch could be OFF.
         """
         self.write_log([{
             "family_id": "sonos",
@@ -184,17 +179,19 @@ class InvestigationEvidenceTests(unittest.TestCase):
             ],
         }])
         with patch.object(power, "_get_recorded_state",
-                          return_value=("off", "Recorded switch OFF")):
+                          return_value=("off", "Recorded switch OFF")) as get_state:
             result = self.check_power()
+            # Mixed-device evidence is not tied to the configured device, so
+            # the Recorder lookup must not be used to justify an OFF verdict.
+            get_state.assert_not_called()
         self.assertEqual(result["status"], "ok")
-        # OFF is a valid switch observation, but the source-error/device
-        # relationship has not been established. All-OFF must not imply that
-        # the controlled speaker explains every family-member error.
-        self.assertTrue(all(s["power_state"] == "off" for s in result["samples"]))
+        self.assertEqual(len(result["samples"]), 2)
         self.assertTrue(all(
-            s["interpretation"] != "consistent_with_expected_power_off"
-            for s in result["samples"]
-        ), "Mixed-device family timestamps must remain device-unverified")
+            sample["power_state"] == "unknown"
+            and sample["interpretation"] == "unknown"
+            for sample in result["samples"]
+        ), "Mixed-device family timestamps must remain UNKNOWN")
+        self.assertIn("device", result["limitation"].lower())
 
     def test_both_checks_limit_samples_not_expand_grouped_occurrences(self):
         records = []
