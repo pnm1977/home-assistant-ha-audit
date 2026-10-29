@@ -1,3 +1,7 @@
+"""Conservative interpretation of local evidence for Home Assistant Core updates."""
+
+from datetime import datetime
+
 STATE_NO_UPDATE = "NO CORE UPDATE PENDING"
 STATE_BLOCKER = "KNOWN BLOCKER FOUND"
 STATE_INCOMPLETE = "ASSESSMENT INCOMPLETE"
@@ -80,14 +84,58 @@ def classify_generic_compatibility_evidence(report, *, installed_version, target
     return "review" if actual_review else "checked"
 
 
-def reconcile_dynamic_insufficient_evidence(
-    dynamic_report, generic_report, *, installed_version, target_version
-):
-    """Reconcile only *exact* official change groups with completed local rules.
 
-    A generic check cannot clear unrelated official changes. A partial,
-    corrupted, stale or unregistered report fails closed: original dynamic
-    uncertainty is preserved. This is evidence reconciliation, not a verdict.
+def _explicit_manual_reviews(report, *, installed_version, target_version,
+                             eligible_groups):
+    """Validate an opt-in user review; invalid or ambiguous reports do nothing.
+
+    This represents a user's recorded assertion, NOT a verified HA observation.
+    Only exact official insufficient-evidence groups can be acknowledged.
+    """
+    if (not isinstance(report, dict) or type(report.get("schema_version")) is not int
+            or report.get("schema_version") != 1
+            or not installed_version or not target_version
+            or report.get("installed_version") != installed_version
+            or report.get("target_version") != target_version):
+        return {}
+    reviews = report.get("reviews")
+    if not isinstance(reviews, list) or not reviews:
+        return {}
+    accepted = {}
+    for review in reviews:
+        if not isinstance(review, dict):
+            return {}
+        key = (review.get("release_family"), review.get("official_group"))
+        if (key not in eligible_groups or key in accepted
+                or review.get("source") != "explicit_user_confirmation"
+                or review.get("outcome") != "user_checked_no_issue"
+                or review.get("confirmed_by_user") is not True):
+            return {}
+        timestamp = review.get("reviewed_at")
+        if not isinstance(timestamp, str) or not timestamp.strip():
+            return {}
+        try:
+            reviewed_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError:
+            return {}
+        if reviewed_at.tzinfo is None or reviewed_at.utcoffset() is None:
+            return {}
+        accepted[key] = {
+            "source": "explicit_user_confirmation",
+            "outcome": "user_checked_no_issue",
+            "reviewed_at": reviewed_at.isoformat(),
+        }
+    return accepted
+
+
+def reconcile_dynamic_insufficient_evidence(
+    dynamic_report, generic_report, *, installed_version, target_version,
+    manual_review_report=None,
+):
+    """Reconcile exact official change groups with checked or user-review evidence.
+
+    Local checks are machine observations; manual reviews are user-reported
+    assertions. Neither can clear unrelated changes or guarantee safety.
     """
     from core_compatibility_rules import select_compatibility_rules
 
@@ -140,53 +188,67 @@ def reconcile_dynamic_insufficient_evidence(
                                   or collector.get("overall") != "ok"):
         return result
 
+    # Build exact official-group matches for completed, registered generic rules.
+    # If no valid generic evidence exists, an independently recorded explicit
+    # manual review may still acknowledge its own exact group.
+    evidence_by_group = {}
     if (classify_generic_compatibility_evidence(
             generic_report, installed_version=installed_version,
-            target_version=target_version) not in ("checked", "review")):
-        return result
-    try:
-        selection = select_compatibility_rules(installed_version, target_version)
-    except (TypeError, ValueError):
-        return result
-    if selection.get("status") != "selected":
+            target_version=target_version) in ("checked", "review")):
+        try:
+            selection = select_compatibility_rules(installed_version, target_version)
+        except (TypeError, ValueError):
+            selection = None
+        if isinstance(selection, dict) and selection.get("status") == "selected":
+            registered = {r["rule_id"]: r for r in selection["selected_rules"]}
+            generic_rules = generic_report["rules"]
+            if len(generic_rules) != len(registered):
+                return result
+            matched = {}
+            for checked in generic_rules:
+                selected = registered.get(checked.get("rule_id"))
+                if (selected is None
+                        or checked.get("introduced_in") != selected["introduced_in"]
+                        or checked.get("official_group") != selected["official_group"]
+                        or checked.get("policy_applied_from") != selected.get("policy_applied_from")
+                        or checked["rule_id"] in matched):
+                    return result
+                matched[checked["rule_id"]] = checked
+            # A descriptor deliberately binds a rule to the official group;
+            # textual similarity cannot substitute for exact identification.
+            evidence_by_group = {
+                (registered[rid]["introduced_in"], registered[rid]["official_group"]):
+                    (rid, checked)
+                for rid, checked in matched.items()
+            }
+            if len(evidence_by_group) != len(matched):
+                # Multiple registered checks for one change require an explicit
+                # aggregation policy; do not silently take one result.
+                return result
+
+    manual_by_group = _explicit_manual_reviews(
+        manual_review_report,
+        installed_version=installed_version,
+        target_version=target_version,
+        eligible_groups=set(keys),
+    )
+    if not evidence_by_group and not manual_by_group:
+        # Neither form of evidence can account for the missing assessment.
         return result
 
-    registered = {r["rule_id"]: r for r in selection["selected_rules"]}
-    generic_rules = generic_report["rules"]
-    if len(generic_rules) != len(registered):
-        return result
-    matched = {}
-    for checked in generic_rules:
-        selected = registered.get(checked.get("rule_id"))
-        if (selected is None
-                or checked.get("introduced_in") != selected["introduced_in"]
-                or checked.get("official_group") != selected["official_group"]
-                or checked.get("policy_applied_from") != selected.get("policy_applied_from")
-                or checked["rule_id"] in matched):
-            return result
-        matched[checked["rule_id"]] = checked
-
-    # A descriptor is a deliberate exact mapping to an official group;
-    # generic heading/text similarity cannot establish equivalence.
-    evidence_by_group = {
-        (registered[rule_id]["introduced_in"], registered[rule_id]["official_group"]):
-            (rule_id, checked)
-        for rule_id, checked in matched.items()
-    }
-    if len(evidence_by_group) != len(matched):
-        # A group with several registered checks needs an explicit aggregation
-        # policy; never silently rely on the last result.
-        return result
     resolved, unresolved = [], []
     for row in observed:
-        evidence = evidence_by_group.get((row["release_family"], row["heading"]))
-        if evidence is None:
-            unresolved.append(row)
-        else:
+        key = (row["release_family"], row["heading"])
+        evidence = evidence_by_group.get(key)
+        if evidence is not None:
             rule_id, checked = evidence
             resolved.append({
                 **row, "rule_id": rule_id, "outcome": checked["status"],
             })
+        elif key in manual_by_group:
+            resolved.append({**row, **manual_by_group[key]})
+        else:
+            unresolved.append(row)
     result.update({
         "status": "reconciled" if resolved else "unchanged",
         "remaining_insufficient_count": len(unresolved),
@@ -219,6 +281,7 @@ def evaluate_core_update_guidance(
     generic_installed_version=None,
     generic_target_version=None,
     dynamic_correlation_report=None,
+    manual_review_report=None,
 ):
     """Return conservative top-level Core update guidance.
 
@@ -298,6 +361,7 @@ def evaluate_core_update_guidance(
             dynamic_correlation_report, generic_check_report,
             installed_version=generic_installed_version,
             target_version=generic_target_version,
+            manual_review_report=manual_review_report,
         )
         if (dynamic_reconciliation["status"] == "incomplete"
                 or dynamic_reconciliation["original_insufficient_count"]
