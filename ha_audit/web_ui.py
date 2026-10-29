@@ -275,7 +275,8 @@ def build_issues() -> str:
             + '>' + escape(item) + '</option>'
             for item in STATUSES
         )
-        summary = escape(old_status) + (" — " + escape(old_note) if old_note else "")
+        # Keep the overview concise: details and existing notes stay inside Review / update.
+        summary = escape(old_status)
         feedback_form = (
             '<details><summary>Review / update</summary>'
             '<form method="post" action="">'
@@ -319,6 +320,9 @@ h2{font-size:1.2rem;margin-top:1.8rem}.muted{opacity:.7;font-size:.92rem}
 th,td{border-bottom:1px solid GrayText;padding:.7rem .6rem;font-size:.92rem;vertical-align:top}
 th{font-weight:700}td{min-width:100px}details{margin-top:.3rem}summary{cursor:pointer}
 form{display:grid;gap:.6rem;margin-top:.5rem;min-width:230px}label{display:grid;gap:.2rem}
+#copy-ai-handoff{margin-right:.5rem}.full-summary{margin-top:2rem}
+.full-summary>summary{font-size:1.18rem;font-weight:700}
+.full-summary>pre{margin-top:1rem}
 select,textarea,button{font:inherit;padding:.4rem;border-radius:5px}button{cursor:pointer;justify-self:start}
 #ai-handoff-text{width:100%;box-sizing:border-box;margin:.6rem 0 1rem;font: .88rem ui-monospace,monospace;white-space:pre}
 #copy-result{margin-left:.5rem;font-size:.9rem}a{color:LinkText}
@@ -326,8 +330,8 @@ pre{border:1px solid GrayText;border-radius:8px;padding:1rem;white-space:pre-wra
 overflow-wrap:anywhere;line-height:1.5;font-size:.9rem}.notice{font-weight:700}
 .error{font-weight:700;color:#b3261e}
 </style></head><body><header><h1>HA Audit</h1><p class="muted">Investigation feedback · foundation</p></header>
-<main>""" + notice + '<h2>Issues needing review</h2>' + build_issues() + build_ai_export() + """
-<h2>Complete latest audit summary</h2><pre>""" + escape(read_summary()) + """</pre>
+<main>""" + notice + build_ai_export() + '<h2>Issues needing review</h2>' + build_issues() + """
+<details class="full-summary"><summary>Show complete latest audit summary</summary><pre>""" + escape(read_summary()) + """</pre></details>
 <p class="muted">Investigation feedback is stored privately and preserved across audit runs.</p>
 </main><script src="copy.js" defer></script></body></html>"""
     return page.encode("utf-8")
