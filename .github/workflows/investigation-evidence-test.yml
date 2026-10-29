@@ -10,6 +10,7 @@ on:
       - "ha_audit/investigation_handoff.py"
       - "ha_audit/web_ui.py"
       - "ha_audit/test_investigation_evidence.py"
+      - "ha_audit/test_investigation_handoff.py"
       - ".github/workflows/investigation-evidence-test.yml"
 
   pull_request:
@@ -19,6 +20,7 @@ on:
       - "ha_audit/investigation_handoff.py"
       - "ha_audit/web_ui.py"
       - "ha_audit/test_investigation_evidence.py"
+      - "ha_audit/test_investigation_handoff.py"
       - ".github/workflows/investigation-evidence-test.yml"
 
 jobs:
@@ -36,3 +38,6 @@ jobs:
 
       - name: Run investigation evidence regression tests
         run: python3 ha_audit/test_investigation_evidence.py
+
+      - name: Run investigation handoff regression tests
+        run: python3 ha_audit/test_investigation_handoff.py
