@@ -141,9 +141,14 @@ if run_quiet_python \
     "summary_report.py" \
     "Latest-run summary generation"; then
 
-    run_quiet_python \
+    if run_quiet_python \
         "ai_handoff.py" \
-        "AI / LLM handoff generation"
+        "AI / LLM handoff generation"; then
+
+        run_quiet_python \
+            "investigation_handoff.py" \
+            "Saved investigation context handoff"
+    fi
 
     if ! python3 /user_summary.py; then
         bashio::log.error \
