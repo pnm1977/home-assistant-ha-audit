@@ -1784,6 +1784,9 @@ core_guidance = evaluate_core_update_guidance(
     compatibility_manual_review_count=(
         compatibility_manual_review_count
     ),
+    generic_check_report=generic_core_checks,
+    generic_installed_version=core_installed_version,
+    generic_target_version=core_target_version,
 )
 
 core_guidance_status = core_guidance.get(
