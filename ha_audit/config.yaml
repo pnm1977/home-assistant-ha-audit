@@ -6,7 +6,7 @@ description: "Read-only Home Assistant health, configuration and Core upgrade-re
 arch:
   - amd64
 
-startup: once
+startup: application
 boot: manual_only
 init: false
 
