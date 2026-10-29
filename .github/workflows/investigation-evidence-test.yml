@@ -1,0 +1,38 @@
+name: Investigation evidence regression tests
+
+on:
+  workflow_dispatch:
+
+  push:
+    paths:
+      - "ha_audit/power_state_evidence.py"
+      - "ha_audit/maintenance_window_evidence.py"
+      - "ha_audit/investigation_handoff.py"
+      - "ha_audit/web_ui.py"
+      - "ha_audit/test_investigation_evidence.py"
+      - ".github/workflows/investigation-evidence-test.yml"
+
+  pull_request:
+    paths:
+      - "ha_audit/power_state_evidence.py"
+      - "ha_audit/maintenance_window_evidence.py"
+      - "ha_audit/investigation_handoff.py"
+      - "ha_audit/web_ui.py"
+      - "ha_audit/test_investigation_evidence.py"
+      - ".github/workflows/investigation-evidence-test.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Run investigation evidence regression tests
+        run: python3 ha_audit/test_investigation_evidence.py
