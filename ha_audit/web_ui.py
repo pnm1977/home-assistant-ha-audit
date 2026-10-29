@@ -4,8 +4,8 @@
 Feedback is deliberately separate from audit evidence and priority calculations.
 Physical power-control relationships and recurring maintenance schedules can
 be recorded as structured user context, not treated as verified causes.
-Last-audit Recorder checks are shown as sampled evidence only, never proof of
-cause or reasons to suppress issues.
+Last-audit power and maintenance-window checks are shown as sampled evidence
+only, never proof of cause or reasons to suppress issues.
 It is stored in the app's private /config directory and survives audit runs.
 """
 
@@ -31,6 +31,7 @@ ISSUES = Path("/config/log_priority_final.json")
 HANDOFF = Path("/config/ha_audit_ai_handoff.md")
 CONTEXT = Path("/config/investigation_context.json")
 POWER_SNAPSHOT = Path("/config/investigation_evidence.json")
+MAINTENANCE_SNAPSHOT = Path("/config/investigation_maintenance_evidence.json")
 MAX_REPORT_BYTES = 256 * 1024
 MAX_HANDOFF_BYTES = 256 * 1024
 MAX_JSON_BYTES = 1024 * 1024
@@ -248,6 +249,178 @@ def evidence_for_current_finding(family: dict, saved: dict,
     if sum(counts[state] for state in ("off", "on", "unknown")) != count:
         return None
     return candidate
+
+
+def last_audit_maintenance_snapshot() -> dict | None:
+    """Use only a completed audit's saved maintenance evidence, not live queries.
+
+    A stale file from an earlier audit must not be treated as new evidence.
+    """
+    snapshot = read_json(MAINTENANCE_SNAPSHOT)
+    if (not snapshot or snapshot.get("schema_version") != 1
+            or not isinstance(snapshot.get("findings"), dict)):
+        return None
+    try:
+        if MAINTENANCE_SNAPSHOT.stat().st_mtime + 2 < ISSUES.stat().st_mtime:
+            return None
+    except OSError:
+        return None
+    return snapshot
+
+
+def matching_maintenance_evidence(family: dict, saved: dict,
+                                  snapshot: dict | None) -> dict | None:
+    """Match issue, user schedule, feedback revision, priority and bounded samples.
+
+    Reject malformed or out-of-date evidence rather than showing confident but
+    misleading counts. This check does not compare *every* source occurrence.
+    """
+    window = saved.get("maintenance_window")
+    if not isinstance(window, dict) or not snapshot:
+        return None
+    key = family.get("stable_fingerprint")
+    candidate = snapshot["findings"].get(key) if isinstance(key, str) else None
+    if not isinstance(candidate, dict):
+        return None
+    if (candidate.get("family_id") != family.get("family_id")
+            or candidate.get("maintenance_window") != window
+            or candidate.get("feedback_updated_at_utc") != saved.get("updated_at_utc")
+            or candidate.get("audit_priority") != family.get("final_priority")):
+        return None
+    counts = candidate.get("counts")
+    count = candidate.get("sample_count")
+    samples = candidate.get("samples")
+    if (type(count) is not int or count < 0 or count > 4
+            or not isinstance(counts, dict) or not isinstance(samples, list)
+            or len(samples) != count):
+        return None
+    if any(type(counts.get(state)) is not int or not 0 <= counts[state] <= 4
+           for state in ("inside", "outside", "unknown")):
+        return None
+    if sum(counts[state] for state in ("inside", "outside", "unknown")) != count:
+        return None
+    for item in samples:
+        if not isinstance(item, dict) or item.get("window_match") not in ("inside", "outside", "unknown"):
+            return None
+        stamp = item.get("observed_at_utc")
+        if not isinstance(stamp, str) or len(stamp) > 50:
+            return None
+        try:
+            parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return None
+    for state in ("inside", "outside", "unknown"):
+        if sum(x["window_match"] == state for x in samples) != counts[state]:
+            return None
+    return candidate
+
+
+def latest_maintenance_sample(candidate: dict) -> dict | None:
+    """Find latest *sampled source record*; it may not be new activity.
+
+    Do not infer a change date from free-text notes or equate 64 grouped
+    occurrences with 64 independently dated errors.
+    """
+    samples = candidate.get("samples", [])
+    if not samples:
+        return None
+    return max(samples, key=lambda x: datetime.fromisoformat(
+        x["observed_at_utc"].replace("Z", "+00:00")))
+
+
+def maintenance_focus_label(family: dict, saved: dict,
+                            snapshot: dict | None) -> str:
+    """Short factual indicator for Where to focus; never re-rank priority."""
+    candidate = matching_maintenance_evidence(family, saved, snapshot)
+    if not candidate or candidate.get("source_status") != "ok":
+        return "maintenance evidence not verified" if isinstance(saved.get("maintenance_window"), dict) else ""
+    counts = candidate["counts"]
+    latest = latest_maintenance_sample(candidate)
+    if latest is None:
+        return "no usable maintenance timestamp samples"
+    latest_match = latest["window_match"]
+    if latest_match == "inside" and counts["outside"]:
+        return "latest sampled error inside maintenance; earlier sample outside"
+    if latest_match == "outside":
+        return "latest sampled error outside maintenance — check"
+    if counts["unknown"]:
+        return "some maintenance timestamps unverified"
+    if counts["outside"]:
+        return "some sampled errors outside maintenance"
+    return "sampled errors inside maintenance; continue monitoring"
+
+
+def show_maintenance_summary(family: dict, saved: dict,
+                             snapshot: dict | None) -> str:
+    """Give sampled inside/outside evidence context without false reassurance."""
+    if not isinstance(saved.get("maintenance_window"), dict):
+        return ""
+    candidate = matching_maintenance_evidence(family, saved, snapshot)
+    if candidate is None:
+        return (
+            '<div class="maintenance-evidence"><strong>Maintenance evidence:</strong> '
+            'No matching completed-audit check available.'
+            '<div><strong>Investigation recommendation:</strong> '
+            'Keep the finding under review until timestamp evidence is available.</div></div>'
+        )
+    counts = candidate["counts"]
+    inside, outside, unknown = counts["inside"], counts["outside"], counts["unknown"]
+    latest = latest_maintenance_sample(candidate)
+    status_ok = candidate.get("source_status") == "ok"
+    interpretation = ""
+    if not status_ok or latest is None:
+        interpretation = "Maintenance verification is incomplete or unavailable."
+        recommendation = "Continue investigating or monitoring; do not assume maintenance caused the errors."
+    else:
+        stamp = latest["observed_at_utc"]
+        latest_match = latest["window_match"]
+        interpretation = "Most recent sampled log timestamp: " + stamp + " — " + latest_match.upper() + "."
+        if latest_match == "outside":
+            recommendation = (
+                "Review the most recent OUTSIDE-window sample; a scheduled reboot "
+                "does not explain that timestamp. Continue monitoring."
+            )
+        elif outside:
+            recommendation = (
+                "The most recent sampled timestamp matches maintenance, but "
+                "older OUTSIDE-window evidence remains. Monitor for new errors "
+                "outside the window; do not assume all grouped errors are explained."
+            )
+        elif unknown:
+            recommendation = (
+                "Some timestamps are unverified. Review them, and continue "
+                "monitoring for errors outside the maintenance window."
+            )
+        elif inside:
+            recommendation = (
+                "Sampled timestamps match maintenance. Continue monitoring; "
+                "the schedule match alone does not prove the cause."
+            )
+        else:
+            recommendation = "No usable samples; continue monitoring."
+
+    occurrences = candidate.get("source_occurrence_count")
+    if type(occurrences) is int and 0 <= occurrences <= 1_000_000_000:
+        context = '<div class="muted">Grouped log occurrences: ' + str(occurrences) +                   ' (not individually timestamped or classified).</div>'
+    else:
+        context = ""
+    timestamp = snapshot.get("generated_at_utc", "") if snapshot else ""
+    checked = ('<div class="muted">Last audit check: ' + escape(timestamp) + '</div>'
+               if isinstance(timestamp, str) and len(timestamp) <= 40 else "")
+    return (
+        '<div class="maintenance-evidence"><strong>Maintenance evidence — sampled log times:</strong> '
+        'INSIDE ' + str(inside) + ' · OUTSIDE ' + str(outside) + ' · UNKNOWN ' + str(unknown)
+        + '<div>' + escape(interpretation) + '</div>'
+        + '<div><strong>Investigation recommendation:</strong> ' + escape(recommendation) + '</div>'
+        + context
+        + '<div class="muted">These are first/last source-record samples, not proof '
+          'that maintenance occurred. Do not interpret the latest sample as new '
+          'activity or assume unsampled errors are explained. Original priority '
+          'and saved status unchanged.</div>'
+        + checked + '</div>'
+    )
 
 
 def power_sample_assessment(family: dict, saved: dict,
@@ -612,6 +785,7 @@ def build_focus() -> str:
 
     investigations = context["investigations"]
     power_snapshot = last_audit_power_snapshot()
+    maintenance_snapshot = last_audit_maintenance_snapshot()
     priority_order = {"VERY HIGH": 0, "HIGH": 1, "MEDIUM": 2}
     groups: dict[str, list[dict]] = {
         "Investigate / continue": [],
@@ -682,6 +856,11 @@ def build_focus() -> str:
                 extra = ' <span class="muted">(power state unknown for some samples)</span>'
             elif assessment == "off_only" and title == "Sampled power-off — no immediate action":
                 extra = ' <span class="muted">(checked samples OFF only)</span>'
+            saved = investigations.get(item.get("stable_fingerprint"), {})
+            if isinstance(saved, dict):
+                maintenance_label = maintenance_focus_label(item, saved, maintenance_snapshot)
+                if maintenance_label:
+                    extra += ' <span class="muted">(' + escape(maintenance_label) + ')</span>'
             examples.append(
                 '<li><strong>' + escape(item.get("final_priority", "")) + '</strong> '
                 + escape(item.get("title", "Unnamed finding")) + extra + '</li>'
@@ -697,7 +876,9 @@ def build_focus() -> str:
     return (
         '<h2>Where to focus</h2>'
         '<p class="muted">Investigation recommendations consider saved feedback '
-        'and matching sampled Recorder evidence. This does <strong>not</strong> '
+        'and last-audit sampled power/maintenance evidence. A most-recent sample '
+        'is not proof of new activity; historical outside-window evidence remains '
+        'visible. This does <strong>not</strong> '
         'change original technical priority, recurrence, investigation status, '
         'or underlying System Log evidence.</p>'
         '<div class="focus-grid">' + ''.join(cards) + '</div>'
@@ -712,6 +893,7 @@ def build_issues() -> str:
     context = load_context()
     investigations = context.get("investigations", {}) if context else {}
     power_snapshot = last_audit_power_snapshot()
+    maintenance_snapshot = last_audit_maintenance_snapshot()
     if not context:
         return '<p class="error">Investigation storage cannot be read. Feedback is disabled.</p>'
 
@@ -796,7 +978,9 @@ def build_issues() -> str:
         )
         # Keep the overview concise: notes stay inside Review / update.
         # Show last-run evidence without a live Recorder request on page load.
-        summary = escape(old_status) + show_power_summary(family, saved, power_snapshot)
+        summary = (escape(old_status)
+                   + show_power_summary(family, saved, power_snapshot)
+                   + show_maintenance_summary(family, saved, maintenance_snapshot))
         feedback_form = (
             '<details><summary>Review / update</summary>'
             '<form method="post" action="">'
@@ -890,7 +1074,7 @@ form textarea{box-sizing:border-box;width:100%;min-height:11rem;line-height:1.5;
 .focus-card li{font-size:.9rem;margin:.35rem 0}
 .focus-count{font-weight:400;opacity:.75}
 .focus-flag{font-weight:600}
-.power-evidence{border-left:3px solid GrayText;padding:.35rem 0 .35rem .65rem;margin-top:.6rem;
+.power-evidence,.maintenance-evidence{border-left:3px solid GrayText;padding:.35rem 0 .35rem .65rem;margin-top:.6rem;
 font-size:.87rem;line-height:1.5;max-width:370px}
 .power-evidence a{display:inline-block;margin-top:.25rem}
 pre{border:1px solid GrayText;border-radius:8px;padding:1rem;white-space:pre-wrap;
