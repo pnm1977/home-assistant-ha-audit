@@ -19,7 +19,9 @@ import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
+
+from power_state_evidence import check_power_state
 
 PORT = int(os.environ.get("HA_AUDIT_WEB_PORT", "8099"))
 REPORT = Path("/config/ha_audit_latest.txt")
@@ -249,6 +251,73 @@ def save_feedback(fingerprint: str, status: str, note: str,
     return 200, "Investigation feedback saved. It will be available after restarting HA Audit."
 
 
+
+def render_power_evidence(fingerprint: str) -> tuple[int, bytes]:
+    """On-demand read-only verification of a saved switch relationship.
+
+    Requires both a current audit finding and a physical switch saved by the
+    user. The imported evidence module performs bounded Recorder API reads;
+    this UI does not change feedback, audit results, or issue priorities.
+    """
+    family = next(
+        (item for item in current_families()
+         if item.get("stable_fingerprint") == fingerprint), None
+    )
+    context = load_context()
+    saved = context.get("investigations", {}).get(fingerprint) if context else None
+    switch = saved.get("power_entity_id") if isinstance(saved, dict) else None
+    if (family is None or not isinstance(switch, str)
+            or not re.fullmatch(r"switch\.[a-z0-9_]+", switch)):
+        return 404, b"No saved power switch for this current finding."
+
+    title = str(family.get("title", "Unnamed issue"))
+    result = check_power_state(str(family.get("family_id", "")), switch)
+    samples = result.get("samples", [])
+    labels = {
+        "off": "OFF — consistent with expected power loss",
+        "on": "ON — investigate further",
+        "unknown": "UNKNOWN — no conclusion",
+    }
+    rows = []
+    for sample in samples if isinstance(samples, list) else []:
+        if not isinstance(sample, dict):
+            continue
+        stamp = escape(sample.get("observed_at_utc", "Not provided"))
+        state = str(sample.get("power_state", "unknown"))
+        label = escape(labels.get(state, labels["unknown"]))
+        evidence = escape(sample.get("evidence", "No details"))
+        rows.append(f"<tr><td>{stamp}</td><td>{label}</td><td>{evidence}</td></tr>")
+
+    if rows:
+        details = ('<div class="scroll"><table><thead><tr><th>Log timestamp (UTC)</th>'
+                   '<th>Switch at timestamp</th><th>Evidence</th></tr></thead><tbody>'
+                   + "".join(rows) + '</tbody></table></div>')
+    else:
+        reason = result.get("message", "No suitable log timestamps are available.")
+        details = '<p>' + escape(reason) + '</p>'
+
+    page = ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>HA Audit — Power-state evidence</title><style>'
+            ':root{font-family:system-ui,sans-serif;color-scheme:light dark}'
+            'body{max-width:1080px;margin:0 auto;padding:1.25rem;line-height:1.5}'
+            '.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%}'
+            'th,td{border-bottom:1px solid GrayText;padding:.65rem;text-align:left}'
+            'th{font-weight:700}a{color:LinkText}code{overflow-wrap:anywhere}'
+            '</style></head><body><p><a href="./">&larr; Back to HA Audit</a></p>'
+            '<h1>Power-state evidence</h1><h2>' + escape(title) + '</h2>'
+            '<p>Saved power-control switch: <code>' + escape(switch) + '</code></p>'
+            + details
+            + '<p><strong>Interpretation:</strong> These checks use at most four sampled '
+              'first/last System Log record timestamps, <strong>not every error occurrence</strong>. '
+              'An OFF result is consistent with the power-off explanation but does not prove '
+              'the cause. ON warrants investigation; missing history is UNKNOWN. '
+              'The switch relationship remains user-confirmed. '
+              '<strong>No audit priorities, findings, or saved feedback are changed.</strong></p>'
+            '</body></html>')
+    return 200, page.encode("utf-8")
+
+
 def build_focus() -> str:
     """Separate investigation attention from the original technical priority.
 
@@ -370,6 +439,10 @@ def build_issues() -> str:
         )
         # Keep the overview concise: details and existing notes stay inside Review / update.
         summary = escape(old_status)
+        if re.fullmatch(r"switch\.[a-z0-9_]+", old_power_entity):
+            summary += ('<div><a href="verify-power?fingerprint='
+                        + escape(quote(fingerprint, safe=""))
+                        + '">Check power-state evidence</a></div>')
         feedback_form = (
             '<details><summary>Review / update</summary>'
             '<form method="post" action="">'
@@ -470,6 +543,21 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/health":
             self._send(200, b"ok\n", "text/plain; charset=utf-8")
+            return
+        if path == "/verify-power":
+            try:
+                values = parse_qs(urlsplit(self.path).query, max_num_fields=2)
+            except ValueError:
+                self._send(400, b"Invalid query", "text/plain; charset=utf-8")
+                return
+            identifiers = values.get("fingerprint", [])
+            if len(identifiers) != 1 or not (0 < len(identifiers[0]) <= 100):
+                self._send(400, b"Invalid finding", "text/plain; charset=utf-8")
+                return
+            status, content = render_power_evidence(identifiers[0])
+            content_type = ("text/html; charset=utf-8" if status == 200
+                            else "text/plain; charset=utf-8")
+            self._send(status, content, content_type)
             return
         if path == "/copy.js":
             self._send(200, COPY_JS.encode("utf-8"), "text/javascript; charset=utf-8")
