@@ -244,7 +244,7 @@ def make_appendix(context: dict, findings: dict, evidence: dict | None = None) -
         records.append({
             "title": one_line(title, 150),
             "status": status,
-            "note": one_line(note, 500),
+            "note": one_line(note, 4000),
             "updated_at": updated_at,
             "history_count": count,
             "present": current_row is not None,
