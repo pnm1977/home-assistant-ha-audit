@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""HA Audit Ingress UI: read-only issue overview plus persistent context initialization.
+"""HA Audit Ingress UI: findings and persistent user investigation feedback.
 
-This version intentionally does not interpret or change issue priorities and does not
-accept investigation feedback yet. The next iteration will add explicit user actions.
+Feedback is deliberately separate from audit evidence and priority calculations.
+It is stored in the app's private /config directory and survives audit runs.
 """
 
 from __future__ import annotations
@@ -10,10 +10,13 @@ from __future__ import annotations
 import html
 import json
 import os
+import secrets
+import tempfile
+import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 PORT = int(os.environ.get("HA_AUDIT_WEB_PORT", "8099"))
 REPORT = Path("/config/ha_audit_latest.txt")
@@ -21,27 +24,39 @@ ISSUES = Path("/config/log_priority_final.json")
 CONTEXT = Path("/config/investigation_context.json")
 MAX_REPORT_BYTES = 256 * 1024
 MAX_JSON_BYTES = 1024 * 1024
+MAX_POST_BYTES = 2048
+MAX_NOTE_LENGTH = 500
 INGRESS_PROXY = "172.30.32.2"
 ALLOW_LOCALHOST = os.environ.get("HA_AUDIT_WEB_TEST_LOCAL", "") == "1"
+STATUSES = ("Investigating", "Monitoring", "Explained", "Resolved")
+CSRF_TOKEN = secrets.token_urlsafe(32)
+WRITE_LOCK = threading.Lock()
 
 
 def escape(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
-def initialize_context() -> str | None:
-    """Create default private data exactly once, without overwriting existing context."""
-    initial = {
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def initial_context() -> dict:
+    return {
         "schema_version": 1,
-        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "created_at_utc": utc_now(),
         "scheduled_events": [],
         "investigations": {},
     }
+
+
+def initialize_context() -> str | None:
+    """Create private context only on first launch; never overwrite it."""
     try:
         CONTEXT.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(CONTEXT, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as file:
-            json.dump(initial, file, indent=2, ensure_ascii=False)
+            json.dump(initial_context(), file, indent=2, ensure_ascii=False)
             file.write("\n")
         return None
     except FileExistsError:
@@ -71,41 +86,179 @@ def read_summary() -> str:
         return "The latest audit summary could not be read."
 
 
+def current_families() -> list[dict]:
+    payload = read_json(ISSUES)
+    if not payload or not isinstance(payload.get("families"), list):
+        return []
+    return [family for family in payload["families"] if isinstance(family, dict)]
+
+
+def load_context() -> dict | None:
+    data = read_json(CONTEXT)
+    if (not data or data.get("schema_version") != 1
+            or not isinstance(data.get("investigations"), dict)):
+        return None
+    return data
+
+
+def atomic_save(data: dict) -> None:
+    """Replace private context only after a complete, durable JSON write."""
+    temp_name: str | None = None
+    try:
+        fd, temp_name = tempfile.mkstemp(prefix=".ha-audit-context-", suffix=".tmp", dir=CONTEXT.parent)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
+            json.dump(data, file, indent=2, ensure_ascii=False)
+            file.write("\n")
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temp_name, CONTEXT)
+        temp_name = None
+    finally:
+        if temp_name is not None:
+            try:
+                os.unlink(temp_name)
+            except OSError:
+                pass
+
+
+def save_feedback(fingerprint: str, status: str, note: str) -> tuple[int, str]:
+    if status not in STATUSES:
+        return 400, "Choose a valid investigation status."
+    note = note.strip()
+    if not note or len(note) > MAX_NOTE_LENGTH:
+        return 400, f"Please enter a note of 1–{MAX_NOTE_LENGTH} characters."
+    if not fingerprint or len(fingerprint) > 100:
+        return 400, "Invalid finding identifier."
+
+    # Accept only an ID from the current evidence, not arbitrary file/data keys.
+    matching = next(
+        (item for item in current_families()
+         if item.get("stable_fingerprint") == fingerprint), None
+    )
+    if matching is None:
+        return 400, "This finding is no longer in the latest audit. Refresh and try again."
+
+    with WRITE_LOCK:
+        data = load_context()
+        if data is None:
+            return 503, "Investigation storage is unreadable; nothing was changed."
+        existing = data["investigations"].get(fingerprint, {})
+        if not isinstance(existing, dict):
+            return 503, "This investigation record is invalid; nothing was changed."
+        history = existing.get("history", [])
+        if not isinstance(history, list) or len(history) > 1000:
+            return 503, "Investigation history is invalid; nothing was changed."
+
+        timestamp = utc_now()
+        entry = {"at_utc": timestamp, "status": status, "note": note, "source": "user_feedback"}
+        data["investigations"][fingerprint] = {
+            **existing,
+            "family_id": str(matching.get("family_id", ""))[:100],
+            "title": str(matching.get("title", "Unnamed issue"))[:200],
+            "status": status,
+            "note": note,
+            "updated_at_utc": timestamp,
+            "history": [*history, entry],
+        }
+        try:
+            atomic_save(data)
+        except OSError:
+            return 503, "Could not save feedback; nothing was changed."
+    return 200, "Investigation feedback saved. It will be available after restarting HA Audit."
+
+
 def build_issues() -> str:
-    result = read_json(ISSUES)
-    if not result or not isinstance(result.get("families"), list):
+    families = current_families()
+    if not families:
         return '<p class="muted">Issue details are not yet available; the full audit remains below.</p>'
 
-    ranked = []
-    for family in result["families"]:
-        if not isinstance(family, dict):
-            continue
-        priority = family.get("final_priority", "")
-        if priority not in ("VERY HIGH", "HIGH", "MEDIUM"):
-            continue
-        ranked.append(family)
+    context = load_context()
+    investigations = context.get("investigations", {}) if context else {}
+    if not context:
+        return '<p class="error">Investigation storage cannot be read. Feedback is disabled.</p>'
 
+    ranked = [family for family in families
+              if family.get("final_priority") in ("VERY HIGH", "HIGH", "MEDIUM")]
     rank = {"VERY HIGH": 0, "HIGH": 1, "MEDIUM": 2}
-    ranked.sort(key=lambda item: (rank[item.get("final_priority")], str(item.get("title", ""))))
+    ranked.sort(key=lambda item: (rank[item["final_priority"]], str(item.get("title", ""))))
 
-    rows = []
+    rows: list[str] = []
     for family in ranked[:20]:
+        fingerprint = family.get("stable_fingerprint")
+        if not isinstance(fingerprint, str) or not fingerprint:
+            continue
         recurrence = family.get("recurrence", {})
         rec_class = recurrence.get("class", "Unknown") if isinstance(recurrence, dict) else "Unknown"
+        saved = investigations.get(fingerprint, {})
+        if not isinstance(saved, dict):
+            saved = {}
+        old_status = saved.get("status", "Not reviewed")
+        old_note = saved.get("note", "")
+        if not isinstance(old_status, str) or old_status not in STATUSES:
+            old_status = "Not reviewed"
+        if not isinstance(old_note, str):
+            old_note = ""
+        options = "".join(
+            '<option value="' + escape(item) + '"'
+            + (' selected' if item == old_status else '')
+            + '>' + escape(item) + '</option>'
+            for item in STATUSES
+        )
+        summary = escape(old_status) + (" — " + escape(old_note) if old_note else "")
+        feedback_form = (
+            '<details><summary>Review / update</summary>'
+            '<form method="post" action="">'
+            '<input type="hidden" name="token" value="' + escape(CSRF_TOKEN) + '">'
+            '<input type="hidden" name="fingerprint" value="' + escape(fingerprint) + '">'
+            '<label>Status <select name="status">' + options + '</select></label>'
+            '<label>What did you establish or change? '
+            '<textarea name="note" maxlength="500" rows="3" required placeholder="What happened, why, or what to monitor next?">'
+            + escape(old_note) + '</textarea></label>'
+            '<button type="submit">Save feedback</button></form></details>'
+        )
         rows.append(
-            '<tr><td><span class="badge">' + escape(family.get("final_priority", ""))
-            + '</span></td><td>' + escape(family.get("title", "Unnamed issue"))
-            + '</td><td>' + escape(rec_class) + '</td></tr>'
+            '<tr><td><strong>' + escape(family.get("final_priority", "")) + '</strong></td>'
+            '<td>' + escape(family.get("title", "Unnamed issue")) + '</td>'
+            '<td>' + escape(rec_class) + '</td>'
+            '<td><div>' + summary + '</div>' + feedback_form + '</td></tr>'
         )
 
     if not rows:
-        return '<p class="muted">No current HIGH or MEDIUM findings.</p>'
+        return '<p class="muted">No current HIGH or MEDIUM findings with usable identifiers.</p>'
     return (
         '<div class="table-scroll"><table><thead><tr><th>Priority</th><th>Finding</th>'
-        '<th>Recurrence</th></tr></thead><tbody>' + "".join(rows)
-        + '</tbody></table></div><p class="muted">Original audit priorities are unchanged. '
-        'Investigation feedback will be added next.</p>'
+        '<th>Recurrence</th><th>Your investigation</th></tr></thead><tbody>'
+        + "".join(rows) + '</tbody></table></div>'
+        '<p class="muted">Saved feedback is private and does not alter audit priorities. '
+        'The next development step will include it in future audit reports and AI handoffs.</p>'
     )
+
+
+def render_page(message: str = "", *, error: bool = False) -> bytes:
+    notice = ('<p role="status" class="' + ('error' if error else 'notice') + '">'
+              + escape(message) + '</p>') if message else ""
+    page = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HA Audit</title><style>
+:root{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color-scheme:light dark}
+body{margin:0;background:Canvas;color:CanvasText}header{padding:1.25rem 1.5rem;border-bottom:1px solid GrayText}
+main{margin:0 auto;max-width:1200px;padding:1.25rem 1.5rem 3rem}h1{margin:0;font-size:1.6rem}
+h2{font-size:1.2rem;margin-top:1.8rem}.muted{opacity:.7;font-size:.92rem}
+.table-scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;text-align:left}
+th,td{border-bottom:1px solid GrayText;padding:.7rem .6rem;font-size:.92rem;vertical-align:top}
+th{font-weight:700}td{min-width:100px}details{margin-top:.3rem}summary{cursor:pointer}
+form{display:grid;gap:.6rem;margin-top:.5rem;min-width:230px}label{display:grid;gap:.2rem}
+select,textarea,button{font:inherit;padding:.4rem;border-radius:5px}button{cursor:pointer;justify-self:start}
+pre{border:1px solid GrayText;border-radius:8px;padding:1rem;white-space:pre-wrap;
+overflow-wrap:anywhere;line-height:1.5;font-size:.9rem}.notice{font-weight:700}
+.error{font-weight:700;color:#b3261e}
+</style></head><body><header><h1>HA Audit</h1><p class="muted">Investigation feedback · foundation</p></header>
+<main>""" + notice + '<h2>Issues needing review</h2>' + build_issues() + """
+<h2>Complete latest audit summary</h2><pre>""" + escape(read_summary()) + """</pre>
+<p class="muted">Investigation feedback is stored privately and preserved across audit runs.</p>
+</main></body></html>"""
+    return page.encode("utf-8")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -124,7 +277,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'")
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'self'")
         self.end_headers()
         self.wfile.write(body)
 
@@ -132,7 +285,6 @@ class Handler(BaseHTTPRequestHandler):
         if not self._allowed():
             self._send(403, b"Forbidden", "text/plain; charset=utf-8")
             return
-
         path = urlsplit(self.path).path
         if path == "/health":
             self._send(200, b"ok\n", "text/plain; charset=utf-8")
@@ -140,26 +292,38 @@ class Handler(BaseHTTPRequestHandler):
         if path not in ("/", "/index.html"):
             self._send(404, b"Not found", "text/plain; charset=utf-8")
             return
-
-        page = """<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>HA Audit</title><style>
-:root{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color-scheme:light dark}
-body{margin:0;background:Canvas;color:CanvasText}header{padding:1.25rem 1.5rem;border-bottom:1px solid GrayText}
-main{margin:0 auto;max-width:1100px;padding:1.25rem 1.5rem 3rem}h1{margin:0;font-size:1.6rem}h2{font-size:1.2rem;margin-top:1.8rem}
-.muted{opacity:.7;font-size:.92rem}.table-scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;text-align:left}
-th,td{border-bottom:1px solid GrayText;padding:.7rem .6rem;font-size:.92rem}th{font-weight:700}
-.badge{font-weight:700}pre{border:1px solid GrayText;border-radius:8px;padding:1rem;white-space:pre-wrap;
-overflow-wrap:anywhere;line-height:1.5;font-size:.9rem}
-</style></head><body><header><h1>HA Audit</h1><p class="muted">Read-only findings · investigation foundation</p></header>
-<main><h2>Issues needing review</h2>""" + build_issues() + """
-<h2>Complete latest audit summary</h2><pre>""" + escape(read_summary()) + """</pre>
-<p class="muted">Private investigation storage is initialized automatically and will never be reset by a new audit.</p>
-</main></body></html>"""
-        self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
+        self._send(200, render_page(), "text/html; charset=utf-8")
 
     def do_POST(self) -> None:
-        self._send(405, b"Read-only UI", "text/plain; charset=utf-8")
+        if not self._allowed():
+            self._send(403, b"Forbidden", "text/plain; charset=utf-8")
+            return
+        if urlsplit(self.path).path not in ("/", "/index.html"):
+            self._send(404, b"Not found", "text/plain; charset=utf-8")
+            return
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/x-www-form-urlencoded":
+            self._send(415, b"Unsupported form format", "text/plain; charset=utf-8")
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "-1"))
+        except ValueError:
+            length = -1
+        if not 0 < length <= MAX_POST_BYTES:
+            self._send(413, b"Invalid form size", "text/plain; charset=utf-8")
+            return
+        try:
+            fields = parse_qs(self.rfile.read(length).decode("utf-8"), keep_blank_values=True, max_num_fields=8)
+        except (UnicodeDecodeError, ValueError):
+            self._send(400, b"Invalid form", "text/plain; charset=utf-8")
+            return
+        if fields.get("token") != [CSRF_TOKEN]:
+            self._send(403, b"Invalid form token", "text/plain; charset=utf-8")
+            return
+        if any(len(fields.get(field, [])) != 1 for field in ("fingerprint", "status", "note")):
+            self._send(400, b"Invalid fields", "text/plain; charset=utf-8")
+            return
+        status, message = save_feedback(fields["fingerprint"][0], fields["status"][0], fields["note"][0])
+        self._send(status, render_page(message, error=status != 200), "text/html; charset=utf-8")
 
 
 if __name__ == "__main__":
