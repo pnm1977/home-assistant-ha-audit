@@ -11,13 +11,14 @@ A run-status record is the contract for the forthcoming production fix:
 - user investigation context must remain intact;
 - a successful, fresh run may display its own reports.
 
-The three expected failures document the known gap in v0.8.23 and will be
-converted to normal passing assertions once the production fix is committed.
+These tests enforce the completed v0.8.23 report-freshness correction.
 """
 
 import json
+import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -83,22 +84,62 @@ class ReportFreshnessSafetyTests(unittest.TestCase):
             "Keep this note",
         )
 
-    @unittest.expectedFailure
     def test_incomplete_run_does_not_label_old_summary_as_latest(self):
         self.mark_incomplete_run()
         result = ui.read_summary()
         self.assertNotIn("PREVIOUS AUDIT — ALL GOOD", result)
         self.assertIn("incomplete", result.lower())
 
-    @unittest.expectedFailure
     def test_incomplete_run_does_not_offer_old_handoff_as_current(self):
         self.mark_incomplete_run()
         self.assertIsNone(ui.read_handoff())
 
-    @unittest.expectedFailure
     def test_incomplete_run_does_not_show_old_findings_as_current(self):
         self.mark_incomplete_run()
         self.assertEqual(ui.current_families(), [])
+
+    def test_running_audit_does_not_serve_prior_reports(self):
+        self.run_state.write_text(json.dumps({
+            "schema_version": 1,
+            "status": "running",
+            "run_started_at_utc": datetime.now(timezone.utc).isoformat(),
+            "summary_status": "not_generated",
+            "handoff_status": "not_generated",
+            "issues_status": "not_verified",
+        }), encoding="utf-8")
+        self.assertIn("incomplete", ui.read_summary().lower())
+        self.assertIsNone(ui.read_handoff())
+        self.assertEqual(ui.current_families(), [])
+
+    def test_complete_run_allows_fresh_reports(self):
+        started = datetime.now(timezone.utc) - timedelta(minutes=1)
+        self.run_state.write_text(json.dumps({
+            "schema_version": 1,
+            "status": "complete",
+            "run_started_at_utc": started.isoformat(),
+            "run_finished_at_utc": datetime.now(timezone.utc).isoformat(),
+            "summary_status": "ok",
+            "handoff_status": "ok",
+            "issues_status": "ok",
+        }), encoding="utf-8")
+        self.assertIn("PREVIOUS AUDIT", ui.read_summary())
+        self.assertEqual(ui.read_handoff(), "PREVIOUS AI HANDOFF")
+        self.assertEqual(len(ui.current_families()), 1)
+
+    def test_completed_marker_cannot_authorize_stale_summary(self):
+        started = datetime.now(timezone.utc)
+        self.run_state.write_text(json.dumps({
+            "schema_version": 1,
+            "status": "complete",
+            "run_started_at_utc": started.isoformat(),
+            "summary_status": "ok",
+            "handoff_status": "ok",
+            "issues_status": "ok",
+        }), encoding="utf-8")
+        stale = (started - timedelta(minutes=5)).timestamp()
+        os.utime(self.report, (stale, stale))
+        self.assertNotIn("PREVIOUS AUDIT — ALL GOOD", ui.read_summary())
+        self.assertIn("not verified", ui.read_summary().lower())
 
 
 if __name__ == "__main__":
