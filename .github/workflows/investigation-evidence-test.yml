@@ -13,6 +13,8 @@ on:
       - "ha_audit/test_investigation_handoff.py"
       - "ha_audit/test_investigation_web_ui.py"
       - "ha_audit/test_report_freshness.py"
+      - "ha_audit/core_2026_10_state_conditions.py"
+      - "ha_audit/test_core_2026_10_state_conditions.py"
       - "ha_audit/run.sh"
       - ".github/workflows/investigation-evidence-test.yml"
 
@@ -26,6 +28,8 @@ on:
       - "ha_audit/test_investigation_handoff.py"
       - "ha_audit/test_investigation_web_ui.py"
       - "ha_audit/test_report_freshness.py"
+      - "ha_audit/core_2026_10_state_conditions.py"
+      - "ha_audit/test_core_2026_10_state_conditions.py"
       - "ha_audit/run.sh"
       - ".github/workflows/investigation-evidence-test.yml"
 
@@ -42,6 +46,9 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Install state-condition scanner test dependency
+        run: python3 -m pip install "PyYAML==6.0.3"
+
       - name: Run investigation evidence regression tests
         run: python3 ha_audit/test_investigation_evidence.py
 
@@ -56,3 +63,6 @@ jobs:
 
       - name: Run report freshness and failure-handling regression tests
         run: python3 ha_audit/test_report_freshness.py
+
+      - name: Run Core 2026.10 state-condition regression tests
+        run: python3 ha_audit/test_core_2026_10_state_conditions.py
