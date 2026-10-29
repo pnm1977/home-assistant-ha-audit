@@ -1,5 +1,5 @@
 name: "HA Audit"
-version: "0.8.19"
+version: "0.8.20"
 slug: "ha_audit"
 description: "Read-only Home Assistant health, configuration and Core upgrade-readiness auditor"
 
