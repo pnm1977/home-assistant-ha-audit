@@ -12,7 +12,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
+from datetime import datetime, timezone
+
+from power_state_evidence import check_power_state
 from pathlib import Path
 
 CONTEXT_FILE = Path("/config/investigation_context.json")
@@ -22,6 +26,9 @@ START_MARKER = "<!-- HA_AUDIT_INVESTIGATION_CONTEXT_START -->"
 END_MARKER = "<!-- HA_AUDIT_INVESTIGATION_CONTEXT_END -->"
 MAX_BYTES = 1024 * 1024
 MAX_FEEDBACK_ITEMS = 200
+MAX_POWER_CHECKS = 4  # Bound Recorder requests during the audit.
+EVIDENCE_FILE = Path("/config/investigation_evidence.json")
+SWITCH_ID = re.compile(r"switch\.[a-z0-9_]+\Z")
 VALID_STATUSES = {"Investigating", "Monitoring", "Explained", "Resolved"}
 
 
@@ -41,7 +48,175 @@ def one_line(value: object, limit: int = 200) -> str:
     return text[:limit]
 
 
-def make_appendix(context: dict, findings: dict) -> str:
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def power_recommendation(off: int, on: int, unknown: int) -> tuple[str, str]:
+    """Interpret sampled switch state, without modifying technical priority."""
+    if on:
+        return (
+            "Needs investigation",
+            "Some sampled errors occurred while the switch was ON. Investigate "
+            "those timestamps even if the user marked the issue Explained.",
+        )
+    if off and not unknown:
+        return (
+            "Consistent with expected power-off",
+            "No immediate action indicated by these sampled OFF-only events. "
+            "Investigate new errors while powered ON, or where power state is unknown.",
+        )
+    if off:
+        return (
+            "Partially supported; unverified samples remain",
+            "OFF samples support the power-off explanation, but UNKNOWN samples "
+            "remain unresolved. Check available history before dismissing errors.",
+        )
+    return (
+        "Insufficient evidence",
+        "No reliable power-state match is available. Do not dismiss this "
+        "finding based on the saved explanation alone.",
+    )
+
+
+def gather_power_evidence(context: dict, findings: dict) -> dict:
+    """Check confirmed relationships after the audit, never changing findings.
+
+    The result is an evidence snapshot, not a user verdict or severity score.
+    Source timestamps are first/last records sampled by power_state_evidence.
+    """
+    report: dict = {
+        "schema_version": 1,
+        "generated_at_utc": utc_now(),
+        "source": "Home Assistant System Log record timestamps and Recorder switch history",
+        "scope": "At most four first/last timestamps per finding, not all errors",
+        "changes_audit_priorities": False,
+        "findings": {},
+    }
+    investigations = context.get("investigations")
+    families = findings.get("families")
+    if not isinstance(investigations, dict) or not isinstance(families, list):
+        return report
+
+    # Only examine current findings with a saved physical switch relationship.
+    # Never infer switch associations from free-text notes.
+    for family in families:
+        if len(report["findings"]) >= MAX_POWER_CHECKS:
+            break
+        if not isinstance(family, dict):
+            continue
+        fingerprint = family.get("stable_fingerprint")
+        family_id = family.get("family_id")
+        if not isinstance(fingerprint, str) or not isinstance(family_id, str):
+            continue
+        saved = investigations.get(fingerprint)
+        if not isinstance(saved, dict):
+            continue
+        switch = saved.get("power_entity_id")
+        if not isinstance(switch, str) or not SWITCH_ID.fullmatch(switch):
+            continue
+
+        try:
+            checked = check_power_state(family_id, switch)
+        except Exception:
+            # Evidence failure must not prevent generation of the AI handoff.
+            checked = {"status": "unavailable", "samples": [],
+                       "message": "Power-state check failed"}
+        samples = checked.get("samples")
+        if not isinstance(samples, list):
+            samples = []
+        samples = [item for item in samples[:4] if isinstance(item, dict)]
+        counts = {"off": 0, "on": 0, "unknown": 0}
+        sanitized = []
+        for item in samples:
+            state = item.get("power_state", "unknown")
+            state = state if state in ("on", "off") else "unknown"
+            counts[state] += 1
+            sanitized.append({
+                "observed_at_utc": one_line(item.get("observed_at_utc", ""), 50),
+                "power_state": state,
+                "evidence": one_line(item.get("evidence", ""), 140),
+            })
+        interpretation, recommendation = power_recommendation(
+            counts["off"], counts["on"], counts["unknown"]
+        )
+        report["findings"][fingerprint] = {
+            "title": one_line(family.get("title", "Unnamed finding"), 150),
+            "family_id": family_id,
+            "audit_priority": one_line(family.get("final_priority", ""), 20),
+            "user_status": one_line(saved.get("status", ""), 20),
+            "feedback_updated_at_utc": one_line(saved.get("updated_at_utc", ""), 50),
+            "power_entity_id": switch,
+            "source_status": one_line(checked.get("status", "unavailable"), 32),
+            "source_message": one_line(checked.get("message", ""), 200),
+            "sample_count": len(sanitized),
+            "counts": counts,
+            "interpretation": interpretation,
+            "recommendation": recommendation,
+            "samples": sanitized,
+        }
+    return report
+
+
+def save_evidence_snapshot(report: dict) -> bool:
+    """Atomically replace the last-run read-only evidence snapshot."""
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(
+            prefix=".ha-audit-power-", suffix=".tmp", dir=EVIDENCE_FILE.parent
+        )
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(report, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, EVIDENCE_FILE)
+        return True
+    except OSError:
+        return False
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def evidence_lines(fingerprint: str, report: dict) -> list[str]:
+    evidence = report.get("findings", {}).get(fingerprint)
+    if not isinstance(evidence, dict):
+        return []
+    counts = evidence["counts"]
+    lines = [
+        "- **Automatic Recorder check (UTC):** "
+        + one_line(report.get("generated_at_utc", ""), 50),
+        "- **User-confirmed power switch:** `" + evidence["power_entity_id"] + "`",
+        "- **Sampled source-record timestamps:** "
+        + str(evidence["sample_count"])
+        + "; OFF " + str(counts["off"])
+        + ", ON " + str(counts["on"])
+        + ", UNKNOWN " + str(counts["unknown"]),
+        "- **Evidence interpretation:** " + evidence["interpretation"],
+        "- **Suggested next action:** " + evidence["recommendation"],
+    ]
+    if not evidence["samples"]:
+        lines.append("- **Evidence availability:** " + (
+            evidence["source_message"] or "No usable source timestamps"))
+    else:
+        for sample in evidence["samples"]:
+            lines.append(
+                "  - `" + sample["observed_at_utc"] + "` — "
+                + sample["power_state"].upper()
+                + " (" + sample["evidence"] + ")"
+            )
+    lines.append("- **Limitation:** Only sampled first/last log timestamps were "
+                 "checked. OFF is consistent with power loss, not proof of cause. "
+                 "Unsampled errors are not assessed. Original audit priority unchanged.")
+    return lines
+
+
+def make_appendix(context: dict, findings: dict, evidence: dict | None = None) -> str:
     investigations = context.get("investigations")
     if context.get("schema_version") != 1 or not isinstance(investigations, dict):
         return ""
@@ -53,6 +228,7 @@ def make_appendix(context: dict, findings: dict) -> str:
         if isinstance(row, dict) and isinstance(row.get("stable_fingerprint"), str)
     } if isinstance(found, list) else {}
 
+    evidence = evidence or {}
     records = []
     for fingerprint, data in list(investigations.items())[:MAX_FEEDBACK_ITEMS]:
         if not isinstance(fingerprint, str) or not isinstance(data, dict):
@@ -73,6 +249,7 @@ def make_appendix(context: dict, findings: dict) -> str:
             "history_count": count,
             "present": current_row is not None,
             "priority": one_line(current_row.get("final_priority", ""), 20) if current_row else "",
+            "fingerprint": fingerprint,
         })
 
     if not records:
@@ -107,6 +284,11 @@ def make_appendix(context: dict, findings: dict) -> str:
             f"> {row['note']}",
             "",
         ])
+        if row["present"]:
+            verification = evidence_lines(row["fingerprint"], evidence)
+            if verification:
+                lines.extend(verification)
+                lines.append("")
     lines += [END_MARKER, ""]
     return "\n".join(lines)
 
@@ -152,7 +334,11 @@ def main() -> None:
         # First startup, or no user feedback saved. Keep the original handoff.
         return
     findings = read_json_file(FINDINGS_FILE) or {}
-    appendix = make_appendix(context, findings)
+    # One bounded live evidence check per saved physical-switch relationship.
+    # This checks Recorder at audit time; it does not modify audit findings.
+    evidence = gather_power_evidence(context, findings)
+    save_evidence_snapshot(evidence)
+    appendix = make_appendix(context, findings, evidence)
     update_handoff(HANDOFF_FILE, appendix)
 
 
