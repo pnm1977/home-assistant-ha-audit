@@ -2,6 +2,8 @@
 """HA Audit Ingress UI: findings and persistent user investigation feedback.
 
 Feedback is deliberately separate from audit evidence and priority calculations.
+Physical power-control relationships can be recorded as structured user context,
+but are not accepted as verified evidence or reasons to suppress issues.
 It is stored in the app's private /config directory and survives audit runs.
 """
 
@@ -10,6 +12,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import secrets
 import tempfile
 import threading
@@ -28,6 +31,7 @@ MAX_HANDOFF_BYTES = 256 * 1024
 MAX_JSON_BYTES = 1024 * 1024
 MAX_POST_BYTES = 65536
 MAX_NOTE_LENGTH = 4000
+MAX_POWER_ENTITY_LENGTH = 128
 INGRESS_PROXY = "172.30.32.2"
 ALLOW_LOCALHOST = os.environ.get("HA_AUDIT_WEB_TEST_LOCAL", "") == "1"
 STATUSES = ("Investigating", "Monitoring", "Explained", "Resolved")
@@ -192,12 +196,17 @@ def atomic_save(data: dict) -> None:
                 pass
 
 
-def save_feedback(fingerprint: str, status: str, note: str) -> tuple[int, str]:
+def save_feedback(fingerprint: str, status: str, note: str,
+                  power_entity_id: str = "") -> tuple[int, str]:
     if status not in STATUSES:
         return 400, "Choose a valid investigation status."
     note = note.strip()
     if not note or len(note) > MAX_NOTE_LENGTH:
         return 400, f"Please enter a note of 1–{MAX_NOTE_LENGTH} characters."
+    power_entity_id = power_entity_id.strip()
+    if (len(power_entity_id) > MAX_POWER_ENTITY_LENGTH
+            or (power_entity_id and not re.fullmatch(r"switch\.[a-z0-9_]+", power_entity_id))):
+        return 400, "Enter a valid switch entity ID, or leave the field blank."
     if not fingerprint or len(fingerprint) > 100:
         return 400, "Invalid finding identifier."
 
@@ -221,13 +230,15 @@ def save_feedback(fingerprint: str, status: str, note: str) -> tuple[int, str]:
             return 503, "Investigation history is invalid; nothing was changed."
 
         timestamp = utc_now()
-        entry = {"at_utc": timestamp, "status": status, "note": note, "source": "user_feedback"}
+        entry = {"at_utc": timestamp, "status": status, "note": note,
+                 "power_entity_id": power_entity_id, "source": "user_feedback"}
         data["investigations"][fingerprint] = {
             **existing,
             "family_id": str(matching.get("family_id", ""))[:100],
             "title": str(matching.get("title", "Unnamed issue"))[:200],
             "status": status,
             "note": note,
+            "power_entity_id": power_entity_id,
             "updated_at_utc": timestamp,
             "history": [*history, entry],
         }
@@ -344,10 +355,13 @@ def build_issues() -> str:
             saved = {}
         old_status = saved.get("status", "Not reviewed")
         old_note = saved.get("note", "")
+        old_power_entity = saved.get("power_entity_id", "")
         if not isinstance(old_status, str) or old_status not in STATUSES:
             old_status = "Not reviewed"
         if not isinstance(old_note, str):
             old_note = ""
+        if not isinstance(old_power_entity, str):
+            old_power_entity = ""
         options = "".join(
             '<option value="' + escape(item) + '"'
             + (' selected' if item == old_status else '')
@@ -362,6 +376,12 @@ def build_issues() -> str:
             '<input type="hidden" name="token" value="' + escape(CSRF_TOKEN) + '">'
             '<input type="hidden" name="fingerprint" value="' + escape(fingerprint) + '">'
             '<label>Status <select name="status">' + options + '</select></label>'
+            '<label>Power-control switch (optional) '
+            '<input name="power_entity_id" type="text" maxlength="' + str(MAX_POWER_ENTITY_LENGTH) + '" '
+            'pattern="switch[.][a-z0-9_]+" placeholder="switch.example_plug" '
+            'value="' + escape(old_power_entity) + '"></label>'
+            '<p class="muted">Only enter a switch you have confirmed physically powers this device. '
+            'This relationship is user-reported until verified against Home Assistant evidence.</p>'
             '<label>What did you establish or change? '
             '<textarea name="note" maxlength="' + str(MAX_NOTE_LENGTH) + '" rows="8" required placeholder="What happened, why, or what to monitor next?">'
             + escape(old_note) + '</textarea></label>'
@@ -491,10 +511,14 @@ class Handler(BaseHTTPRequestHandler):
         if fields.get("token") != [CSRF_TOKEN]:
             self._send(403, b"Invalid form token", "text/plain; charset=utf-8")
             return
-        if any(len(fields.get(field, [])) != 1 for field in ("fingerprint", "status", "note")):
+        if (any(len(fields.get(field, [])) != 1 for field in ("fingerprint", "status", "note"))
+                or len(fields.get("power_entity_id", [""])) != 1):
             self._send(400, b"Invalid fields", "text/plain; charset=utf-8")
             return
-        status, message = save_feedback(fields["fingerprint"][0], fields["status"][0], fields["note"][0])
+        status, message = save_feedback(
+            fields["fingerprint"][0], fields["status"][0], fields["note"][0],
+            fields.get("power_entity_id", [""])[0],
+        )
         self._send(status, render_page(message, error=status != 200), "text/html; charset=utf-8")
 
 
