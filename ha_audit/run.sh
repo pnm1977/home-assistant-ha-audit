@@ -138,6 +138,13 @@ run_quiet_python \
     "upgrade_impact_scan.py" \
     "Upgrade impact inventory"
 
+# Supplement existing compatibility evidence with the generic, version-aware
+# YAML checks. This stage does NOT alter the readiness verdict; its report is
+# separate until the evidence is reviewed and integrated deliberately.
+run_quiet_python \
+    "core_compatibility_runner.py" \
+    "Generic Core compatibility checks"
+
 run_quiet_python \
     "upgrade_compatibility_scan.py" \
     "Upgrade compatibility audit"
