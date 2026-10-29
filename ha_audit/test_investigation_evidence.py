@@ -153,6 +153,49 @@ class InvestigationEvidenceTests(unittest.TestCase):
         self.assertEqual(self.check_power(switch="sensor.fake")["status"], "invalid")
         self.assertEqual(self.check_power(family_id="../../config")["status"], "invalid")
 
+    @unittest.expectedFailure
+    def test_power_off_in_mixed_device_family_is_not_device_verified(self):
+        """Known limitation: a family may include more than one Sonos speaker.
+
+        This is intentionally an expected failure until source-record identity
+        validation is implemented. GitHub CI remains green, while the defect
+        remains visible as an expected failure rather than being concealed.
+
+        The real family-report members currently contain timestamps and logger
+        information, not a guaranteed per-device association. A user-confirmed
+        Backroom smart plug must not explain a different speaker's log record.
+        """
+        self.write_log([{
+            "family_id": "sonos",
+            "occurrence_count": 2,
+            "members": [
+                {
+                    "first_seen": "2026-10-29T11:18:45+00:00",
+                    "last_seen": "2026-10-29T11:18:45+00:00",
+                    "name": "homeassistant.components.sonos.speaker",
+                    "messages": ["No recent activity and cannot reach Backroom"],
+                },
+                {
+                    "first_seen": "2026-10-29T11:18:52+00:00",
+                    "last_seen": "2026-10-29T11:18:52+00:00",
+                    "name": "homeassistant.components.sonos.speaker",
+                    "messages": ["No recent activity and cannot reach Living Room"],
+                },
+            ],
+        }])
+        with patch.object(power, "_get_recorded_state",
+                          return_value=("off", "Recorded switch OFF")):
+            result = self.check_power()
+        self.assertEqual(result["status"], "ok")
+        # OFF is a valid switch observation, but the source-error/device
+        # relationship has not been established. All-OFF must not imply that
+        # the controlled speaker explains every family-member error.
+        self.assertTrue(all(s["power_state"] == "off" for s in result["samples"]))
+        self.assertTrue(all(
+            s["interpretation"] != "consistent_with_expected_power_off"
+            for s in result["samples"]
+        ), "Mixed-device family timestamps must remain device-unverified")
+
     def test_both_checks_limit_samples_not_expand_grouped_occurrences(self):
         records = []
         for i in range(8):
