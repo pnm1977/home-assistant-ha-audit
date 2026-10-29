@@ -23,6 +23,7 @@ on:
       - "ha_audit/test_generic_readiness_guidance.py"
       - "ha_audit/test_dynamic_correlation_reconciliation.py"
       - "ha_audit/test_manual_compatibility_review.py"
+      - "ha_audit/test_manual_compatibility_web_ui.py"
       - "ha_audit/run.sh"
       - ".github/workflows/investigation-evidence-test.yml"
 
@@ -46,6 +47,7 @@ on:
       - "ha_audit/test_generic_readiness_guidance.py"
       - "ha_audit/test_dynamic_correlation_reconciliation.py"
       - "ha_audit/test_manual_compatibility_review.py"
+      - "ha_audit/test_manual_compatibility_web_ui.py"
       - "ha_audit/run.sh"
       - ".github/workflows/investigation-evidence-test.yml"
 
@@ -94,3 +96,6 @@ jobs:
 
       - name: Run manual Core compatibility review regression tests
         run: python3 ha_audit/test_manual_compatibility_review.py
+
+      - name: Run manual Core compatibility Web UI regression tests
+        run: python3 ha_audit/test_manual_compatibility_web_ui.py
