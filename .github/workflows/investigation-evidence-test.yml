@@ -12,6 +12,8 @@ on:
       - "ha_audit/test_investigation_evidence.py"
       - "ha_audit/test_investigation_handoff.py"
       - "ha_audit/test_investigation_web_ui.py"
+      - "ha_audit/test_report_freshness.py"
+      - "ha_audit/run.sh"
       - ".github/workflows/investigation-evidence-test.yml"
 
   pull_request:
@@ -23,6 +25,8 @@ on:
       - "ha_audit/test_investigation_evidence.py"
       - "ha_audit/test_investigation_handoff.py"
       - "ha_audit/test_investigation_web_ui.py"
+      - "ha_audit/test_report_freshness.py"
+      - "ha_audit/run.sh"
       - ".github/workflows/investigation-evidence-test.yml"
 
 jobs:
@@ -46,3 +50,9 @@ jobs:
 
       - name: Run investigation Web UI regression tests
         run: python3 ha_audit/test_investigation_web_ui.py
+
+      - name: Validate audit startup shell syntax
+        run: bash -n ha_audit/run.sh
+
+      - name: Run report freshness and failure-handling regression tests
+        run: python3 ha_audit/test_report_freshness.py
