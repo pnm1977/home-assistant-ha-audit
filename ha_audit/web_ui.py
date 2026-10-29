@@ -21,8 +21,10 @@ from urllib.parse import parse_qs, urlsplit
 PORT = int(os.environ.get("HA_AUDIT_WEB_PORT", "8099"))
 REPORT = Path("/config/ha_audit_latest.txt")
 ISSUES = Path("/config/log_priority_final.json")
+HANDOFF = Path("/config/ha_audit_ai_handoff.md")
 CONTEXT = Path("/config/investigation_context.json")
 MAX_REPORT_BYTES = 256 * 1024
+MAX_HANDOFF_BYTES = 256 * 1024
 MAX_JSON_BYTES = 1024 * 1024
 MAX_POST_BYTES = 2048
 MAX_NOTE_LENGTH = 500
@@ -84,6 +86,74 @@ def read_summary() -> str:
         return "No audit summary yet. Start HA Audit to generate its first report."
     except (OSError, UnicodeError):
         return "The latest audit summary could not be read."
+
+
+def read_handoff() -> str | None:
+    """Return the generated AI handoff, including saved investigation feedback."""
+    try:
+        if HANDOFF.stat().st_size > MAX_HANDOFF_BYTES:
+            return None
+        text = HANDOFF.read_text(encoding="utf-8")
+        return text if text.strip() else None
+    except (FileNotFoundError, OSError, UnicodeError):
+        return None
+
+
+def build_ai_export() -> str:
+    """Expose the complete local handoff, not just the short audit summary."""
+    handoff = read_handoff()
+    if handoff is None:
+        return (
+            '<h2>Share with AI</h2>'
+            '<p class="muted">AI handoff not available yet. Run HA Audit first.</p>'
+        )
+    return (
+        '<h2>Share with AI</h2>'
+        '<p class="muted">Includes the latest audit evidence and any saved investigation notes. '
+        'Review before sharing outside your Home Assistant.</p>'
+        '<button type="button" id="copy-ai-handoff">Copy for AI</button> '
+        '<a href="ai-handoff.md" download="ha_audit_ai_handoff.md">Download handoff</a>'
+        '<span id="copy-result" role="status" aria-live="polite"></span>'
+        '<details id="ai-handoff-details"><summary>View / select handoff text</summary>'
+        '<textarea id="ai-handoff-text" rows="12" readonly aria-label="AI handoff text">'
+        + escape(handoff) + '</textarea></details>'
+    )
+
+
+# Kept in this Python file so no additional repository file is needed.
+# JavaScript is served as a separate resource with a restrictive CSP.
+COPY_JS = r"""(function () {
+  'use strict';
+  const btn = document.getElementById('copy-ai-handoff');
+  const field = document.getElementById('ai-handoff-text');
+  const result = document.getElementById('copy-result');
+  const detail = document.getElementById('ai-handoff-details');
+  if (!btn || !field || !result || !detail) return;
+  btn.addEventListener('click', async function () {
+    const handoff = field.value;
+    if (!handoff) return;
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.writeText) {
+        throw new Error('Clipboard API unavailable');
+      }
+      await navigator.clipboard.writeText(handoff);
+      result.textContent = ' Copied — paste into your AI chat.';
+      return;
+    } catch (_) {
+      // Useful when browser clipboard permission is unavailable in Ingress.
+      detail.open = true;
+      field.focus();
+      field.select();
+      try {
+        if (document.execCommand && document.execCommand('copy')) {
+          result.textContent = ' Copied — paste into your AI chat.';
+          return;
+        }
+      } catch (_) {}
+      result.textContent = ' Select the text below and copy it manually.';
+    }
+  });
+}());"""
 
 
 def current_families() -> list[dict]:
@@ -231,7 +301,7 @@ def build_issues() -> str:
         '<th>Recurrence</th><th>Your investigation</th></tr></thead><tbody>'
         + "".join(rows) + '</tbody></table></div>'
         '<p class="muted">Saved feedback is private and does not alter audit priorities. '
-        'The next development step will include it in future audit reports and AI handoffs.</p>'
+        'Saved notes are included in the AI handoff; original audit priorities stay unchanged.</p>'
     )
 
 
@@ -250,14 +320,16 @@ th,td{border-bottom:1px solid GrayText;padding:.7rem .6rem;font-size:.92rem;vert
 th{font-weight:700}td{min-width:100px}details{margin-top:.3rem}summary{cursor:pointer}
 form{display:grid;gap:.6rem;margin-top:.5rem;min-width:230px}label{display:grid;gap:.2rem}
 select,textarea,button{font:inherit;padding:.4rem;border-radius:5px}button{cursor:pointer;justify-self:start}
+#ai-handoff-text{width:100%;box-sizing:border-box;margin:.6rem 0 1rem;font: .88rem ui-monospace,monospace;white-space:pre}
+#copy-result{margin-left:.5rem;font-size:.9rem}a{color:LinkText}
 pre{border:1px solid GrayText;border-radius:8px;padding:1rem;white-space:pre-wrap;
 overflow-wrap:anywhere;line-height:1.5;font-size:.9rem}.notice{font-weight:700}
 .error{font-weight:700;color:#b3261e}
 </style></head><body><header><h1>HA Audit</h1><p class="muted">Investigation feedback · foundation</p></header>
-<main>""" + notice + '<h2>Issues needing review</h2>' + build_issues() + """
+<main>""" + notice + '<h2>Issues needing review</h2>' + build_issues() + build_ai_export() + """
 <h2>Complete latest audit summary</h2><pre>""" + escape(read_summary()) + """</pre>
 <p class="muted">Investigation feedback is stored privately and preserved across audit runs.</p>
-</main></body></html>"""
+</main><script src="copy.js" defer></script></body></html>"""
     return page.encode("utf-8")
 
 
@@ -277,7 +349,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Referrer-Policy", "no-referrer")
-        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'self'")
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; form-action 'self'; frame-ancestors 'self'")
         self.end_headers()
         self.wfile.write(body)
 
@@ -288,6 +360,16 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/health":
             self._send(200, b"ok\n", "text/plain; charset=utf-8")
+            return
+        if path == "/copy.js":
+            self._send(200, COPY_JS.encode("utf-8"), "text/javascript; charset=utf-8")
+            return
+        if path == "/ai-handoff.md":
+            handoff = read_handoff()
+            if handoff is None:
+                self._send(404, b"AI handoff unavailable", "text/plain; charset=utf-8")
+                return
+            self._send(200, handoff.encode("utf-8"), "text/markdown; charset=utf-8")
             return
         if path not in ("/", "/index.html"):
             self._send(404, b"Not found", "text/plain; charset=utf-8")
