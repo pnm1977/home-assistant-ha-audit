@@ -13,8 +13,6 @@ on:
       - "ha_audit/test_investigation_handoff.py"
       - "ha_audit/test_investigation_web_ui.py"
       - "ha_audit/test_report_freshness.py"
-      - "ha_audit/core_2026_10_state_conditions.py"
-      - "ha_audit/test_core_2026_10_state_conditions.py"
       - "ha_audit/core_compatibility_checks.py"
       - "ha_audit/core_compatibility_rules.py"
       - "ha_audit/test_core_compatibility_framework.py"
@@ -31,8 +29,6 @@ on:
       - "ha_audit/test_investigation_handoff.py"
       - "ha_audit/test_investigation_web_ui.py"
       - "ha_audit/test_report_freshness.py"
-      - "ha_audit/core_2026_10_state_conditions.py"
-      - "ha_audit/test_core_2026_10_state_conditions.py"
       - "ha_audit/core_compatibility_checks.py"
       - "ha_audit/core_compatibility_rules.py"
       - "ha_audit/test_core_compatibility_framework.py"
@@ -69,9 +65,6 @@ jobs:
 
       - name: Run report freshness and failure-handling regression tests
         run: python3 ha_audit/test_report_freshness.py
-
-      - name: Run Core 2026.10 state-condition regression tests
-        run: python3 ha_audit/test_core_2026_10_state_conditions.py
 
       - name: Run generic Core compatibility framework regression tests
         run: python3 ha_audit/test_core_compatibility_framework.py
