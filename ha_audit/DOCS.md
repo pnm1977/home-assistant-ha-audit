@@ -1,864 +1,345 @@
 # HA Audit User Guide
 
-HA Audit is a read-only Home Assistant health, configuration, and upgrade-readiness auditing app.
+**For HA Audit v0.8.23 and later in the 0.8.x series.**
 
-It examines evidence from your Home Assistant installation to help you understand system health, investigate problems, and make informed maintenance and upgrade decisions.
+HA Audit helps you understand your Home Assistant installation, decide what needs attention, investigate recurring problems, and review evidence before a Home Assistant Core update. It checks configuration, devices, availability, System Log findings, and update-readiness information.
 
-**HA Audit does not automatically repair, delete, restart, or change anything in Home Assistant.**
+**HA Audit does not automatically repair or change Home Assistant.** It reads Home Assistant evidence and saves its own reports and optional investigation notes in the app's private configuration storage. Nothing is automatically sent to an AI provider.
 
-The recommended workflow is:
-
-**Run → Read → Investigate → Act → Rerun**
-
----
+The recommended approach is **Run → Read → Investigate → Act → Rerun**. Do not try to make every warning or unavailable-entity count disappear.
 
 ## Contents
 
-1. Running HA Audit
-2. Understanding the results
-3. System issues and recurring problems
-4. Core update guidance
-5. Configuration health
-6. Entity availability and history
-7. Using HA Audit with AI
-8. Detailed reports
-9. Safety and privacy
-10. Current limitations
+1. [Run an audit and open the Web UI](#1-run-an-audit-and-open-the-web-ui)
+2. [Choose where to focus](#2-choose-where-to-focus)
+3. [Record an investigation](#3-record-an-investigation)
+4. [Check evidence against a power-control switch](#4-check-evidence-against-a-power-control-switch)
+5. [Check evidence against scheduled maintenance](#5-check-evidence-against-scheduled-maintenance)
+6. [Understand new activity and historical errors](#6-understand-new-activity-and-historical-errors)
+7. [Share a report with an AI assistant](#7-share-a-report-with-an-ai-assistant)
+8. [Understand Core update guidance](#8-understand-core-update-guidance)
+9. [Review configuration and device availability](#9-review-configuration-and-device-availability)
+10. [Find detailed reports](#10-find-detailed-reports)
+11. [Safety, privacy, and limitations](#11-safety-privacy-and-limitations)
 
 ---
 
-# 1. Running HA Audit
+## 1. Run an audit and open the Web UI
 
-HA Audit currently runs manually.
+### Installation
 
-### Starting an audit
+In Home Assistant, open **Settings → Apps → App Store**, then open the App Store menu and select **Repositories**. Add the HA Audit repository:
 
-1. Open **Home Assistant → Settings → Apps → HA Audit**.
-2. Select **Start**.
-3. Allow the audit to finish.
-4. Open the **Log** tab.
-5. Find the latest `HA AUDIT vX.X.X - USER SUMMARY`.
+```text
+https://github.com/pnm1977/home-assistant-ha-audit
+```
 
-The app stops automatically when the audit finishes.
+Find **HA Audit** in the App Store and install it.
 
-### What happens during an audit?
+### Start an audit
 
-HA Audit collects available information about:
+1. Open **Settings → Apps → HA Audit** and select **Start**.
+2. Watch the **Log** tab for the current run's summary and any errors.
+3. When the audit has finished, select **Open Web UI**.
+4. Start with **Where to focus**, then review individual findings or the full audit summary.
 
-- Home Assistant versions and system status.
-- Configuration validity and active YAML files.
-- Entities, devices, and availability.
-- Home Assistant Repairs and pending updates.
-- System Log warnings and errors.
-- Previous audit results and available Recorder history.
-- Evidence relevant to pending Home Assistant Core updates.
+**The audit runs when the app starts; the Web UI remains available afterwards while the app is running.** The app no longer stops automatically at the end of a successful audit. It is not continuously rescanning Home Assistant in the background. To collect a fresh audit, restart the app or start it again after stopping it.
 
-It combines these findings into a plain-English summary and more detailed technical reports.
+The Web UI contains the latest generated evidence, which may be older than the moment you open the page. Look at the displayed check time when deciding how current a conclusion is.
 
-### If an audit fails
+The app log remains useful for the brief user summary and any execution errors. The Web UI is the easier place to review ongoing investigations and share the AI handoff.
 
-Check the app log for errors.
+### If a scan fails
 
-When an individual scanner fails, HA Audit reports the failure and available diagnostic output.
-
-An incomplete audit should not be interpreted as evidence that everything is healthy.
+Check the app log. HA Audit may still have produced some usable evidence, but **an incomplete scan is not evidence that everything is healthy**. Treat unavailable reports or failed checks as unknown rather than as a pass.
 
 ---
 
-# 2. Understanding the results
+## 2. Choose where to focus
 
-**Start with the USER SUMMARY in the Home Assistant app log.**
+**Where to focus** groups current higher-priority System Log findings into practical investigation categories. This is separate from the original technical priority.
 
-It is intended for everyday use and highlights the information most likely to matter.
+| Category | What it means | What to do |
+|---|---|---|
+| **Investigate / continue** | Unreviewed or open issues; also issues with sampled errors while a linked power-control switch was ON. | Review these first. |
+| **Monitoring** | You have recorded an investigation and are watching for further evidence. | Recheck after a change or an appropriate monitoring period. |
+| **Explanation to verify** | A finding is marked Explained or Resolved, but its available power-state evidence does not support dismissing the samples. | Check the uncertainty before relying on the explanation. |
+| **Sampled power-off — no immediate action** | A previously explained/resolved finding has only OFF results in the sampled power checks. | No immediate action for those samples; future or unchecked errors still deserve review. |
 
-The main sections are:
+The cards may show short activity or maintenance notes, such as **no new activity detected in latest audit** or **latest sampled error inside maintenance; earlier sample outside**.
 
-```text
-STATUS
-SYSTEM ISSUES
-CORE UPDATE - WHAT TO DO
-```
+**Important:** An issue may still show **HIGH** and **RECURRING 24H+** after it moves into a lower-action investigation category. That is intentional. The technical finding and recurrence history have not been deleted or rewritten.
 
-## STATUS
+The cards show a limited number of examples. Review **Issues needing review** for the individual findings and their supporting information. Lower-priority findings remain available in the detailed reports.
 
-Shows the overall Home Assistant health assessment and update guidance.
+### Technical priority versus recommended action
 
-For example:
+HA Audit assigns priorities such as **HIGH**, **MEDIUM**, **LOW**, and **VERY LOW** based on its log evidence. The priority is not the same as the Home Assistant log level or an instruction to make an immediate change.
 
-```text
-Home Assistant health: NEEDS ATTENTION
-Core update:          ASSESSMENT INCOMPLETE
-OS update:            UPDATE AVAILABLE
-Config check:         VALID
-```
-
-These are separate assessments.
-
-### Home Assistant health
-
-`NEEDS ATTENTION` means HA Audit identified findings worth reviewing.
-
-It does not necessarily mean Home Assistant is experiencing a major fault.
-
-For example, an intentionally powered-off device or a temporarily unavailable integration may contribute to health findings without affecting normal operation.
-
-### Core update
-
-Describes the evidence relevant to a pending Home Assistant Core update.
-
-A health finding does not automatically mean a Core update should be delayed.
-
-See [Core update guidance](#4-core-update-guidance).
-
-### OS update
-
-Reports whether a Home Assistant OS update is available.
-
-This is update visibility, not a complete OS compatibility assessment or recommendation to install.
-
-### Config check
-
-The preferred result is:
-
-```text
-Config check: VALID
-```
-
-This confirms that Home Assistant configuration validation passed.
-
-It does not prove that every automation, script, or integration behaves correctly.
-
-## Detailed current-run summary
-
-Each successful audit also generates:
-
-```text
-ha_audit_latest.txt
-```
-
-This provides more detailed information than the app's USER SUMMARY.
-
-It includes supporting evidence and additional sections such as:
-
-- `OVERVIEW`
-- `WHY THIS RESULT`
-- `SYSTEM`
-- `UPDATE READINESS`
-- `UPGRADE COMPATIBILITY`
-- `CONFIGURATION`
-- `AVAILABILITY CONTEXT`
-- `UNAVAILABLE HISTORY CONTEXT`
-- `REVIEW`
-- `NEXT ACTIONS`
-
-**You do not need to understand every technical field to use HA Audit.**
-
-Start with the summary and investigate individual findings when appropriate.
+For example, a repeatedly unreachable device can be a HIGH technical finding even if it is normally turned off deliberately. A verified explanation may change the **investigation recommendation**, not the underlying priority or original logs.
 
 ---
 
-# 3. System issues and recurring problems
+## 3. Record an investigation
 
-HA Audit examines available Home Assistant System Log warnings and errors.
+Open **Issues needing review**, find the issue, and expand **Review / update**.
 
-Related messages are grouped into issue families so that repeated messages do not overwhelm the results.
+### Status
 
-For example, several failed commands from a Zigbee automation may represent one communication problem rather than several unrelated faults.
-
-## Priorities
-
-HA Audit uses four priority levels:
-
-| Priority | Meaning |
+| Status | When to use it |
 |---|---|
-| HIGH | Deserves attention ahead of lower-priority findings. |
-| MEDIUM | Worth reviewing, particularly if the issue affects normal operation. |
-| LOW | Usually lower-priority investigation or maintenance context. |
-| VERY LOW | Generally informational or limited-impact evidence. |
+| **Investigating** | You are working out why the issue occurs or checking its impact. |
+| **Monitoring** | You have made a change or noticed a pattern and want to see whether further problems appear. |
+| **Explained** | You have an explanation for the observed behaviour, while recognising that new evidence may require another look. |
+| **Resolved** | You believe the problem has been addressed; later errors must still be assessed. |
 
-These priorities are based on the evidence HA Audit has collected.
+New findings without saved feedback are treated as **Not reviewed**. These status labels are **your investigation feedback**, not independently verified conclusions.
 
-**Priority is not the same as Home Assistant log severity.**
+### Notes
 
-A HIGH classification does not automatically mean an urgent or confirmed hardware fault.
+In **What did you establish or change?**, describe what you observed, what you changed, when you changed it, and what should be checked next. Notes can contain up to **4,000 characters**. Select **Save feedback**.
 
-## What determines priority?
+Saved notes, status updates, and their history are retained in HA Audit's private configuration storage across audit runs and app updates. The latest note is shown when you reopen the form; the complete history is retained locally. The handoff includes the latest note and indicates that it is user-reported context.
 
-HA Audit considers available evidence such as:
+You can also save an optional **Power-control switch** or **Scheduled maintenance** rule for a finding, as described below. Those settings are structured context for checking evidence; they do not create an automation or change the equipment.
 
-- Whether an actual failure was observed.
-- Whether there is a practical local investigation path.
-- Whether recovery or fallback behaviour was observed.
-- Whether the issue has genuinely recurred.
-- Whether device availability or Home Assistant Repairs provide supporting context.
+### What feedback does not do
 
-High occurrence counts alone do not establish a persistent problem.
-
-## Recurrence
-
-HA Audit distinguishes between repeated log messages and independently observed activity across audits.
-
-### NOT ESTABLISHED
-
-There is insufficient evidence to establish recurrence.
-
-An issue may have appeared once, or previously collected messages may still be visible without new activity.
-
-### SHORT-WINDOW REPEAT
-
-New activity was independently observed again, but the proven observation span remains below 24 hours.
-
-### RECURRING 24H+
-
-New activity was independently observed across an audit observation period of at least 24 hours.
-
-This provides stronger evidence of recurrence.
-
-However, it does **not** mean the problem was continuously happening throughout that period or is still happening now.
-
-Repeatedly running HA Audit against unchanged retained log evidence does not establish recurrence.
-
-## Understanding the explanations
-
-The USER SUMMARY presents the highest-priority findings first.
-
-Where the evidence allows, HA Audit explains:
-
-1. What Home Assistant observed.
-2. Which device, automation, or integration was involved.
-3. A useful first check.
-4. What remains uncertain.
-
-For example:
-
-```text
-Observed:
-TV & Events tried to change the LG TV input while
-the television was off.
-
-Useful first check:
-Check whether that input change should occur
-when the TV is off.
-```
-
-This identifies an appropriate investigation without assuming the automation needs changing.
-
-## Technical references
-
-Some findings include references to:
-
-- Entity IDs.
-- Automation and script names.
-- YAML filenames and line numbers.
-- Relevant Home Assistant log messages.
-
-These references identify where to investigate.
-
-**A matching configuration reference is not proof that the configuration caused the problem.**
-
-For the complete prioritised issue list, use:
-
-```text
-log_priority_final.json
-```
-
-For historical recurrence evidence, use:
-
-```text
-log_recurrence.json
-log_issue_history.json
-```
+Saving **Explained** or **Resolved** does not remove the original finding, clear Home Assistant logs, change its HIGH/MEDIUM priority, or guarantee that future occurrences are harmless. If later evidence conflicts with an explanation, HA Audit can recommend renewed investigation without changing the saved status automatically.
 
 ---
 
-# 4. Core update guidance
+## 4. Check evidence against a power-control switch
 
-HA Audit helps users assess available Home Assistant Core updates using official release information and local installation evidence.
+Use this when a device is intentionally disconnected from power by a Home Assistant-controlled plug or switch.
 
-It does not install updates automatically.
+### Set it up
 
-## Possible recommendations
+1. Physically identify which plug or switch actually supplies the device. Do not guess from similarly named entities.
+2. Find its **actual Home Assistant switch entity**, for example `switch.tv_cabinet_socket`, using **Developer Tools → States**.
+3. Open the associated finding in **Issues needing review → Review / update**.
+4. Enter the entity in **Power-control switch (optional)** and save your feedback.
+5. Run a new audit to refresh the stored evidence. Use **Check current evidence** if you need the separate on-demand detail page.
+
+Use a real `switch.*` entity. A template `sensor.*` expressing the *desired* state of a plug is not necessarily evidence of its physical state.
+
+### Understand the results
+
+| Result | Meaning | Suggested interpretation |
+|---|---|---|
+| **OFF** | Recorder shows the controlling switch OFF at a sampled error timestamp. | Consistent with deliberate loss of power; not proof of causation. |
+| **ON** | Recorder shows the switch ON at the sampled time. | The power-off explanation does not account for this sample; investigate. |
+| **UNKNOWN** | The state cannot be established from the available evidence. | Do not assume the device was off. |
+
+The Web UI displays **OFF / ON / UNKNOWN** counts beside the finding and a recommendation that reflects those samples. Where an Explained/Resolved finding has exclusively OFF samples, **Where to focus** can place it in **Sampled power-off — no immediate action**. An ON sample returns it to the actionable group.
+
+### Limits of power checks
+
+The checker uses **sampled first/last timestamps from System Log source records**, not the timestamp of every occurrence in a deduplicated log group. A result such as **OFF 4 · ON 0 · UNKNOWN 0** means four *sampled timestamps* matched OFF, not necessarily every logged error.
+
+Recorder history may be missing or incomplete. A saved switch relationship is provided by the user; a matching history state supports an interpretation but is not independent proof of the equipment's wiring or the cause of a failure.
+
+The main evidence card uses the last **completed audit**. The **Check current evidence** link performs a separate current check; do not confuse the two timestamps.
+
+---
+
+## 5. Check evidence against scheduled maintenance
+
+Use **Scheduled maintenance (optional)** when an integration or device may briefly lose connectivity during an established maintenance period, such as a scheduled network reboot.
+
+### Set it up
+
+1. Open the finding's **Review / update** form.
+2. Choose **Frequency**, then fill in the relevant days or monthly rule.
+3. Enter **Start (local time)** and **End (local time)** in 24-hour format.
+4. Enter an IANA time zone, such as `Europe/London`.
+5. Save the feedback and run a new audit to check the sampled log timestamps.
+
+Supported schedules:
+
+| Frequency | Additional setting | Example |
+|---|---|---|
+| **Daily** | None | Every day, 03:00–03:05 |
+| **Weekly — selected weekdays** | One or more weekdays | Sundays only, 04:00–04:15 |
+| **Monthly — calendar date** | Day 1–31 | 1st of each month |
+| **Monthly — nth weekday** | First, second, third, fourth, or last weekday | Last Sunday of each month |
+
+A monthly date of 31 does not occur in months without a 31st. Windows crossing midnight are supported and belong to the day on which they **start**. Time-zone matching uses the named zone rather than assuming a fixed UTC offset, so UK summer/winter clock changes are taken into account.
+
+To remove a schedule, clear its **Start**, **End**, and **Time zone**, then save.
+
+### Understand the results
+
+| Result | Meaning |
+|---|---|
+| **INSIDE** | A sampled error timestamp falls within the configured schedule. |
+| **OUTSIDE** | A sampled timestamp falls outside the configured schedule. |
+| **UNKNOWN** | The timestamp or schedule match cannot be established. |
+
+A finding may display **INSIDE 1 · OUTSIDE 1 · UNKNOWN 0**. That means one sampled timestamp matched the maintenance window and one did not. It **does not** classify every occurrence in the underlying System Log group.
+
+The interface also identifies the **most recent sampled log timestamp**. It may show that the latest sample is inside maintenance while an earlier one is outside. Treat the older outside-window evidence as a reason to keep reviewing, not as proof that a problem is still happening today.
+
+**A schedule match is not proof that maintenance actually occurred or caused the error.** It is time-based context, not an independently observed router or device reboot. A recent configuration change may explain an older outside-window error, but HA Audit cannot establish that from free-text notes alone.
+
+If the schedule changes, previously stored maintenance results are not treated as a valid verification of the new schedule; run an audit again. Existing investigation status and original technical priority are preserved.
+
+---
+
+## 6. Understand new activity and historical errors
+
+Home Assistant's System Log may retain and deduplicate errors across several days. An error still appearing in the log is **not necessarily a new error today**.
+
+HA Audit reuses its cross-audit history to display **Latest audit activity**:
+
+| Label | Meaning |
+|---|---|
+| **NEW ACTIVITY** | Independently new activity was detected since the earlier audit observation. |
+| **RETAINED EVIDENCE** | The finding remains visible, but the latest audit detected no independently new activity. |
+| **BASELINE** | This is the first observation, without an earlier audit for comparison. |
+
+**RETAINED EVIDENCE** is encouraging during monitoring, but it does **not** prove a problem has stopped. A bounded audit cannot guarantee that no error occurred between runs.
+
+The activity indicator and the power/maintenance samples answer **different questions**:
+
+- **Latest audit activity:** Did the cross-run comparison independently detect new log activity?
+- **Power or maintenance evidence:** What was the switch state or scheduled time at the selected log timestamps?
+
+The newest *sampled log timestamp* is not necessarily independently new activity in the current audit. Avoid interpreting it that way.
+
+### Understanding recurrence
+
+**SHORT-WINDOW REPEAT** means independently new activity was observed across a period shorter than 24 hours. **RECURRING 24H+** means independently new activity has been observed across an audit observation span of at least 24 hours. These are historical recurrence classifications, not proof that failures lasted continuously for 24 hours or are still occurring now.
+
+Repeated audits against unchanged retained evidence do not establish recurrence. Consult `log_recurrence.json` and `log_issue_history.json` for the underlying run-to-run history.
+
+---
+
+## 7. Share a report with an AI assistant
+
+After a successful audit, the Web UI's **Share with AI** section offers:
+
+- **Copy for AI** — copies the generated handoff to the clipboard where browser permissions allow.
+- **Download handoff** — downloads the Markdown report.
+- **View / select handoff text** — opens the full text for review or manual copying.
+
+The handoff, `ha_audit_ai_handoff.md`, combines the latest audit findings with saved investigation feedback and automatic sampled evidence. Its instructions ask the receiving AI to distinguish observed facts, reasonable interpretations, and unknowns.
+
+For more technical analysis, `ha_audit_ai_evidence.json` contains structured companion data. Use it only if the readable handoff does not contain enough evidence.
+
+### Privacy before sharing
+
+**No data is sent to an AI provider merely by running HA Audit or opening the Web UI.** You decide whether to copy, download, or share a report.
+
+Review it first: reports can contain device names, entity IDs, network addresses, configuration details, and investigation notes. Share only what you are comfortable disclosing.
+
+If clipboard copying is blocked by the browser, use **View / select handoff text** or **Download handoff** instead.
+
+---
+
+## 8. Understand Core update guidance
+
+HA Audit compares the installed and target Home Assistant Core versions with available Repairs, official release notes, breaking-change evidence, local configuration, integrations, deterministic compatibility rules, and dynamic correlation results.
+
+Its update guidance is **separate from general Home Assistant health**: an intentionally unavailable device is not automatically an update blocker.
 
 | Recommendation | Meaning |
 |---|---|
-| NO CORE UPDATE PENDING | No Core update currently needs assessment. |
-| NO KNOWN BLOCKERS FOUND | The completed assessment found no known reason to delay. |
-| REVIEW BEFORE UPDATING | Specific evidence deserves attention before updating. |
-| ASSESSMENT INCOMPLETE | HA Audit could not complete its required assessment. |
-| DELAY - BLOCKER EVIDENCE FOUND | The assessment identified evidence supporting a delay. |
+| **NO CORE UPDATE PENDING** | There is no Core update to assess. |
+| **NO KNOWN BLOCKERS FOUND** | No known blocker was found in the assessment that was completed. |
+| **REVIEW BEFORE UPDATING** | Relevant evidence deserves review first. |
+| **ASSESSMENT INCOMPLETE** | Required evidence or compatibility coverage is insufficient for a complete recommendation. |
+| **DELAY - BLOCKER EVIDENCE FOUND** | Evidence supports delaying the update pending investigation. |
 
-The precise recommendation depends on the available evidence.
+**ASSESSMENT INCOMPLETE is not proof of an unsafe update.** Equally, **NO KNOWN BLOCKERS FOUND does not guarantee a safe update**.
 
-### NO KNOWN BLOCKERS FOUND
+### What compatibility coverage means
 
-HA Audit did not identify a known blocker within the evidence it examined.
+Official breaking-change evidence may be complete while deterministic compatibility rules cover only part of the upgrade window. Dynamic correlation can add useful context but is not equivalent to a precise compatibility rule. Missing deterministic coverage indicates an **assessment gap**, not a confirmed failure or a number of problems.
 
-This is deliberately different from saying:
+Some UI-managed configuration, including custom AI prompts, may be outside the scanner's scope. Read the detailed update-readiness and compatibility reports when HA Audit explains that coverage is incomplete.
 
-```text
-SAFE TO UPDATE
-```
+### Before and after updating
 
-Home Assistant updates can still affect integrations or configurations that HA Audit cannot fully assess.
+Before updating, review the reported actions and confirm you have a suitable, independently verified recovery plan. **HA Audit does not verify that a backup can be restored.** After updating, confirm that Home Assistant starts, check Repairs and important devices/integrations, and rerun HA Audit to compare the new evidence.
 
-### REVIEW BEFORE UPDATING
+---
 
-HA Audit identified something that deserves review before proceeding.
+## 9. Review configuration and device availability
 
-This might include a relevant Home Assistant Repair or an affected compatibility rule.
+### Configuration health
 
-It does not automatically mean the update will fail.
+HA Audit validates Home Assistant configuration and examines the **active YAML include tree**. Its findings may include missing includes, missing entity references, possible orphan YAML, duplicate automation IDs, duplicate automation names or script aliases, and unusually large definitions.
 
-### ASSESSMENT INCOMPLETE
+These are review candidates. A referenced entity may be renamed or outside the available matching evidence; an unreferenced file might be intentionally retained. A large script is not necessarily faulty. **Do not delete or rewrite configuration solely to make audit counts zero.**
 
-HA Audit could not complete all the evidence or compatibility assessment required by its current decision model.
+Configuration validation passing does not prove every automation or integration behaves correctly.
 
-**This does not automatically mean a problem was detected.**
+### Availability
 
-Since v0.8.4, HA Audit provides clearer explanations distinguishing between:
+HA Audit distinguishes:
 
-- Completed checks that found no specific update-related issue.
-- Actual findings requiring investigation.
-- Evidence or compatibility coverage that remains incomplete.
-
-For example, HA Audit may successfully validate configuration and assess several compatibility rules while still lacking sufficient coverage to produce a complete update recommendation.
-
-This should be interpreted as **limited assessment confidence**, not proof that the update is unsafe.
-
-When the assessment is incomplete, review the remaining uncertainty before relying on HA Audit's guidance.
-
-### DELAY - BLOCKER EVIDENCE FOUND
-
-HA Audit has identified evidence supporting a delay.
-
-Review the reported findings before considering the update.
-
-The recommendation remains evidence-based and does not independently prove that installation would fail.
-
-## What does HA Audit check?
-
-Depending on the upgrade and available evidence, the assessment can include:
-
-- Installed and target Core versions.
-- Relevant Home Assistant Repairs.
-- Official release information.
-- Documented breaking changes.
-- Active local configuration and integrations.
-- Deterministic compatibility rules.
-- Dynamic correlation with local installation evidence.
-- Configuration validation.
-- Assessment completeness.
-
-## Compatibility coverage
-
-HA Audit does not maintain a guaranteed comprehensive compatibility rule for every Home Assistant release change.
-
-Its deterministic rules provide more precise checks for selected changes.
-
-Dynamic correlation provides additional context about potentially relevant changes.
-
-This distinction matters.
-
-For example:
-
-```text
-Official change groups:        30
-Deterministic rules cover:      8
-Remaining dynamic-only groups: 22
-```
-
-This does **not** mean 22 problems were detected.
-
-It means those changes lack equivalent deterministic reference coverage.
-
-The detailed reports provide the available evidence for review.
-
-## Locally relevant compatibility results
-
-Common findings include:
-
-| Finding | Meaning |
+| Category | Meaning |
 |---|---|
-| No local match | No matching local use was identified for that rule. |
-| Local match, no affected use | Related functionality exists, but the affected usage was not detected. |
-| Review required | Local evidence indicates the change deserves investigation. |
-| Manual review | HA Audit cannot safely determine the outcome automatically. |
+| **Partial device availability** | Some entities are unavailable, while the same device still has healthy entities. |
+| **Whole-device unavailable** | No healthy state entities were observed for the device. |
+| **Ungrouped unavailable** | An unavailable entity is not associated with a device. |
+| **Unknown state** | The entity exists but Home Assistant does not currently have a meaningful value. |
+| **Not currently provided** | An entity may remain registered although its integration is not currently supplying it. |
 
-These results are supporting evidence, not guarantees.
+A device may be intentionally powered off, disconnected for maintenance, or temporarily unreachable. HA Audit supports optional expected-offline and maintenance labels, but does not require them.
 
-Some Home Assistant configuration is managed through the UI and may not be available to HA Audit's configuration scanners.
+Recorder history provides additional context, limited by retention and exclusions. Results can include `usable_history_found`, `history_found_no_usable_state`, `no_history_returned`, and `history_query_failed`.
 
-## Before updating
-
-Follow the reported Core update guidance.
-
-Also ensure you have an appropriate recovery plan.
-
-**HA Audit does not verify that a successful, restorable backup exists.**
-
-Check your backup arrangements independently before significant updates.
-
-## After updating
-
-A useful follow-up is to:
-
-1. Confirm Home Assistant starts and configuration validation passes.
-2. Check Home Assistant Repairs.
-3. Confirm important integrations and devices are functioning.
-4. Rerun HA Audit.
-5. Compare new and recovered findings with the pre-update audit.
-
-An updated installation should be judged using the new evidence rather than assuming everything is healthy because the update completed.
+**No history, unavailability, or a not-currently-provided classification is sufficient reason on its own to delete an entity.**
 
 ---
 
-# 5. Configuration health
+## 10. Find detailed reports
 
-HA Audit examines the active YAML configuration and related Home Assistant information.
+The Web UI displays the latest audit report and provides the AI handoff. Other evidence remains in HA Audit's private app configuration folder.
 
-Common findings include:
+If your file-access app supports `/addon_configs`, open it and locate the folder ending in `_ha_audit`; the generated prefix can vary. In Studio Code Server, you can use **File → Open Folder... → `/addon_configs`**. Direct access to the private files is optional for everyday use.
 
-### Missing active includes
-
-An active YAML file references an include target that HA Audit could not find.
-
-Review the reported filename and location before making changes.
-
-### Missing entity references
-
-An entity ID used in active YAML could not be matched to a current Home Assistant entity.
-
-These are review candidates, not automatically confirmed errors.
-
-An entity might have been renamed, temporarily unavailable, or otherwise outside the matching evidence.
-
-### Orphan YAML candidates
-
-Files were found that do not appear to belong to the active YAML include tree.
-
-They may be unused, but could also be intentionally retained.
-
-Do not delete them solely because they were identified as candidates.
-
-### Duplicate automation IDs
-
-Automation IDs should be unique.
-
-Duplicate IDs represent structural findings that deserve review.
-
-### Duplicate automation names
-
-Duplicate automation aliases are different from duplicate IDs.
-
-HA Audit considers live automation states so that disabled or mixed-state duplicates are not automatically treated as active conflicts.
-
-### Duplicate script names
-
-Duplicate script aliases are maintainability findings.
-
-They do not automatically establish invalid configuration or a runtime failure.
-
-### Large automations and scripts
-
-HA Audit can identify unusually large definitions.
-
-Size alone is not proof that something is wrong or requires rewriting.
-
-## NEXT ACTIONS
-
-The detailed summary uses markers such as:
-
-```text
-[!] Finding needing attention
-[i] Informational or review context
-```
-
-These help distinguish stronger findings from supporting information.
-
-For configuration details, use:
-
-```text
-quality_audit.json
-```
-
-**Do not try to make every count zero.**
-
-Investigate findings based on their evidence and actual impact.
-
----
-
-# 6. Entity availability and history
-
-HA Audit distinguishes between unavailable entities, unknown states, and entities that are no longer currently provided by their integrations.
-
-These categories should not be treated as interchangeable.
-
-## Unavailable entities
-
-An unavailable entity may represent:
-
-- A deliberately switched-off device.
-- Equipment undergoing maintenance.
-- A temporary network or integration problem.
-- An unavailable feature of an otherwise functioning device.
-- A genuinely failed or disconnected device.
-
-Unavailable does not automatically mean faulty.
-
-### Partial device availability
-
-At least one entity associated with the device is healthy while another is unavailable.
-
-This may represent feature-level or diagnostic availability rather than a complete device failure.
-
-### Whole-device unavailability
-
-No healthy state entities are currently available for the device.
-
-This is an observation, not proof of a fault.
-
-Before investigating, consider whether the device is supposed to be powered or online.
-
-### Ungrouped unavailable entities
-
-These are unavailable entities not attached to a Home Assistant device.
-
-They require separate interpretation.
-
-## Optional availability labels
-
-HA Audit supports optional Home Assistant labels for known circumstances such as:
-
-- Expected offline.
-- Maintenance.
-
-These labels can add context but are not necessary for normal operation.
-
-HA Audit does not require users to maintain labels to obtain useful results.
-
-## Unknown states
-
-An entity with state `unknown` exists, but Home Assistant does not currently have a meaningful value for it.
-
-Some entities may legitimately report this state.
-
-Do not assume every unknown state requires investigation.
-
-## Entities not currently provided
-
-An entity may remain in the Home Assistant registry even when its integration no longer creates or supplies it.
-
-Potential explanations include integration changes, removed devices, or temporary integration failures.
-
-HA Audit checks available active-YAML references and history to provide additional context.
-
-**This is a review category, not a deletion list.**
-
-## Recorder history
-
-HA Audit uses available Recorder history to add context.
-
-The requested lookback may be up to 90 days, but the effective period depends on actual Recorder retention and available evidence.
-
-For example, if Recorder only contains 18 days of history, HA Audit cannot establish what happened 60 days ago.
-
-History results may include:
-
-```text
-usable_history_found
-history_found_no_usable_state
-no_history_returned
-history_query_failed
-```
-
-### Usable history found
-
-Recorder returned at least one meaningful state within the available period.
-
-Where possible, HA Audit identifies when the final usable interval began and when it ended.
-
-An end time is only reported when the available history supports it.
-
-### History found without a usable state
-
-Recorder returned records, but no usable state was identified within the effective window.
-
-This does not prove the entity has never worked.
-
-### No history returned
-
-Recorder returned no history records.
-
-Possible reasons include retention limits or exclusions.
-
-This does not establish that an entity is unused.
-
-### History query failed
-
-HA Audit could not obtain the requested history.
-
-This represents incomplete evidence.
-
-## Important safety principle
-
-**No history is not evidence that an entity is safe to delete.**
-
-Likewise, unavailable, unknown, or no-longer-provided states do not independently justify deletion.
-
-Relevant reports include:
-
-```text
-availability_audit.json
-unavailable_history_audit.json
-not_provided_reference_audit.json
-not_provided_history_audit.json
-```
-
----
-
-# 7. Using HA Audit with AI
-
-Each successful audit generates a vendor-neutral AI handoff:
-
-```text
-ha_audit_ai_handoff.md
-```
-
-It is designed for assistants including ChatGPT, Claude, Gemini, and compatible local AI systems.
-
-## What does the handoff contain?
-
-The handoff brings together:
-
-- Core update guidance.
-- Important Home Assistant health findings.
-- Prioritised System Log issues.
-- Plain-English explanations.
-- Suggested initial troubleshooting checks.
-- Relevant YAML and entity references.
-- Known limitations and missing evidence.
-- Supporting information from the latest audit.
-
-The handoff also instructs the receiving assistant to distinguish between observed facts, reasonable interpretations, and unknowns.
-
-## How to use it
-
-1. Run HA Audit.
-2. Locate `ha_audit_ai_handoff.md`.
-3. Review the file before sharing it.
-4. Upload it to your preferred AI assistant.
-5. Ask the assistant to analyse the findings.
-
-For example:
-
-> Review this HA Audit report and explain the three most important findings and what I should check first.
-
-The handoff contains its own interpretation instructions.
-
-You do not need to create a complicated prompt.
-
-## Structured AI evidence
-
-HA Audit also generates:
-
-```text
-ha_audit_ai_evidence.json
-```
-
-This contains machine-readable information such as:
-
-- Issue classifications and priorities.
-- Supporting log evidence.
-- Related entities, automations, and scripts.
-- Configuration references and source locations.
-- Recurrence context.
-- Evidence gaps.
-
-This file is useful when the receiving AI needs more detailed information than the readable handoff provides.
-
-For most users, start with the Markdown handoff and provide detailed evidence only when necessary.
-
-## What AI analysis can and cannot establish
-
-An AI assistant can help interpret evidence, identify plausible explanations, and suggest further checks.
-
-However:
-
-- Matching YAML references do not prove causation.
-- Error counts do not independently prove recurrence.
-- An unavailable device may be intentionally offline.
-- An incomplete assessment is not automatically a fault.
-- No AI interpretation can guarantee that a Core update is safe.
-
-The receiving AI should suggest non-destructive checks before proposing changes.
-
-## Privacy
-
-HA Audit does not automatically send reports to an AI provider.
-
-Files remain local until you choose to share them.
-
-The handoff and structured evidence may include device names, entity IDs, configuration information, and other installation-specific details.
-
-Review them before uploading them to an external service.
-
----
-
-# 8. Detailed reports
-
-HA Audit stores generated reports in its private Home Assistant app configuration folder.
-
-## Finding the reports
-
-If your Home Assistant file-access tool supports `/addon_configs`:
-
-1. Open `/addon_configs`.
-2. Find the folder ending in `_ha_audit`.
-3. Open the relevant report.
-
-The prefix before `_ha_audit` is generated by Home Assistant and can vary between installations.
-
-### Using Studio Code Server
-
-If Studio Code Server is installed:
-
-1. Open Studio Code Server.
-2. Choose **File → Open Folder...**
-3. Enter:
-
-   `/addon_configs`
-
-4. Open the HA Audit folder.
-5. Select the required report.
-
-When finished, use **File → Open Recent** to return to your previous workspace.
-
-Studio Code Server is optional. Other compatible file-access methods can also be used.
-
-## Which report should I open?
-
-| Question | Recommended report |
+| Question | Report |
 |---|---|
-| What should I investigate first? | `ha_audit_latest.txt` |
-| What did the configuration checks find? | `quality_audit.json` |
-| Which devices are unavailable? | `availability_audit.json` |
-| What does Recorder history show? | `unavailable_history_audit.json` |
+| What is the latest human-readable audit summary? | `ha_audit_latest.txt` |
+| Which configuration problems were found? | `quality_audit.json` |
+| Which devices and entities are unavailable? | `availability_audit.json` |
+| What does ordinary unavailable-entity history show? | `unavailable_history_audit.json` |
 | Which entities are no longer provided? | `not_provided_reference_audit.json` |
-| Is an older entity protected by history? | `not_provided_history_audit.json` |
-| Which System Log issues matter most? | `log_priority_final.json` |
-| Is an issue recurring across audits? | `log_recurrence.json` |
-| What historical observations exist? | `log_issue_history.json` |
-| What is the Core update evidence? | `update_readiness_audit.json` |
-| Which compatibility checks were performed? | `upgrade_compatibility_audit.json` |
-| How complete is compatibility coverage? | `compatibility_coverage_audit.json` |
-| What should I upload to an AI assistant? | `ha_audit_ai_handoff.md` |
-| What additional AI evidence is available? | `ha_audit_ai_evidence.json` |
+| What protects old entity references from premature cleanup? | `not_provided_history_audit.json` |
+| Which System Log families have what priority? | `log_priority_final.json` |
+| What was the source System Log sample? | `log_audit.json` |
+| Has a finding recurred across audits? | `log_recurrence.json` and `log_issue_history.json` |
+| What evidence supports the Core update result? | `update_readiness_audit.json` and related upgrade reports |
+| What should I share with an AI assistant? | `ha_audit_ai_handoff.md` |
+| What structured evidence supports the AI handoff? | `ha_audit_ai_evidence.json` |
 
-Additional technical reports are generated for collection, correlation, and diagnostic purposes.
+The investigation system also keeps its own private feedback and evidence data, including `investigation_context.json`, `investigation_evidence.json` (sampled power evidence), and `investigation_maintenance_evidence.json` (sampled maintenance evidence). **Normally you should use the Web UI rather than editing these files manually.**
 
-You normally do not need to open them unless investigating a specific question.
-
-## Previous audits
-
-HA Audit retains selected information across runs to support comparisons and recurrence analysis.
-
-Historical visibility does not mean a problem is currently happening.
-
-Where possible, distinguish:
-
-- Newly observed activity.
-- Previously observed activity.
-- Retained evidence without new activity.
-- Issues no longer present in the collected evidence.
-
-An issue disappearing from a bounded log sample is not proof that it has been permanently resolved.
+Data is retained across audits where the app's private configuration storage is preserved. A report's timestamp and collection scope matter: System Log collection is bounded and Home Assistant may deduplicate messages.
 
 ---
 
-# 9. Safety and privacy
+## 11. Safety, privacy, and limitations
 
-HA Audit is designed to be read-only.
+HA Audit is read-only **toward Home Assistant**: it does not change Home Assistant YAML, delete devices, run automations, restart Home Assistant, install Core updates, or perform repairs. Saving investigation feedback writes **only to HA Audit's private app storage**.
 
-It does not:
+Configuration scanning excludes sensitive or irrelevant locations such as `.storage`, `.cloud`, backup directories, and files containing `secret` in their filenames (including `secrets.yaml`). This reduces exposure but does not guarantee reports contain no sensitive information.
 
-- Modify Home Assistant configuration.
-- Automatically delete entities or devices.
-- Restart Home Assistant.
-- Trigger automations or scripts.
-- Install software updates.
-- Apply repairs.
-- Automatically transmit audit reports to AI services.
+HA Audit cannot:
 
-## Configuration access
+- Guarantee that every integration, automation, or device works correctly.
+- Guarantee a Home Assistant Core update will be safe.
+- Fully inspect all UI-managed settings or assess every documented breaking change.
+- Provide a complete historical archive of System Log events or check every deduplicated error timestamp.
+- Guarantee Recorder history is available for every entity or time period.
+- Prove that a device was physically powered off solely because a switch reports OFF.
+- Prove that scheduled maintenance actually occurred solely because an error falls within its configured window.
+- Establish backup/restore readiness or provide the same depth of OS assessment as Core assessment.
+- Automatically investigate or resolve issues while the app is simply left open.
 
-HA Audit uses read-only access to Home Assistant configuration.
-
-Generated reports and audit history are written to its own private app configuration directory.
-
-Configuration scanning excludes sensitive or unrelated locations, including:
-
-- `.storage`
-- `.cloud`
-- Backups.
-- Custom component source directories.
-- ESPHome configuration.
-- Media and TTS directories.
-- `www`.
-
-Files with `secret` in their filename, including `secrets.yaml`, are excluded from configuration scanning.
-
-These exclusions reduce the information collected but do not guarantee that every generated report is free of installation-specific or sensitive information.
-
-**Always review reports before sharing them externally.**
-
-## Backups and recovery
-
-HA Audit can identify some system and update evidence relevant to maintenance decisions.
-
-However, it does not establish:
-
-- Whether a recent backup completed successfully.
-- Whether a backup contains everything required for recovery.
-- Whether backup storage is independently protected.
-- Whether a restore has been tested.
-
-These checks remain the user's responsibility.
-
----
-
-# 10. Current limitations
-
-HA Audit is intended to support maintenance decisions, not replace Home Assistant's own diagnostic tools or the user's judgement.
-
-Current limitations include:
-
-- Audits must be started manually.
-- It does not automatically repair Home Assistant.
-- System Log collection is bounded rather than a complete historical archive.
-- Recorder analysis is limited by available retention and exclusions.
-- Some UI-managed configuration cannot be inspected.
-- Compatibility checks do not cover every possible integration or breaking change.
-- Core update guidance cannot guarantee a safe upgrade.
-- OS update assessment is less extensive than Core update assessment.
-- Backup and restore readiness is not verified.
-- AI analysis requires the user to share the generated evidence.
-
-## How to interpret uncertainty
-
-When HA Audit cannot inspect something, the correct interpretation is:
-
-**Not assessed or insufficient evidence.**
-
-It should not automatically be treated as either healthy or faulty.
-
-Similarly, an informational finding should not be turned into a required action without supporting evidence.
-
-## Final advice
-
-Use HA Audit to identify meaningful findings and investigate them one at a time.
-
-Focus on actual problems, relevant upgrade risks, and changes in system behaviour.
-
-There is no need to eliminate every warning, unavailable entity, or informational count.
+Use **UNKNOWN**, **not assessed**, or **insufficient evidence** literally; do not interpret them as healthy or faulty. Likewise, an Explained or Resolved investigation label is not proof that new errors are harmless.
 
 **Understand first. Change only when necessary.**
