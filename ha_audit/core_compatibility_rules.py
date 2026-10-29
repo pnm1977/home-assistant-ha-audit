@@ -5,23 +5,46 @@ It never executes a check, treats missing rules as safe, or changes the
 existing deterministic or dynamic correlation reports.
 
 Adding an occasional targeted check requires a registry descriptor, not a
-new release-specific runner. The existing 2026.9 rule pack remains separate
-until it is explicitly adapted to this interface.
+new release-specific scanner. Version-sensitive corrections are represented
+as data-driven parameter overrides. The existing 2026.9 rule pack remains
+separate until it is explicitly adapted to this interface.
 """
 
 import re
+from copy import deepcopy
 
 
 # Registered checks must have a specific, reviewable implementation.
 # A release with no registered checks is supported and is NOT declared safe.
 RULE_REGISTRY = (
     {
+        # Version dates belong in rule *data*, never in the YAML scanner.
         "rule_id": "core_2026_10_state_conditions_for",
         "introduced_in": "2026.10",
         "official_group": "State conditions",
-        "module": "core_2026_10_state_conditions",
-        "function": "find_unsupported_state_durations",
+        "module": "core_compatibility_checks",
+        "function": "find_state_condition_conflicts",
         "input_kind": "active_yaml",
+        "check_parameters": {
+            "prohibited_patterns": [
+                "attribute_with_for",
+                "state_list_with_for",
+                "helper_state_with_for",
+            ],
+        },
+        # 2026.10.2 restored state lists + for:; retain the other checks.
+        # The selector applies these generic parameter changes in target order.
+        "parameter_overrides": [
+            {
+                "effective_from": "2026.10.2",
+                "check_parameters": {
+                    "prohibited_patterns": [
+                        "attribute_with_for",
+                        "helper_state_with_for",
+                    ],
+                },
+            },
+        ],
     },
 )
 
@@ -93,9 +116,50 @@ def _validated_registry(registry):
         for key in ("official_group", "module", "function", "input_kind"):
             if not isinstance(record.get(key), str) or not record[key].strip():
                 raise ValueError(f"Missing {key} for {rule_id}")
+        parameters = record.get("check_parameters", {})
+        if not isinstance(parameters, dict) or any(
+            not isinstance(key, str) or not key.strip() for key in parameters
+        ):
+            raise ValueError(f"Invalid check_parameters for {rule_id}")
+
+        overrides = record.get("parameter_overrides", [])
+        if not isinstance(overrides, (list, tuple)):
+            raise ValueError(f"Invalid parameter_overrides for {rule_id}")
+        used_versions = set()
+        validated_overrides = []
+        for override in overrides:
+            if not isinstance(override, dict) or set(override) != {
+                "effective_from", "check_parameters"
+            }:
+                raise ValueError(f"Invalid parameter override for {rule_id}")
+            when = parse_stable_core_version(override["effective_from"])
+            changes = override["check_parameters"]
+            if (when is None or when < introduced or when in used_versions
+                    or not isinstance(changes, dict) or not changes
+                    or any(not isinstance(k, str) or not k.strip() for k in changes)):
+                raise ValueError(f"Invalid parameter override for {rule_id}")
+            used_versions.add(when)
+            validated_overrides.append((when, deepcopy(changes)))
+
         seen.add(rule_id)
-        checked.append((introduced, dict(record)))
+        validated = deepcopy(record)
+        validated["check_parameters"] = deepcopy(parameters)
+        validated["parameter_overrides"] = sorted(validated_overrides)
+        checked.append((introduced, validated))
     return checked
+
+
+def _policy_for_target(record, target):
+    """Resolve patch/release-specific policy as data, not scanner logic."""
+    selected = deepcopy(record)
+    parameters = selected["check_parameters"]
+    effective = None
+    for when, changes in selected.pop("parameter_overrides", []):
+        if when <= target:
+            parameters.update(deepcopy(changes))
+            effective = f"{when[0]}.{when[1]}.{when[2]}"
+    selected["policy_applied_from"] = effective
+    return selected
 
 
 def select_compatibility_rules(installed_version, target_version, *, registry=RULE_REGISTRY):
@@ -109,6 +173,8 @@ def select_compatibility_rules(installed_version, target_version, *, registry=RU
 
     ``families_without_registered_rules`` describes registry coverage only.
     It does not classify official breaking changes or dynamic correlation.
+    Selected descriptors contain resolved ``check_parameters`` for the target
+    version; they do not execute a check or establish compatibility.
     """
     validated = _validated_registry(registry)
     installed = parse_stable_core_version(installed_version)
@@ -139,7 +205,7 @@ def select_compatibility_rules(installed_version, target_version, *, registry=RU
 
     crossed = _crossed_release_families(installed, target)
     selected = [
-        record for introduced, record in validated
+        _policy_for_target(record, target) for introduced, record in validated
         if installed < introduced <= target
     ]
     selected.sort(key=lambda record: (record["introduced_in"], record["rule_id"]))
