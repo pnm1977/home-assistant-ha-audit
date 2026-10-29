@@ -35,6 +35,8 @@ POWER_SNAPSHOT = Path("/config/investigation_evidence.json")
 MAINTENANCE_SNAPSHOT = Path("/config/investigation_maintenance_evidence.json")
 RECURRENCE_REPORT = Path("/config/log_recurrence.json")
 RUN_STATE = Path("/config/ha_audit_run_status.json")
+CORE_READINESS = Path("/config/update_readiness_audit.json")
+CORE_CORRELATION = Path("/config/upgrade_correlation_audit.json")
 MAX_REPORT_BYTES = 256 * 1024
 MAX_HANDOFF_BYTES = 256 * 1024
 MAX_JSON_BYTES = 1024 * 1024
@@ -336,6 +338,168 @@ def load_context() -> dict | None:
             or not isinstance(data.get("investigations"), dict)):
         return None
     return data
+
+
+def current_manual_review_scope() -> tuple[str, str, list[dict]] | None:
+    """List *exact* unassessed official groups in this completed Core audit.
+
+    A stale, inconsistent, or missing report must not accept confirmations.
+    The user does not supply versions or group names independently.
+    """
+    if not report_is_current("summary", REPORT):
+        return None
+    readiness, correlation = read_json(CORE_READINESS), read_json(CORE_CORRELATION)
+    if not isinstance(readiness, dict) or not isinstance(correlation, dict):
+        return None
+    window = readiness.get("core_upgrade_window")
+    scope = correlation.get("scope")
+    summary = correlation.get("summary")
+    rows = correlation.get("correlations")
+    if (not isinstance(window, dict) or window.get("pending") is not True
+            or not isinstance(scope, dict) or scope.get("dynamic_correlation_performed") is not True
+            or not isinstance(summary, dict) or not isinstance(rows, list)
+            or type(summary.get("insufficient_evidence_count")) is not int
+            or type(summary.get("official_crossed_group_count")) is not int
+            or summary["official_crossed_group_count"] != len(rows)):
+        return None
+    installed, target = window.get("installed_version"), window.get("target_version")
+    if (not isinstance(installed, str) or not installed
+            or not isinstance(target, str) or not target):
+        return None
+    # When audit run state exists, both inputs must belong to this run.
+    if RUN_STATE.exists():
+        state = read_json(RUN_STATE)
+        try:
+            started = datetime.fromisoformat(str(state["run_started_at_utc"]).replace("Z", "+00:00"))
+            if (started.tzinfo is None or started.utcoffset() is None
+                    or any(path.stat().st_mtime + 2 < started.timestamp()
+                           for path in (CORE_READINESS, CORE_CORRELATION))):
+                return None
+        except (KeyError, TypeError, ValueError, OSError, OverflowError):
+            return None
+    groups, seen = [], set()
+    for row in rows:
+        if not isinstance(row, dict):
+            return None
+        if row.get("correlation_status") != "insufficient_evidence":
+            continue
+        release, heading = row.get("release_family"), row.get("heading")
+        if (not isinstance(release, str) or not release or len(release) > 40
+                or not isinstance(heading, str) or not heading or len(heading) > 200
+                or (release, heading) in seen):
+            return None
+        seen.add((release, heading))
+        groups.append({"release_family": release, "heading": heading})
+    if len(groups) != summary["insufficient_evidence_count"]:
+        return None
+    return installed, target, groups
+
+
+def save_manual_core_review(release_family: str, official_group: str,
+                            decision: str) -> tuple[int, str]:
+    """Record or revoke an *explicit* user assertion; never infer a clearance."""
+    if decision not in ("confirmed", "remove"):
+        return 400, "Choose a valid manual review action."
+    scope = current_manual_review_scope()
+    if scope is None:
+        return 409, "Current Core compatibility evidence is incomplete or stale. Run HA Audit again."
+    installed, target, groups = scope
+    if not any(row["release_family"] == release_family and row["heading"] == official_group
+               for row in groups):
+        return 400, "This change is not an unassessed group in the latest Core audit."
+    with WRITE_LOCK:
+        data = load_context()
+        if data is None:
+            return 503, "Saved feedback is unreadable; nothing was changed."
+        old = data.get("manual_compatibility_review", {})
+        if not isinstance(old, dict):
+            return 503, "Existing manual review data is invalid; nothing was changed."
+        # Reviews from another version window are kept out of the current input.
+        if (old.get("schema_version") == 1 and old.get("installed_version") == installed
+                and old.get("target_version") == target):
+            reviews = old.get("reviews", [])
+            if not isinstance(reviews, list) or len(reviews) > 100:
+                return 503, "Existing manual reviews are invalid; nothing was changed."
+        else:
+            reviews = []
+        validated = []
+        for row in reviews:
+            if not isinstance(row, dict):
+                return 503, "Existing manual reviews are invalid; nothing was changed."
+            if row.get("release_family") == release_family and row.get("official_group") == official_group:
+                continue
+            validated.append(row)
+        if decision == "confirmed":
+            validated.append({
+                "release_family": release_family,
+                "official_group": official_group,
+                "source": "explicit_user_confirmation",
+                "outcome": "user_checked_no_issue",
+                "confirmed_by_user": True,
+                "reviewed_at": utc_now(),
+            })
+        data["manual_compatibility_review"] = {
+            "schema_version": 1,
+            "installed_version": installed,
+            "target_version": target,
+            "reviews": validated,
+        }
+        try:
+            atomic_save(data)
+        except OSError:
+            return 503, "Could not save manual review; nothing was changed."
+    return 200, ("Manual confirmation saved. Rerun HA Audit to apply it."
+                 if decision == "confirmed" else
+                 "Manual confirmation revoked. Rerun HA Audit to refresh readiness.")
+
+
+def build_manual_core_review() -> str:
+    """Small opt-in section. User confirmation is not automatic evidence."""
+    scope = current_manual_review_scope()
+    if scope is None:
+        return ('<h2>Core compatibility manual review</h2><p class="muted">'
+                'No current, verified Core-change report is available for manual review.</p>')
+    installed, target, groups = scope
+    if not groups:
+        return ('<h2>Core compatibility manual review</h2><p class="muted">'
+                'No change groups currently require manual evidence collection here.</p>')
+    data = load_context()
+    stored = data.get("manual_compatibility_review", {}) if data else {}
+    reviews = (stored.get("reviews", []) if isinstance(stored, dict)
+               and stored.get("installed_version") == installed
+               and stored.get("target_version") == target else [])
+    if not isinstance(reviews, list):
+        reviews = []
+    confirmed = {(r.get("release_family"), r.get("official_group"))
+                 for r in reviews if isinstance(r, dict)
+                 and r.get("source") == "explicit_user_confirmation"
+                 and r.get("confirmed_by_user") is True}
+    rows = []
+    for row in groups:
+        release, heading = row["release_family"], row["heading"]
+        checked = (release, heading) in confirmed
+        decision = "remove" if checked else "confirmed"
+        label = "Revoke my confirmation" if checked else "Save my confirmation"
+        checkbox = ('' if checked else
+                    '<label><input type="checkbox" name="confirmed" value="yes" required> '
+                    'I reviewed the official change and found no issue for this installation.</label>')
+        rows.append(
+            '<div class="focus-card"><strong>' + escape(release) + ' — ' + escape(heading) + '</strong>'
+            + ('<p>Manually confirmed for this exact upgrade.</p>' if checked else
+               '<p class="muted">Not confirmed. Only tick after checking this change yourself.</p>')
+            + '<form method="post" action="">'
+            + '<input type="hidden" name="token" value="' + escape(CSRF_TOKEN) + '">'
+            + '<input type="hidden" name="action" value="manual_core_review">'
+            + '<input type="hidden" name="release_family" value="' + escape(release) + '">'
+            + '<input type="hidden" name="official_group" value="' + escape(heading) + '">'
+            + '<input type="hidden" name="decision" value="' + decision + '">'
+            + checkbox + '<button type="submit">' + escape(label) + '</button></form></div>'
+        )
+    return ('<h2>Core compatibility manual review</h2>'
+            '<p class="muted">Current Core upgrade: ' + escape(installed) + ' → ' + escape(target)
+            + '. These are unassessed changes, not confirmed problems. User reviews are assertions, '
+            'not automatic verification or a safety guarantee. Rerun HA Audit after saving.</p>'
+            '<div class="focus-grid">' + ''.join(rows) + '</div>')
 
 
 def last_audit_power_snapshot() -> dict | None:
@@ -1228,7 +1392,7 @@ pre{border:1px solid GrayText;border-radius:8px;padding:1rem;white-space:pre-wra
 overflow-wrap:anywhere;line-height:1.5;font-size:.9rem}.notice{font-weight:700}
 .error{font-weight:700;color:#b3261e}
 </style></head><body><header><h1>HA Audit</h1><p class="muted">Investigation feedback · focused review</p></header>
-<main>""" + status_note + notice + build_ai_export() + build_focus() + '<h2>Issues needing review</h2>' + build_issues() + """
+<main>""" + status_note + notice + build_ai_export() + build_focus() + build_manual_core_review() + '<h2>Issues needing review</h2>' + build_issues() + """
 <details class="full-summary"><summary>Show complete latest audit summary</summary><pre>""" + escape(read_summary()) + """</pre></details>
 <p class="muted">Investigation feedback is stored privately and preserved across audit runs.</p>
 </main><script src="copy.js" defer></script></body></html>"""
@@ -1317,6 +1481,23 @@ class Handler(BaseHTTPRequestHandler):
             return
         if fields.get("token") != [CSRF_TOKEN]:
             self._send(403, b"Invalid form token", "text/plain; charset=utf-8")
+            return
+        if fields.get("action") == ["manual_core_review"]:
+            required_manual = {"token", "action", "release_family", "official_group", "decision"}
+            if (set(fields) not in (required_manual, required_manual | {"confirmed"})
+                    or any(len(fields.get(key, [])) != 1 for key in required_manual)
+                    or fields["decision"][0] not in ("confirmed", "remove")
+                    or (fields["decision"][0] == "confirmed" and fields.get("confirmed") != ["yes"])
+                    or (fields["decision"][0] == "remove" and "confirmed" in fields)):
+                self._send(400, b"Invalid manual review form", "text/plain; charset=utf-8")
+                return
+            status, message = save_manual_core_review(
+                fields["release_family"][0], fields["official_group"][0], fields["decision"][0]
+            )
+            self._send(status, render_page(message, error=status != 200), "text/html; charset=utf-8")
+            return
+        if "action" in fields:
+            self._send(400, b"Invalid action", "text/plain; charset=utf-8")
             return
         required = ("fingerprint", "status", "note")
         optional = ("power_entity_id", "maintenance_start_local",
