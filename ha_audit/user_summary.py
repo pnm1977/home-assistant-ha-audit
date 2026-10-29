@@ -517,21 +517,19 @@ def render_system_issues(
     add,
     report,
 ):
-    add("")
-    add("SYSTEM ISSUES")
-    add("-" * 58)
-
     if not log_priority_available(
         report
     ):
+        # Keep missing evidence visible without an empty section.
         add(
-            "System Log prioritisation:    UNAVAILABLE"
-        )
-        add(
-            "  Final priority evidence was not produced "
-            "for this run."
+            "System Log prioritisation:    UNAVAILABLE "
+            "(final priority evidence not produced for this run)."
         )
         return
+
+    add("")
+    add("SYSTEM ISSUES")
+    add("-" * 58)
 
     families = [
         item
@@ -1077,7 +1075,6 @@ def build_user_summary(
             )
         )
 
-    add("")
     add("Why:")
     for item in evidence_parts:
         add(
