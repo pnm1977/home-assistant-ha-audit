@@ -2,7 +2,8 @@
 """HA Audit Ingress UI: findings and persistent user investigation feedback.
 
 Feedback is deliberately separate from audit evidence and priority calculations.
-Physical power-control relationships can be recorded as structured user context.
+Physical power-control relationships and daily maintenance schedules can be
+recorded as structured user context, without treating them as verified causes.
 Last-audit Recorder checks are shown as sampled evidence only, never proof of
 cause or reasons to suppress issues.
 It is stored in the app's private /config directory and survives audit runs.
@@ -36,6 +37,9 @@ MAX_JSON_BYTES = 1024 * 1024
 MAX_POST_BYTES = 65536
 MAX_NOTE_LENGTH = 4000
 MAX_POWER_ENTITY_LENGTH = 128
+MAX_MAINTENANCE_TZ_LENGTH = 64
+MAINTENANCE_TIME = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]\Z")
+MAINTENANCE_TZ = re.compile(r"(?:UTC|[A-Za-z][A-Za-z0-9_+\-]*(?:/[A-Za-z0-9_+\-]+){1,3})\Z")
 INGRESS_PROXY = "172.30.32.2"
 ALLOW_LOCALHOST = os.environ.get("HA_AUDIT_WEB_TEST_LOCAL", "") == "1"
 STATUSES = ("Investigating", "Monitoring", "Explained", "Resolved")
@@ -336,8 +340,39 @@ def atomic_save(data: dict) -> None:
                 pass
 
 
+def validate_maintenance_window(start: str, end: str,
+                                timezone_name: str) -> tuple[dict | None, str | None]:
+    """Validate an optional user-entered daily local-time maintenance window.
+
+    This is schedule *context*, not proof that maintenance really occurred.
+    We store the IANA-style timezone name verbatim so future timestamp checks
+    can handle daylight saving correctly; no comparisons are made in this step.
+    """
+    start, end, timezone_name = start.strip(), end.strip(), timezone_name.strip()
+    if not (start or end or timezone_name):
+        return None, None
+    if not (start and end and timezone_name):
+        return None, "Provide start time, end time and timezone, or clear all three."
+    if not MAINTENANCE_TIME.fullmatch(start) or not MAINTENANCE_TIME.fullmatch(end):
+        return None, "Enter maintenance times in 24-hour HH:MM format."
+    if start == end:
+        return None, "Maintenance start and end times must be different."
+    if (len(timezone_name) > MAX_MAINTENANCE_TZ_LENGTH
+            or not MAINTENANCE_TZ.fullmatch(timezone_name)):
+        return None, "Enter an IANA timezone such as Europe/London."
+    return {
+        "schedule": "daily",
+        "start_local": start,
+        "end_local": end,
+        "timezone": timezone_name,
+    }, None
+
+
 def save_feedback(fingerprint: str, status: str, note: str,
-                  power_entity_id: str = "") -> tuple[int, str]:
+                  power_entity_id: str = "",
+                  maintenance_start_local: str | None = None,
+                  maintenance_end_local: str | None = None,
+                  maintenance_timezone: str | None = None) -> tuple[int, str]:
     if status not in STATUSES:
         return 400, "Choose a valid investigation status."
     note = note.strip()
@@ -349,6 +384,25 @@ def save_feedback(fingerprint: str, status: str, note: str,
         return 400, "Enter a valid switch entity ID, or leave the field blank."
     if not fingerprint or len(fingerprint) > 100:
         return 400, "Invalid finding identifier."
+
+    # Old forms/callers without maintenance fields leave the existing schedule
+    # untouched. The new UI sends all three fields (even when intentionally
+    # cleared), so blanking them removes a previously saved schedule.
+    has_maintenance_fields = any(value is not None for value in (
+        maintenance_start_local, maintenance_end_local, maintenance_timezone
+    ))
+    maintenance_window = None
+    if has_maintenance_fields:
+        if not all(isinstance(value, str) for value in (
+                maintenance_start_local, maintenance_end_local,
+                maintenance_timezone)):
+            return 400, "Invalid maintenance fields."
+        maintenance_window, error = validate_maintenance_window(
+            maintenance_start_local, maintenance_end_local,
+            maintenance_timezone
+        )
+        if error:
+            return 400, error
 
     # Accept only an ID from the current evidence, not arbitrary file/data keys.
     matching = next(
@@ -372,7 +426,11 @@ def save_feedback(fingerprint: str, status: str, note: str,
         timestamp = utc_now()
         entry = {"at_utc": timestamp, "status": status, "note": note,
                  "power_entity_id": power_entity_id, "source": "user_feedback"}
-        data["investigations"][fingerprint] = {
+        if has_maintenance_fields:
+            # Preserve an auditable record of the user's schedule changes,
+            # including deliberate removal (None).
+            entry["maintenance_window"] = maintenance_window
+        updated = {
             **existing,
             "family_id": str(matching.get("family_id", ""))[:100],
             "title": str(matching.get("title", "Unnamed issue"))[:200],
@@ -382,6 +440,12 @@ def save_feedback(fingerprint: str, status: str, note: str,
             "updated_at_utc": timestamp,
             "history": [*history, entry],
         }
+        if has_maintenance_fields:
+            if maintenance_window is None:
+                updated.pop("maintenance_window", None)
+            else:
+                updated["maintenance_window"] = maintenance_window
+        data["investigations"][fingerprint] = updated
         try:
             atomic_save(data)
         except OSError:
@@ -603,12 +667,24 @@ def build_issues() -> str:
         old_status = saved.get("status", "Not reviewed")
         old_note = saved.get("note", "")
         old_power_entity = saved.get("power_entity_id", "")
+        old_window = saved.get("maintenance_window", {})
+        if not isinstance(old_window, dict) or old_window.get("schedule") != "daily":
+            old_window = {}
+        old_maintenance_start = old_window.get("start_local", "")
+        old_maintenance_end = old_window.get("end_local", "")
+        old_maintenance_tz = old_window.get("timezone", "")
         if not isinstance(old_status, str) or old_status not in STATUSES:
             old_status = "Not reviewed"
         if not isinstance(old_note, str):
             old_note = ""
         if not isinstance(old_power_entity, str):
             old_power_entity = ""
+        if not isinstance(old_maintenance_start, str):
+            old_maintenance_start = ""
+        if not isinstance(old_maintenance_end, str):
+            old_maintenance_end = ""
+        if not isinstance(old_maintenance_tz, str):
+            old_maintenance_tz = ""
         options = "".join(
             '<option value="' + escape(item) + '"'
             + (' selected' if item == old_status else '')
@@ -630,6 +706,18 @@ def build_issues() -> str:
             'value="' + escape(old_power_entity) + '"></label>'
             '<p class="muted">Only enter a switch you have confirmed physically powers this device. '
             'This relationship is user-reported until verified against Home Assistant evidence.</p>'
+            '<fieldset><legend>Scheduled maintenance (optional — daily)</legend>'
+            '<p class="muted">Enter all three fields, or leave all blank. Times are local to the '
+            'specified timezone. Overnight windows are supported. This saves a user-reported '
+            'schedule only; automatic timestamp verification is not enabled yet.</p>'
+            '<label>Start (local time) <input name="maintenance_start_local" type="time" step="60" '
+            'value="' + escape(old_maintenance_start) + '"></label>'
+            '<label>End (local time) <input name="maintenance_end_local" type="time" step="60" '
+            'value="' + escape(old_maintenance_end) + '"></label>'
+            '<label>Time zone (IANA) <input name="maintenance_timezone" type="text" '
+            'maxlength="' + str(MAX_MAINTENANCE_TZ_LENGTH) + '" '
+            'placeholder="Europe/London" value="' + escape(old_maintenance_tz) + '"></label>'
+            '</fieldset>'
             '<label>What did you establish or change? '
             '<textarea name="note" maxlength="' + str(MAX_NOTE_LENGTH) + '" rows="8" required placeholder="What happened, why, or what to monitor next?">'
             + escape(old_note) + '</textarea></label>'
@@ -670,7 +758,9 @@ form{display:grid;gap:.6rem;margin-top:.5rem;min-width:230px}label{display:grid;
 #copy-ai-handoff{margin-right:.5rem}.full-summary{margin-top:2rem}
 .full-summary>summary{font-size:1.18rem;font-weight:700}
 .full-summary>pre{margin-top:1rem}
-select,textarea,button{font:inherit;padding:.4rem;border-radius:5px}button{cursor:pointer;justify-self:start}
+select,textarea,input,button{font:inherit;padding:.4rem;border-radius:5px}
+fieldset{border:1px solid GrayText;border-radius:6px;display:grid;gap:.5rem;min-width:0}
+fieldset p{margin:.1rem 0 .3rem}button{cursor:pointer;justify-self:start}
 form textarea{box-sizing:border-box;width:100%;min-height:11rem;line-height:1.5;resize:vertical}
 #ai-handoff-text{width:100%;box-sizing:border-box;margin:.6rem 0 1rem;font: .88rem ui-monospace,monospace;white-space:pre}
 #copy-result{margin-left:.5rem;font-size:.9rem}a{color:LinkText}
@@ -778,13 +868,20 @@ class Handler(BaseHTTPRequestHandler):
         if fields.get("token") != [CSRF_TOKEN]:
             self._send(403, b"Invalid form token", "text/plain; charset=utf-8")
             return
-        if (any(len(fields.get(field, [])) != 1 for field in ("fingerprint", "status", "note"))
-                or len(fields.get("power_entity_id", [""])) != 1):
+        required = ("fingerprint", "status", "note")
+        optional = ("power_entity_id", "maintenance_start_local",
+                    "maintenance_end_local", "maintenance_timezone")
+        if (any(len(fields.get(field, [])) != 1 for field in required)
+                or any(len(fields.get(field, [])) > 1 for field in optional)
+                or any(field not in (*required, *optional, "token") for field in fields)):
             self._send(400, b"Invalid fields", "text/plain; charset=utf-8")
             return
         status, message = save_feedback(
             fields["fingerprint"][0], fields["status"][0], fields["note"][0],
             fields.get("power_entity_id", [""])[0],
+            *(fields[field][0] if field in fields else None for field in (
+                "maintenance_start_local", "maintenance_end_local",
+                "maintenance_timezone")),
         )
         self._send(status, render_page(message, error=status != 200), "text/html; charset=utf-8")
 
