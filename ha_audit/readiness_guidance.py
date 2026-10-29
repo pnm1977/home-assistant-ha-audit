@@ -12,6 +12,74 @@ def _count(value):
         return 0
 
 
+def classify_generic_compatibility_evidence(report, *, installed_version, target_version):
+    """Classify only the evidence quality of the local generic rule report.
+
+    An unregistered rule pack is *not* a failure and *not* a clearance.
+    The caller must still consider official releases, dynamic correlation,
+    deterministic references and other readiness evidence independently.
+    Fail closed if the report is stale, inconsistent, or lacks inspected YAML.
+    """
+    if not isinstance(report, dict):
+        return "incomplete"
+    if (not installed_version or not target_version
+            or report.get("installed_version") != installed_version
+            or report.get("target_version") != target_version):
+        return "incomplete"
+    if report.get("schema_version") != 1:
+        return "incomplete"
+
+    status = report.get("status")
+    count = report.get("selected_rule_count")
+    rules = report.get("rules")
+    failures = report.get("read_failures")
+    if (not isinstance(count, int) or isinstance(count, bool) or count < 0
+            or not isinstance(rules, list) or not isinstance(failures, list)
+            or failures or count != len(rules)):
+        return "incomplete"
+
+    if status == "no_registered_checks":
+        return "not_applicable" if count == 0 else "incomplete"
+    if status != "local_checks_completed" or count == 0:
+        return "incomplete"
+
+    summary = report.get("summary")
+    if not isinstance(summary, dict):
+        return "incomplete"
+    review_count = summary.get("review_required_count")
+    incomplete_count = summary.get("incomplete_rule_count")
+    if (not isinstance(review_count, int) or isinstance(review_count, bool)
+            or not isinstance(incomplete_count, int)
+            or isinstance(incomplete_count, bool) or incomplete_count != 0
+            or review_count < 0):
+        return "incomplete"
+
+    actual_review = 0
+    for rule in rules:
+        if not isinstance(rule, dict):
+            return "incomplete"
+        rule_status = rule.get("status")
+        findings = rule.get("findings")
+        checked = rule.get("files_checked")
+        rule_failures = rule.get("read_failures")
+        if (rule_status not in ("review_required", "no_affected_usage_found")
+                or not isinstance(findings, list)
+                or not isinstance(rule_failures, list) or rule_failures
+                or not isinstance(checked, int) or isinstance(checked, bool)
+                or checked <= 0):
+            return "incomplete"
+        if rule_status == "no_affected_usage_found":
+            if findings:
+                return "incomplete"
+        else:
+            if not findings:
+                return "incomplete"
+            actual_review += 1
+    if actual_review != review_count:
+        return "incomplete"
+    return "review" if actual_review else "checked"
+
+
 def evaluate_core_update_guidance(
     *,
     core_update_pending,
@@ -31,6 +99,9 @@ def evaluate_core_update_guidance(
     compatibility_review_required_count,
     compatibility_manual_review_count,
     known_blocker_count=0,
+    generic_check_report=None,
+    generic_installed_version=None,
+    generic_target_version=None,
 ):
     """Return conservative top-level Core update guidance.
 
@@ -126,6 +197,23 @@ def evaluate_core_update_guidance(
                 "deterministic_yaml_read_failure"
             )
 
+    # Optional until summary_report.py passes the new report (next step).
+    # A clean local check never overrides dynamic correlation uncertainty.
+    generic_check_result = None
+    if generic_check_report is not None:
+        generic_check_result = classify_generic_compatibility_evidence(
+            generic_check_report,
+            installed_version=generic_installed_version,
+            target_version=generic_target_version,
+        )
+        if generic_check_result == "incomplete":
+            incomplete.append("generic_compatibility_evidence_incomplete")
+        if generic_check_result == "review":
+            # Preserve unresolved evidence as INCOMPLETE while retaining the
+            # actionable generic finding in reason_codes.
+            if incomplete:
+                incomplete.append("generic_compatibility_review_required")
+
     if incomplete:
         return {
             "status": STATE_INCOMPLETE,
@@ -134,6 +222,9 @@ def evaluate_core_update_guidance(
         }
 
     review = []
+
+    if generic_check_result == "review":
+        review.append("generic_compatibility_review_required")
 
     if config_state != "valid":
         review.append(
