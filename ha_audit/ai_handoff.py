@@ -59,6 +59,7 @@ SELECTED_SECTIONS = (
     "UPDATE READINESS",
     "OFFICIAL RELEASE EVIDENCE",
     "UPGRADE COMPATIBILITY",
+    "CORE READINESS EVIDENCE TRACE",
     "CONFIGURATION",
     "AVAILABILITY CONTEXT",
     "UNAVAILABLE HISTORY CONTEXT",
@@ -78,6 +79,7 @@ KNOWN_SECTIONS = {
     "DYNAMIC UPGRADE CORRELATION",
     "CORRELATION VALIDATION",
     "UPGRADE COMPATIBILITY",
+    "CORE READINESS EVIDENCE TRACE",
     "CONFIGURATION",
     "ENTITY HEALTH",
     "AVAILABILITY CONTEXT",
@@ -1218,6 +1220,12 @@ def build_ai_handoff(
     lines.append(
         "- Separate **what HA Audit observed**, **what you infer**, and "
         "**what remains unknown**. Do not turn a matching YAML line into a proven cause."
+    )
+    lines.append(
+        "- Distinguish **automatic local checks**, **explicit user confirmations**, "
+        "and **unresolved Core-readiness evidence** using the Core readiness "
+        "evidence trace. A user confirmation is not machine verification. "
+        "An unavailable trace is not proof that uncertainty is resolved."
     )
     lines.append(
         "- Ask whether an unavailable device is meant to be powered or online "
