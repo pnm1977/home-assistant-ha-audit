@@ -1481,7 +1481,7 @@ def build_issues() -> str:
     if not rows:
         return '<p class="muted">No current HIGH or MEDIUM findings with usable identifiers.</p>'
     return (
-        '<div class="table-scroll"><table><thead><tr><th>Priority</th><th>Finding</th>'
+        '<div class="table-scroll"><table class="issues-table"><thead><tr><th>Priority</th><th>Finding</th>'
         '<th>Recurrence</th><th>Your investigation</th></tr></thead><tbody>'
         + "".join(rows) + '</tbody></table></div>'
         '<p class="muted">Saved feedback is private and does not alter audit priorities. '
@@ -1508,6 +1508,16 @@ h2{font-size:1.2rem;margin-top:1.8rem}.muted{opacity:.7;font-size:.92rem}
 .table-scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;text-align:left}
 th,td{border-bottom:1px solid GrayText;padding:.7rem .6rem;font-size:.92rem;vertical-align:top}
 th{font-weight:700}td{min-width:100px}details{margin-top:.3rem}summary{cursor:pointer}
+/* Give explanations a readable column even when investigation forms are open. */
+.issues-table{table-layout:fixed;min-width:1050px}
+.issues-table th:nth-child(1){width:9%}
+.issues-table th:nth-child(2){width:33%}
+.issues-table th:nth-child(3){width:12%}
+.issues-table th:nth-child(4){width:46%}
+.issues-table td{min-width:0;overflow-wrap:anywhere}
+.issues-table form{min-width:0}
+.issues-table input,.issues-table select,.issues-table textarea{max-width:100%;width:100%;box-sizing:border-box}
+.issues-table input[type=checkbox]{width:auto}
 form{display:grid;gap:.6rem;margin-top:.5rem;min-width:230px}label{display:grid;gap:.2rem}
 #copy-ai-handoff{margin-right:.5rem}.full-summary{margin-top:2rem}
 .full-summary>summary{font-size:1.18rem;font-weight:700}
@@ -1522,7 +1532,7 @@ fieldset p{margin:.1rem 0 .3rem}button{cursor:pointer;justify-self:start}
 form textarea{box-sizing:border-box;width:100%;min-height:11rem;line-height:1.5;resize:vertical}
 #ai-handoff-text{width:100%;box-sizing:border-box;margin:.6rem 0 1rem;font: .88rem ui-monospace,monospace;white-space:pre}
 #copy-result{margin-left:.5rem;font-size:.9rem}a{color:LinkText}
-.reader-guidance{max-width:390px;font-size:.88rem;line-height:1.45}
+.reader-guidance{font-size:.88rem;line-height:1.45}
 .reader-guidance p{margin:.55rem 0;overflow-wrap:anywhere}
 .focus-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem}
 .focus-card{border:1px solid GrayText;border-radius:8px;padding:.65rem 1rem}
