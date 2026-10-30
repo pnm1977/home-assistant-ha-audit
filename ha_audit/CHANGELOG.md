@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.30 — Core readiness evidence trace (30 October 2026)
+
+- Added `readiness_trace.py` to explain how initially uncertain Core compatibility groups were reconciled without changing the Core readiness decision logic.
+- Added **CORE READINESS EVIDENCE TRACE** to the detailed current-run summary, showing initial uncertainty, scoped automatic checks, explicit user confirmations, unresolved groups, and decision reason codes.
+- Clearly labelled user confirmations as **not machine-verified** and retained warnings that zero unresolved groups does not mean every official change or UI-managed setting was inspected.
+- Included the trace as a separate section in `ha_audit_ai_handoff.md`, with instructions for receiving assistants to distinguish automatic evidence from user assertions.
+- Added `test_readiness_trace.py` and its GitHub Actions workflow; updated summary-output regression coverage to reflect conservative incomplete-evidence handling.
+- Packaged the new trace module into the add-on Docker image.
+- Validated v0.8.30 against a live Core 2026.8.3 → 2026.10.4 audit: no collector errors, one automatic reconciliation, one accepted manual confirmation, and no unresolved reconciliation groups.
+- Updated the repository README, add-on README, and User Guide to explain the evidence trace and its limits.
+
 ## 0.8.x — Investigation Web UI and evidence-based guidance (through v0.8.23, 29 October 2026)
 
 ### Web UI and investigation workflow
