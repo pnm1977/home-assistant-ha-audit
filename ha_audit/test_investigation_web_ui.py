@@ -301,5 +301,209 @@ class InvestigationWebUITests(unittest.TestCase):
         self.assertIn('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;', page)
 
 
+class ReaderGuidanceWebUITests(unittest.TestCase):
+    """Same-run guidance displayed in the existing investigation table."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        for name in (
+            "ISSUES", "AI_EVIDENCE", "RUN_STATE", "CONTEXT",
+            "POWER_SNAPSHOT", "MAINTENANCE_SNAPSHOT", "RECURRENCE_REPORT",
+        ):
+            path = self.root / getattr(ui, name).name
+            patcher = patch.object(ui, name, path)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+        self.version = "0.8.32"
+        self.now = datetime.now(timezone.utc)
+        self.families = [
+            {"stable_fingerprint": "lfp_zigbee", "family_id": "zigbee_delivery",
+             "title": "Zigbee / ZHA delivery failures", "final_priority": "HIGH",
+             "recurrence": {"class": "RECURRING 24H+"}},
+            {"stable_fingerprint": "lfp_hue", "family_id": "hue_sync",
+             "title": "Hue Sync Box connectivity", "final_priority": "HIGH",
+             "recurrence": {"class": "RECURRING 24H+"}},
+            {"stable_fingerprint": "lfp_robovac", "family_id": "robovac",
+             "title": "RoboVac connectivity", "final_priority": "HIGH",
+             "recurrence": {"class": "RECURRING 24H+"}},
+        ]
+        self.issues = {
+            "audit_version": self.version,
+            "generated_at": self.now.isoformat(),
+            "families": self.families,
+        }
+        self.evidence = {
+            "audit_version": self.version,
+            "generated_at": (self.now + timedelta(seconds=1)).isoformat(),
+            "system_issues": [
+                self._entry("lfp_zigbee", "zigbee_delivery",
+                            "Home Assistant logged errors executing light commands targeting "
+                            "light.kitchen_1; the messages alone do not prove a Zigbee routing fault.",
+                            "Test the affected light once and check for a fresh service-call error.",
+                            "Whether the light was expected online is unknown."),
+                self._entry("lfp_hue", "hue_sync",
+                            "Home Assistant reported an error retrieving data from Hue Sync - BR.",
+                            "Check its current status and whether fresh retrieval errors occur.",
+                            "The reason for the error is not established."),
+                self._entry("lfp_robovac", "robovac",
+                            "Home Assistant timed out waiting for RoboVac Upstairs.",
+                            "If expected online, check whether it responds in Home Assistant.",
+                            "The cause is not established."),
+            ],
+        }
+        self.state = {
+            "status": "complete", "issues_status": "ok",
+            "run_started_at_utc": (self.now - timedelta(seconds=10)).isoformat(),
+            "run_finished_at_utc": (self.now + timedelta(seconds=10)).isoformat(),
+        }
+        self._write()
+        ui.CONTEXT.write_text(json.dumps(ui.initial_context()), encoding="utf-8")
+
+    @staticmethod
+    def _entry(issue_id, family_id, observed, first_check, uncertainty):
+        return {
+            "stable_issue_id": issue_id,
+            "family_id": family_id,
+            "reader_summary": {
+                "observed": observed,
+                "first_check": first_check,
+                "uncertainty": uncertainty,
+            },
+        }
+
+    def _write(self):
+        for path, data in ((ui.ISSUES, self.issues),
+                           (ui.AI_EVIDENCE, self.evidence),
+                           (ui.RUN_STATE, self.state)):
+            path.write_text(json.dumps(data), encoding="utf-8")
+
+    def test_three_real_issue_families_have_guidance_in_issues_page(self):
+        guidance = ui.current_reader_guidance()
+        self.assertEqual(set(guidance), {"lfp_zigbee", "lfp_hue", "lfp_robovac"})
+        page = ui.build_issues()
+        self.assertEqual(page.count('class="reader-guidance"'), 3)
+        for fragment in (
+            "light.kitchen_1", "do not prove a Zigbee routing fault",
+            "Hue Sync - BR", "retrieving data", "RoboVac Upstairs",
+            "Suggested first check", "Still unknown",
+        ):
+            self.assertIn(fragment, page)
+
+    def test_incomplete_missing_or_failed_run_never_shows_guidance(self):
+        for status in ("running", "failed", "complete"):
+            self.state["status"] = status
+            self.state["issues_status"] = "failed" if status == "complete" else "ok"
+            self._write()
+            with self.subTest(status=status):
+                self.assertEqual(ui.current_reader_guidance(), {})
+                self.assertNotIn('class="reader-guidance"', ui.build_issues())
+        ui.RUN_STATE.unlink()
+        self.assertEqual(ui.current_reader_guidance(), {})
+
+    def test_evidence_version_and_installed_version_must_match(self):
+        self.evidence["audit_version"] = "0.8.31"
+        self._write()
+        self.assertEqual(ui.current_reader_guidance(), {})
+        self.evidence["audit_version"] = self.version
+        self._write()
+        with patch.dict(__import__("os").environ, {"HA_AUDIT_VERSION": "0.8.33"}):
+            self.assertEqual(ui.current_reader_guidance(), {})
+
+    def test_rejects_timestamps_from_a_different_run(self):
+        normal = self.evidence["generated_at"]
+        for timestamp in (
+            (self.now - timedelta(minutes=5)).isoformat(),
+            (self.now + timedelta(minutes=5)).isoformat(),
+            "not-a-timestamp", "2026-10-30T10:00:00",  # missing timezone
+        ):
+            self.evidence["generated_at"] = timestamp
+            self._write()
+            with self.subTest(timestamp=timestamp):
+                self.assertEqual(ui.current_reader_guidance(), {})
+        self.evidence["generated_at"] = normal
+        self.issues["generated_at"] = (self.now + timedelta(seconds=5)).isoformat()
+        self._write()  # Evidence cannot predate the issue report in the same run.
+        self.assertEqual(ui.current_reader_guidance(), {})
+
+    def test_rejects_file_older_than_current_run_even_with_valid_json(self):
+        import os
+        os.utime(ui.AI_EVIDENCE,
+                 (self.now.timestamp() - 30, self.now.timestamp() - 30))
+        self.assertEqual(ui.current_reader_guidance(), {})
+
+    def test_identity_and_family_must_match(self):
+        self.evidence["system_issues"][0]["family_id"] = "hue_sync"
+        self._write()
+        self.assertNotIn("light.kitchen_1", ui.build_issues())
+        self.assertIn("RoboVac Upstairs", ui.build_issues())
+        self.evidence["system_issues"][1]["stable_issue_id"] = "another_id"
+        self._write()
+        self.assertNotIn("Hue Sync - BR", ui.build_issues())
+
+    def test_duplicate_issue_id_is_rejected_not_selected_arbitrarily(self):
+        self.evidence["system_issues"].append(
+            self._entry("lfp_hue", "hue_sync", "Conflicting record", "", ""))
+        self._write()
+        guidance = ui.current_reader_guidance()
+        self.assertNotIn("lfp_hue", guidance)
+        self.assertNotIn("Hue Sync - BR", ui.build_issues())
+
+    def test_html_is_escaped_and_unbounded_text_is_shortened(self):
+        self.evidence["system_issues"][1]["reader_summary"] = {
+            "observed": '<script>alert("bad")</script>' + "x" * 800,
+            "first_check": '<img src=x onerror="bad()">',
+            "uncertainty": "<b>unverified</b>",
+        }
+        self._write()
+        page = ui.build_issues()
+        self.assertNotIn("<script>", page)
+        self.assertNotIn("<img src=x", page)
+        self.assertNotIn("<b>unverified</b>", page)
+        self.assertIn("&lt;script&gt;", page)
+        self.assertIn("&lt;img src=x", page)
+        self.assertIn("&lt;b&gt;unverified&lt;/b&gt;", page)
+        self.assertIn("… [truncated]", page)
+        self.assertNotIn('onerror="bad()"', page)
+
+    def test_missing_first_check_is_explicit_and_blank_guidance_is_omitted(self):
+        self.evidence["system_issues"][0]["reader_summary"]["first_check"] = ""
+        self.evidence["system_issues"][1]["reader_summary"] = {
+            "observed": "", "first_check": None, "uncertainty": "",
+        }
+        self._write()
+        page = ui.build_issues()
+        self.assertIn("No specific first check is available from this audit.", page)
+        self.assertEqual(page.count('class="reader-guidance"'), 2)
+
+    def test_guidance_does_not_change_saved_notes_or_audit_priority(self):
+        original_priorities = [family["final_priority"] for family in self.families]
+        context = ui.initial_context()
+        context["investigations"]["lfp_hue"] = {
+            "family_id": "hue_sync", "status": "Monitoring",
+            "note": "Check device next week", "history": [],
+        }
+        ui.CONTEXT.write_text(json.dumps(context), encoding="utf-8")
+        page = ui.build_issues()
+        self.assertIn("Check device next week", page)
+        self.assertIn("Hue Sync - BR", page)
+        self.assertEqual(ui.load_context()["investigations"], context["investigations"])
+        self.assertEqual([f["final_priority"] for f in ui.current_families()],
+                         original_priorities)
+
+    def test_missing_or_invalid_evidence_fails_without_hiding_issues(self):
+        ui.AI_EVIDENCE.unlink()
+        page = ui.build_issues()
+        self.assertIn("RoboVac connectivity", page)
+        self.assertNotIn('class="reader-guidance"', page)
+        ui.AI_EVIDENCE.write_text("not json", encoding="utf-8")
+        self.assertEqual(ui.current_reader_guidance(), {})
+        self.evidence["system_issues"] = "not a list"
+        self._write()
+        self.assertEqual(ui.current_reader_guidance(), {})
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
