@@ -49,6 +49,7 @@ COPY readiness_guidance.py /
 COPY health_guidance.py /
 COPY upgrade_decision.py /
 COPY summary_overview.py /
+COPY readiness_trace.py /
 COPY summary_upgrade.py /
 COPY summary_report.py /
 COPY ai_handoff.py /
