@@ -83,9 +83,19 @@ Its conclusion may be **NO KNOWN BLOCKERS FOUND**, **REVIEW BEFORE UPDATING**, *
 
 **ASSESSMENT INCOMPLETE** means some evidence or coverage was insufficient; it does not itself mean a blocker exists. **NO KNOWN BLOCKERS FOUND** is not a guarantee of safety. General device-health issues are kept separate from Core update readiness.
 
+### Core readiness evidence trace
+
+For a pending Core update, the detailed summary includes a **CORE READINESS EVIDENCE TRACE** showing how initially uncertain compatibility groups were handled:
+
+- **Automatically assessed:** A scoped local rule checked the relevant evidence.
+- **Manually confirmed:** The user explicitly confirmed the condition; this is **not machine verification**.
+- **Still unresolved:** The available evidence did not resolve the uncertainty.
+
+The trace covers reconciliation of initially uncertain groups. It does **not** establish that all official changes or UI-managed settings were inspected, or guarantee update safety.
+
 ## AI handoff and detailed reports
 
-After an audit, use **Share with AI → Copy for AI** or **Download handoff** in the Web UI. The file `ha_audit_ai_handoff.md` combines current findings, investigation context, and sampled evidence. The companion `ha_audit_ai_evidence.json` contains more technical detail.
+After an audit, use **Share with AI → Copy for AI** or **Download handoff** in the Web UI. The file `ha_audit_ai_handoff.md` combines current findings, the Core readiness evidence trace, investigation context, and sampled evidence. The companion `ha_audit_ai_evidence.json` contains more technical detail.
 
 Other reports, including `ha_audit_latest.txt`, `log_priority_final.json`, `log_recurrence.json`, `availability_audit.json`, and `update_readiness_audit.json`, are stored in HA Audit's private app configuration folder (accessible under `/addon_configs` where supported).
 
