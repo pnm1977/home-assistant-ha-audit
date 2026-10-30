@@ -6,7 +6,7 @@ HA Audit helps you identify what deserves attention, understand the evidence beh
 
 **Recommended workflow:** Run → Read → Investigate → Act → Rerun.
 
-> **Current documentation:** HA Audit v0.8.23 (0.8.x series). The project is under active development. Findings are evidence-based guidance, not guarantees that a system is healthy or that an update is safe.
+> **Current documentation:** HA Audit v0.8.30 (0.8.x series). The project is under active development. Findings are evidence-based guidance, not guarantees that a system is healthy or that an update is safe.
 
 ## Run an audit
 
@@ -25,7 +25,7 @@ If an audit stage fails, review the app log. Missing or incomplete evidence must
 - **Configuration:** Validation; active YAML include trees; missing include targets and entity references; possible duplicate automation IDs, aliases and script names; and configuration review candidates.
 - **Devices and availability:** Entity and device inventory; unavailable and unknown states; partial versus whole-device availability; and Recorder history where available.
 - **System Log:** Related warnings and errors grouped into issue families, evidence-based technical priorities, and recurrence across independent audit runs.
-- **Core update readiness:** Official Home Assistant release evidence, locally relevant compatibility checks, evidence coverage, and a conservative recommendation that separates upgrade concerns from general system health.
+- **Core update readiness:** Official Home Assistant release evidence, locally relevant compatibility checks, evidence coverage, an evidence trace and a conservative recommendation that separates upgrade concerns from general system health.
 
 HA Audit retains detailed reports alongside a concise user-facing summary. Not every potential issue is included in the short summary; lower-priority findings remain available in the detailed evidence.
 
@@ -74,9 +74,19 @@ HA Audit keeps **general Home Assistant health** separate from **Core update rea
 
 Review any required checks and remaining uncertainty before updating. HA Audit does **not** install updates.
 
+### Core readiness evidence trace (v0.8.30)
+
+When a Core upgrade is pending, the detailed current-run summary includes **CORE READINESS EVIDENCE TRACE**. It describes how *initially uncertain* compatibility groups were reconciled:
+
+- **Automatically assessed:** A named local rule checked evidence within its limited scope.
+- **Explicitly confirmed by user:** A user acknowledged a condition. This is **not machine verification**.
+- **Still unresolved:** Neither the local checks nor an accepted confirmation resolved the uncertainty.
+
+The trace also shows the number of initially uncertain groups and their reconciliation outcomes. **Zero unresolved groups does not mean every official breaking change, UI-managed setting or integration has been independently verified.** The Core recommendation remains evidence-based, not a guarantee.
+
 ## AI handoff and detailed reports
 
-Use **Copy for AI** or **Download handoff** in the Web UI to obtain `ha_audit_ai_handoff.md`, including the latest audit context and saved investigation notes. The companion `ha_audit_ai_evidence.json` and other detailed JSON reports provide more technical information.
+Use **Copy for AI** or **Download handoff** in the Web UI to obtain `ha_audit_ai_handoff.md`, including the latest audit context, Core readiness evidence trace and saved investigation notes. The companion `ha_audit_ai_evidence.json` and other detailed JSON reports provide more technical information.
 
 The current-run summary is also stored as `ha_audit_latest.txt`. Reports reside in the app's private configuration storage (under `/addon_configs` where Home Assistant exposes it).
 
