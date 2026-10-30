@@ -98,7 +98,7 @@ def render_readiness_trace(add, context):
         if reasons:
             add("Decision reason codes:       " + ", ".join(reasons))
         else:
-            add("Decision reason codes:       none")
+            add("Decision reason codes:       none reported")
     else:
         add("Decision reason codes:       unavailable or inconsistent")
 
@@ -113,12 +113,18 @@ def render_readiness_trace(add, context):
     add(f"Reconciled local checks:     {len(automatic)}")
     add(f"Accepted user confirmations: {len(manual)}")
     add(f"Still unresolved groups:     {remaining}")
+    add("")
+    add("The DYNAMIC UPGRADE CORRELATION section shows the original")
+    add("insufficient-evidence count before these later checks and")
+    add("confirmations. This trace shows the subsequent outcome.")
 
     if automatic:
         add("")
         add("Automatically assessed (local rule evidence):")
         for label, rule, outcome in automatic:
             add(f"  - {label} | rule {rule} | {outcome.replace('_', ' ')}")
+    if any(outcome == "review_required" for _, _, outcome in automatic):
+        add("  A local rule requiring review is NOT a clearance to update.")
     if manual:
         add("")
         add("Explicitly confirmed by user (NOT machine-verified):")
