@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.31 — Readiness reporting clarity (30 October 2026)
+
+- Removed repeated `Readiness verdict: NOT PRODUCED` labels from individual upgrade evidence sections, while retaining the single Core recommendation in **OVERVIEW**.
+- Clarified that the original dynamic-correlation insufficient-evidence count precedes subsequent automatic checks and accepted manual confirmations.
+- Changed `Decision reason codes: none` to `none reported` in the Core readiness evidence trace.
+- Clarified that an automatic check requiring review is not evidence of compatibility clearance.
+- Preserved existing readiness decisions, manual-confirmation safeguards, compatibility-coverage limits, and investigation functionality.
+- Validated regression tests and a live v0.8.31 audit with zero collector errors and unchanged Core guidance.
+
 ## 0.8.30 — Core readiness evidence trace (30 October 2026)
 
 - Added `readiness_trace.py` to explain how initially uncertain Core compatibility groups were reconciled without changing the Core readiness decision logic.
