@@ -487,14 +487,55 @@ def issue_specific_guidance(issue):
             f"If {target} should be reachable, check whether {subject} currently "
             "available in Home Assistant and whether connection-loss entries are still appearing."
         )
-    elif family == "hue_sync" and "Timeout fetching Philips Hue Play HDMI Sync Box" in message_text:
-        names = safe_log_names(messages, r"Timeout fetching Philips Hue Play HDMI Sync Box \(([^()]{1,72}?) at <IP_ADDRESS>\)")
-        target = name_phrase(names) if names else "a Hue Sync Box"
-        observed = f"Home Assistant timed out fetching status from {target}."
-        check = (
-            f"If {target} should be available, check current status in Home Assistant "
-            "and whether new timeouts occur."
+    elif family == "hue_sync" and (
+        "timeout fetching philips hue play hdmi sync box" in message_text.lower()
+        or "error fetching philips hue play hdmi sync box" in message_text.lower()
+    ):
+        names = safe_log_names(
+            messages,
+            r"(?:Timeout|Error) fetching Philips Hue Play HDMI Sync Box "
+            r"\(([^()\n]{1,72}?) at <IP_ADDRESS>\)",
         )
+        target = name_phrase(names) if names else "a Hue Sync Box"
+        timed_out = "timeout fetching philips hue play hdmi sync box" in message_text.lower()
+        if timed_out:
+            observed = f"Home Assistant timed out fetching status from {target}."
+            check = (
+                f"If {target} should be available, check current status in Home Assistant "
+                "and whether new timeouts occur."
+            )
+        else:
+            observed = f"Home Assistant reported an error retrieving data from {target}."
+            check = (
+                f"If {target} should be available, check current status in Home Assistant "
+                "and whether fresh data-retrieval errors occur."
+            )
+    elif family == "robovac" and any(
+        "failed to update vacuum" in str(message).lower()
+        for message in messages
+    ):
+        names = safe_log_names(
+            messages,
+            r"Failed to update vacuum ([^\r\n]{1,72}?)\.\s*Failure count:",
+        )
+        target = name_phrase(names) if names else "a RoboVac vacuum"
+        timed_out = any(
+            "failed to update vacuum" in str(message).lower()
+            and "timed out waiting for response" in str(message).lower()
+            for message in messages
+        )
+        if timed_out:
+            observed = f"Home Assistant timed out waiting for a response from {target} during a vacuum update."
+            check = (
+                f"If {target} should be available, check whether it responds in Home Assistant "
+                "and whether a fresh update timeout occurs. The cause is not yet established."
+            )
+        else:
+            observed = f"Home Assistant reported an update failure for {target}."
+            check = (
+                f"If {target} should be available, check its current status in Home Assistant "
+                "and whether a new update failure occurs before investigating the cause."
+            )
     elif family == "esphome" and "ESPHome API for" in message_text:
         names = safe_log_names(messages, r"ESPHome API for ([a-z0-9_-]{1,72}) @")
         target = name_phrase(names) if names else "an ESPHome device"
@@ -503,7 +544,10 @@ def issue_specific_guidance(issue):
             f"If {target} should be connected, check current Home Assistant "
             "availability before investigating the network."
         )
-    elif family == "zigbee_delivery" and ("Failed to deliver packet" in message_text or "Failed to send request" in message_text):
+    elif family == "zigbee_delivery" and (
+        "Failed to deliver packet" in message_text
+        or "Failed to send request" in message_text
+    ):
         statuses = []
         if "NWK_ROUTE_DISCOVERY_FAILED" in message_text:
             statuses.append("route discovery")
@@ -515,6 +559,28 @@ def issue_specific_guidance(issue):
             "When an affected Zigbee light or switch is expected to respond, "
             "test it once and check for a fresh delivery error. "
             "The named automations may be callers, not the faulty devices."
+        )
+    elif family == "zigbee_delivery" and any(
+        "Error executing service" in str(message)
+        and re.search(r"\blight\.(?:turn_on|turn_off|toggle)\b", str(message), re.IGNORECASE)
+        for message in messages
+    ):
+        # A service-call error does not, by itself, prove Zigbee packet loss.
+        # Keep the observed wording at the level supported by these messages.
+        targets = [
+            entity for entity in unique_strings(as_list(issue.get("affected_entities")))
+            if isinstance(entity, str) and re.fullmatch(r"light\.[a-z0-9_]+", entity)
+        ][:3]
+        named = name_phrase(targets)
+        target_phrase = f" targeting {named}" if named else ""
+        observed = (
+            "Home Assistant logged errors executing light commands"
+            f"{target_phrase}; these messages alone do not identify a Zigbee routing failure."
+        )
+        check = (
+            "If an affected light should respond, test one named light once and check "
+            "for a fresh service-call error. Associated automations or scripts may "
+            "be callers, not the cause."
         )
     elif family == "missing_targets" and "are missing or not currently available" in message_text:
         named = [str(x) for x in as_list(issue.get("affected_entities"))][:2]
