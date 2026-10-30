@@ -1,5 +1,4 @@
 import builtins
-import hashlib
 import io
 import json
 import os
@@ -238,10 +237,6 @@ REPORTS = {
     },
 }
 
-EXPECTED_SHA256 = "46f96a098dda8a58e14f0caf0128b66f33ef751564aa5066e543b026105fefbd"
-EXPECTED_LINE_COUNT = 262
-
-
 class NonClosingStringIO(io.StringIO):
     def close(self):
         pass
@@ -303,69 +298,99 @@ def run_summary():
 
 
 def main():
-    summary = run_summary()
-    digest = hashlib.sha256(
-        summary.encode("utf-8")
-    ).hexdigest()
-    line_count = len(
-        summary.splitlines()
-    )
+    """Protect the current summary contract with a conservative fixture.
 
-    required_text = (
+    The historical fixture deliberately omits the newer completed generic
+    check report and dynamic-reconciliation scope marker. These are evidence
+    gaps, not a proven clear update. The summary must fail closed and report
+    the reason rather than presenting the old NO KNOWN BLOCKERS headline.
+
+    Check section order and high-value text rather than a whole-file hash:
+    adding an explanatory evidence section must not silently break CI.
+    """
+    summary = run_summary()
+    lines = summary.splitlines()
+
+    required_sections = (
         "OVERVIEW",
-        "Home Assistant health:       NO PRIORITY ISSUES",
-        "Core update:                 NO KNOWN BLOCKERS FOUND",
-        "OS update:                   UPDATE AVAILABLE",
-        "Core evidence collection:    COMPLETE",
         "WHY THIS RESULT",
-        "No priority health findings were identified by current checks.",
+        "SYSTEM",
+        "UPDATE READINESS",
         "OFFICIAL RELEASE EVIDENCE",
         "COMPATIBILITY COVERAGE",
         "DYNAMIC UPGRADE CORRELATION",
         "CORRELATION VALIDATION",
         "UPGRADE COMPATIBILITY",
+        "CORE READINESS EVIDENCE TRACE",
+        "CONFIGURATION",
         "NEXT ACTIONS",
         "DETAILED REPORTS",
     )
 
-    missing = [
-        text
-        for text in required_text
-        if text not in summary
-    ]
+    section_positions = []
+    for heading in required_sections:
+        matches = [i for i, line in enumerate(lines) if line.strip() == heading]
+        if len(matches) != 1:
+            raise AssertionError(
+                f"Expected exactly one {heading!r} heading; found {len(matches)}"
+            )
+        section_positions.append(matches[0])
 
-    if missing:
-        raise AssertionError(
-            "Missing expected summary text: "
-            + ", ".join(missing)
-        )
+    if section_positions != sorted(section_positions):
+        raise AssertionError("Summary sections are out of their expected order")
 
-    if line_count != EXPECTED_LINE_COUNT:
-        raise AssertionError(
-            "Summary line count changed: "
-            f"expected {EXPECTED_LINE_COUNT}, "
-            f"got {line_count}"
-        )
+    overview = "\n".join(
+        lines[section_positions[0] : section_positions[1]]
+    )
+    required_overview = (
+        "Home Assistant health:       NO PRIORITY ISSUES",
+        "Core update:                 ASSESSMENT INCOMPLETE",
+        "OS update:                   UPDATE AVAILABLE",
+        "Core evidence collection:    INCOMPLETE",
+        "Config check:                VALID",
+    )
+    for expected in required_overview:
+        if expected not in overview:
+            raise AssertionError(
+                f"Missing expected overview text: {expected!r}\n"
+                f"Actual overview:\n{overview}"
+            )
 
-    if digest != EXPECTED_SHA256:
-        raise AssertionError(
-            "Summary output changed: "
-            f"expected SHA-256 {EXPECTED_SHA256}, "
-            f"got {digest}"
-        )
+    if "NO KNOWN BLOCKERS FOUND" in overview or "PROCEED" in overview:
+        raise AssertionError("Incomplete fixture was incorrectly presented as cleared")
 
-    print("")
-    print("=" * 62)
+    trace = "\n".join(
+        lines[section_positions[9] : section_positions[10]]
+    )
+    required_trace = (
+        "Core guidance:               ASSESSMENT INCOMPLETE",
+        "dynamic_reconciliation_incomplete",
+        "generic_compatibility_evidence_incomplete",
+        "Uncertainty trace:           UNAVAILABLE / INCONSISTENT",
+        "Do not assume that missing trace data means zero unresolved groups.",
+    )
+    for expected in required_trace:
+        if expected not in trace:
+            raise AssertionError(
+                f"Missing required fail-closed trace text: {expected!r}\n"
+                f"Actual trace:\n{trace}"
+            )
+
+    required_text = (
+        "No priority health findings were identified by current checks.",
+        "Core: 2026.8.3 -> 2026.9.4",
+        "OS: 18.2 -> 18.3",
+    )
+    for expected in required_text:
+        if expected not in summary:
+            raise AssertionError(f"Missing required summary text: {expected!r}")
+
     print("HA AUDIT SUMMARY OUTPUT REGRESSION TEST")
-    print("=" * 62)
-    print("Fixture:                     Core + OS update")
-    print("Core evidence path:          COMPLETE")
-    print("Expected summary lines:      PASS")
-    print("Required sections:           PASS")
-    print("Exact output fingerprint:    PASS")
-    print("")
+    print("Fixture:                     Incomplete legacy evidence")
+    print("Required section order:      PASS")
+    print("Core readiness fail-closed:  PASS")
+    print("Evidence trace limitations:  PASS")
     print("RESULT: PASS")
-    print("=" * 62)
 
 
 if __name__ == "__main__":
