@@ -5,6 +5,8 @@ summary_report.py continue to prepare the evidence values; these
 functions only append the existing text sections to the summary.
 """
 
+from readiness_trace import render_readiness_trace
+
 def render_update_readiness(add, context):
     compatibility_verdict_produced = context['compatibility_verdict_produced']
     core_upgrade_window = context['core_upgrade_window']
@@ -942,4 +944,5 @@ def render_upgrade_sections(add, context):
     render_dynamic_upgrade_correlation(add, context)
     render_correlation_validation(add, context)
     render_upgrade_compatibility(add, context)
+    render_readiness_trace(add, context)
 
