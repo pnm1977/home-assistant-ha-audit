@@ -581,6 +581,124 @@ def test_specific_reader_guidance():
     require("not established" in not_failure["observed"], "Unconfirmed failure was claimed")
     print("Issue-specific explanations and cross-audit timing tests passed.")
 
+def test_real_world_message_variations():
+    """Regression examples from the v0.8.31 live audit, with addresses redacted.
+
+    Assertions describe directly observable faults only; they must not
+    invent routing, wireless, integration or configuration root causes.
+    """
+    from ai_evidence import build_reader_summary, issue_specific_guidance
+
+    base = {
+        "direct_failure_evidence": "OBSERVED",
+        "ownership": "DEVICE / LOCAL NETWORK",
+        "availability_context": {"power_expectation": "UNKNOWN"},
+        "configuration_links": [],
+        "affected_entities": [],
+        "recurrence": {"class": "NOT ESTABLISHED"},
+    }
+
+    def observed_for(family, messages, **extra):
+        issue = dict(base, family_id=family, representative_messages=messages, **extra)
+        observed, first_check = issue_specific_guidance(issue)
+        summary = build_reader_summary(issue)
+        require(summary["observed"] == observed, f"{family}: observation lost in reader summary")
+        require(summary["first_check"] == first_check, f"{family}: check lost in reader summary")
+        require("<IP_ADDRESS>" not in observed, f"{family}: address marker leaked to summary")
+        return observed, first_check
+
+    # Live messages report a light service-call error. This is not, on its
+    # own, evidence of Zigbee route discovery or wireless-channel failure.
+    zigbee_message = (
+        "Error executing service: <ServiceCall light.turn_on "
+        "(c:sample): entity_id=['light.living_room_lamp'], "
+        "params=transition=1.0, brightness=255>"
+    )
+    observed, check = observed_for(
+        "zigbee_delivery", [zigbee_message],
+        affected_entities=["light.living_room_lamp", "light.kitchen_2"],
+    )
+    require("errors executing light commands" in observed, "Zigbee: live message not recognised")
+    require("light.living_room_lamp" in observed, "Zigbee: affected entity omitted")
+    require("do not identify a Zigbee routing failure" in observed, "Zigbee: causal caution missing")
+    require("test one named light once" in check, "Zigbee: useful first check missing")
+    require("callers, not the cause" in check, "Zigbee: automation causality assumed")
+
+    # Preserve the original delivery-packet path, including distinct error
+    # wording when direct packet-delivery evidence really is present.
+    observed, check = observed_for(
+        "zigbee_delivery", ["Failed to deliver packet: <TXStatus.NWK_ROUTE_DISCOVERY_FAILED: 208>"],
+    )
+    require("Zigbee commands" in observed and "route discovery" in observed,
+            "Zigbee: existing packet-delivery guidance regressed")
+    require("fresh delivery error" in check, "Zigbee: packet-delivery first check regressed")
+
+    # A generic service error should not be rewritten as a Zigbee fault.
+    observed, check = observed_for(
+        "zigbee_delivery", ["Error executing service: domain=switch, service=turn_on"],
+    )
+    require("Home Assistant reported a failure" in observed,
+            "Zigbee: unsupported message should retain the fallback")
+    require(check == "", "Zigbee: unsupported message produced speculative advice")
+
+    # v0.8.31 reported 'Error fetching', not 'Timeout fetching'.
+    hue_message = (
+        "Error fetching Philips Hue Play HDMI Sync Box "
+        "(Hue Sync - BR at <IP_ADDRESS>) data: Error requesting data from <IP_ADDRESS>"
+    )
+    observed, check = observed_for("hue_sync", [hue_message])
+    require("error retrieving data from Hue Sync - BR" in observed,
+            "Hue Sync: real retrieval error not recognised")
+    require("fresh data-retrieval errors" in check, "Hue Sync: first check missing")
+    require("timed out" not in observed.lower(), "Hue Sync: generic error falsely called timeout")
+
+    observed, check = observed_for(
+        "hue_sync", ["Timeout fetching Philips Hue Play HDMI Sync Box (Hue Sync - BR at <IP_ADDRESS>) data"],
+    )
+    require("timed out fetching status" in observed, "Hue Sync: timeout-specific guidance regressed")
+    require("new timeouts" in check, "Hue Sync: timeout follow-up missing")
+
+    # Actual response-timeout messages identify the vacuum by name.
+    robovac_message = (
+        "Failed to update vacuum RoboVac Upstairs. Failure count: 2/3. "
+        "Error: Timed out waiting for response to sequence number 1052502608"
+    )
+    observed, check = observed_for("robovac", [robovac_message])
+    require("timed out waiting for a response from RoboVac Upstairs" in observed,
+            "RoboVac: real timeout message not recognised")
+    require("If RoboVac Upstairs should be available" in check,
+            "RoboVac: expected-online safeguard missing")
+    require("cause is not yet established" in check,
+            "RoboVac: timeout incorrectly attributed to a network or device fault")
+
+    observed, check = observed_for(
+        "robovac", ["Failed to update vacuum RoboVac Upstairs. Failure count: 1/3. Error: Unknown"],
+    )
+    require("update failure for RoboVac Upstairs" in observed,
+            "RoboVac: non-timeout update failure not recognised")
+    require("new update failure" in check, "RoboVac: non-timeout follow-up missing")
+    require("timed out" not in observed, "RoboVac: non-timeout message falsely called timeout")
+
+    # Unsupported patterns remain cautious instead of guessing causes.
+    for family in ("hue_sync", "robovac"):
+        observed, check = observed_for(family, ["Unexpected generic error without a target"])
+        require("Home Assistant reported a failure" in observed,
+                f"{family}: unsupported message should retain the fallback")
+        require(not check, f"{family}: unsupported message produced guessed advice")
+
+    # Guard previous useful guidance from accidental changes.
+    observed, check = observed_for("shelly", ["Error fetching Shelly EM data: retrieval error"])
+    require("failed to retrieve data from Shelly EM" in observed and "current readings" in check,
+            "Shelly: existing guidance regressed")
+    observed, check = observed_for(
+        "invalid_auth", ["Login attempt with invalid authentication from Mac.lan (<IP_ADDRESS>)."],
+    )
+    require("Mac.lan" in observed and "don't weaken authentication" in check,
+            "Authentication: existing security guidance regressed")
+    print("Real-world troubleshooting guidance regression tests passed.")
+
+
 if __name__ == "__main__":
     main()
     test_specific_reader_guidance()
+    test_real_world_message_variations()
