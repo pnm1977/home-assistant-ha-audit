@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.32 — Troubleshooting guidance reliability (30 October 2026)
+
+- Improved evidence-based explanations and practical first checks for Zigbee/ZHA light-command errors, Hue Sync Box data-retrieval failures, and RoboVac response timeouts using observed log-message formats.
+- Kept uncertainty explicit: a failed light service call does not by itself prove a Zigbee routing fault; a data-retrieval error is not necessarily a timeout; associated automations and scripts are not assumed to be causes.
+- Preserved existing Shelly and invalid-authentication guidance, issue priorities, recurrence classifications, and Core update-readiness decisions.
+- Added regression tests for real-world log-message variations and for cases where the evidence does not justify a specific diagnosis.
+- Added an expandable **What happened / first check** explanation within the existing **Issues needing review** Web UI, showing the observed problem, a non-destructive next check, and what remains unknown.
+- Restricted Web UI guidance to matching evidence from the current completed audit, with safeguards for missing or stale reports and safe HTML rendering; existing investigation controls and saved feedback remain unchanged.
+- Improved the Web UI layout so explanations remain readable alongside investigation status and notes.
+- Verified new structured guidance against a live v0.8.32 audit; checked the Web UI layout in Home Assistant and confirmed the updated regression tests passed.
+
 ## 0.8.31 — Readiness reporting clarity (30 October 2026)
 
 - Removed repeated `Readiness verdict: NOT PRODUCED` labels from individual upgrade evidence sections, while retaining the single Core recommendation in **OVERVIEW**.
