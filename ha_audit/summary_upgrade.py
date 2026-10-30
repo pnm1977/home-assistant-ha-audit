@@ -8,7 +8,6 @@ functions only append the existing text sections to the summary.
 from readiness_trace import render_readiness_trace
 
 def render_update_readiness(add, context):
-    compatibility_verdict_produced = context['compatibility_verdict_produced']
     core_upgrade_window = context['core_upgrade_window']
     correlation_status_label = context['correlation_status_label']
     coverage_reference_status_label = context['coverage_reference_status_label']
@@ -175,14 +174,6 @@ def render_update_readiness(add, context):
             "Official release evidence:    "
             f"{release_status_label}"
         )
-        add(
-            "Readiness verdict:           "
-            + (
-                "PRODUCED"
-                if compatibility_verdict_produced
-                else "NOT PRODUCED"
-            )
-        )
         add("")
         add(
             "Update and Repair evidence is local. "
@@ -190,6 +181,12 @@ def render_update_readiness(add, context):
             "availability, dynamic correlation, correlation validation, "
             "and deterministic compatibility results are shown "
             "separately below."
+        )
+        add(
+            "The overall Core update recommendation is in OVERVIEW; "
+            "the CORE READINESS EVIDENCE TRACE explains the assessed "
+            "uncertainty. Individual evidence sections do not issue "
+            "separate Core update verdicts."
         )
     else:
         add(
@@ -306,9 +303,6 @@ def render_official_release_evidence(add, context):
             )
             add(
                 "Compatibility matching:      SEPARATE"
-            )
-            add(
-                "Readiness verdict:           NOT PRODUCED"
             )
             add("")
             add(
@@ -478,9 +472,6 @@ def render_compatibility_coverage(add, context):
             f"Collector health:             "
             f"{coverage_collector_label}"
         )
-        add(
-            "Readiness verdict:            NOT PRODUCED"
-        )
         add("")
         add(
             "Coverage describes deterministic reference availability "
@@ -533,7 +524,6 @@ def render_dynamic_upgrade_correlation(add, context):
     correlation_strong_groups = context['correlation_strong_groups']
     correlation_surface_count = context['correlation_surface_count']
     correlation_surface_groups = context['correlation_surface_groups']
-    correlation_verdict_produced = context['correlation_verdict_produced']
 
     # Dynamic upgrade correlation
     # ------------------------------------------------------------
@@ -590,14 +580,6 @@ def render_dynamic_upgrade_correlation(add, context):
                 "YES"
                 if correlation_compatibility_assessed
                 else "NO"
-            )
-        )
-        add(
-            "Readiness verdict:            "
-            + (
-                "PRODUCED"
-                if correlation_verdict_produced
-                else "NOT PRODUCED"
             )
         )
         add(
@@ -669,7 +651,6 @@ def render_correlation_validation(add, context):
     validation_report_available = context['validation_report_available']
     validation_status_label = context['validation_status_label']
     validation_unresolved_count = context['validation_unresolved_count']
-    validation_verdict_produced = context['validation_verdict_produced']
 
     # Correlation validation
     # ------------------------------------------------------------
@@ -756,14 +737,6 @@ def render_correlation_validation(add, context):
                 else "NO"
             )
         )
-        add(
-            "Readiness verdict:             "
-            + (
-                "PRODUCED"
-                if validation_verdict_produced
-                else "NOT PRODUCED"
-            )
-        )
         if validation_precision_headings:
             add("")
             add("Precision review:")
@@ -819,7 +792,6 @@ def render_upgrade_compatibility(add, context):
     compatibility_rule_pack_label = context['compatibility_rule_pack_label']
     compatibility_runtime_fetch = context['compatibility_runtime_fetch']
     compatibility_ui_prompts_inspected = context['compatibility_ui_prompts_inspected']
-    compatibility_verdict_produced = context['compatibility_verdict_produced']
     compatibility_window = context['compatibility_window']
     compatibility_yaml_failures = context['compatibility_yaml_failures']
     coverage_status = context['coverage_status']
@@ -893,14 +865,6 @@ def render_upgrade_compatibility(add, context):
                     "PERFORMED"
                     if compatibility_runtime_fetch
                     else "NOT PERFORMED"
-                )
-            )
-            add(
-                "Readiness verdict:           "
-                + (
-                    "PRODUCED"
-                    if compatibility_verdict_produced
-                    else "NOT PRODUCED"
                 )
             )
             add("")
