@@ -1,6 +1,6 @@
 # HA Audit User Guide
 
-**For HA Audit v0.8.23 and later in the 0.8.x series.**
+**For HA Audit v0.8.30 and later in the 0.8.x series.**
 
 HA Audit helps you understand your Home Assistant installation, decide what needs attention, investigate recurring problems, and review evidence before a Home Assistant Core update. It checks configuration, devices, availability, System Log findings, and update-readiness information.
 
@@ -223,7 +223,7 @@ After a successful audit, the Web UI's **Share with AI** section offers:
 - **Download handoff** — downloads the Markdown report.
 - **View / select handoff text** — opens the full text for review or manual copying.
 
-The handoff, `ha_audit_ai_handoff.md`, combines the latest audit findings with saved investigation feedback and automatic sampled evidence. Its instructions ask the receiving AI to distinguish observed facts, reasonable interpretations, and unknowns.
+The handoff, `ha_audit_ai_handoff.md`, combines the latest audit findings with saved investigation feedback and automatic sampled evidence. Its instructions ask the receiving AI to distinguish observed facts, reasonable interpretations, and unknowns. For a pending Core update, it also includes the **Core readiness evidence trace**, distinguishing automatic local checks from explicit user confirmations and unresolved evidence.
 
 For more technical analysis, `ha_audit_ai_evidence.json` contains structured companion data. Use it only if the readable handoff does not contain enough evidence.
 
@@ -258,6 +258,21 @@ Its update guidance is **separate from general Home Assistant health**: an inten
 Official breaking-change evidence may be complete while deterministic compatibility rules cover only part of the upgrade window. Dynamic correlation can add useful context but is not equivalent to a precise compatibility rule. Missing deterministic coverage indicates an **assessment gap**, not a confirmed failure or a number of problems.
 
 Some UI-managed configuration, including custom AI prompts, may be outside the scanner's scope. Read the detailed update-readiness and compatibility reports when HA Audit explains that coverage is incomplete.
+
+### Core readiness evidence trace (v0.8.30)
+
+The detailed current-run summary includes **CORE READINESS EVIDENCE TRACE** for a pending Core upgrade. It shows how compatibility groups initially classified as having insufficient evidence were handled:
+
+- **Initially uncertain groups:** The number of groups requiring reconciliation.
+- **Automatically assessed (local rule evidence):** A named, scoped local check found no affected usage within the evidence it inspected.
+- **Explicitly confirmed by user (NOT machine-verified):** A user acknowledged the relevant change. This is a user assertion, not independent technical verification.
+- **Still unresolved groups:** Groups that remain uncertain after local checks and accepted confirmations.
+
+The trace also displays the Core guidance result and decision reason codes, if any. **`none` means no decision reason code was reported**; it does not mean every change was checked.
+
+For example, an automatic **State conditions** assessment and a manually confirmed **Authentication** group are different kinds of evidence even if both contribute to resolving initial uncertainty.
+
+**Zero unresolved groups is not proof of complete compatibility.** The trace concerns reconciliation of initially insufficient-evidence groups, not exhaustive verification of all official breaking changes or UI-managed settings. Dynamic-only groups can remain outside deterministic reference coverage. The overall update recommendation remains evidence-based and is never a guarantee of safety.
 
 ### Before and after updating
 
@@ -312,7 +327,7 @@ If your file-access app supports `/addon_configs`, open it and locate the folder
 | Which System Log families have what priority? | `log_priority_final.json` |
 | What was the source System Log sample? | `log_audit.json` |
 | Has a finding recurred across audits? | `log_recurrence.json` and `log_issue_history.json` |
-| What evidence supports the Core update result? | `update_readiness_audit.json` and related upgrade reports |
+| What evidence supports the Core update result, including automatic checks and manual confirmations? | `ha_audit_latest.txt` (**CORE READINESS EVIDENCE TRACE**), `update_readiness_audit.json`, and related upgrade reports |
 | What should I share with an AI assistant? | `ha_audit_ai_handoff.md` |
 | What structured evidence supports the AI handoff? | `ha_audit_ai_evidence.json` |
 
