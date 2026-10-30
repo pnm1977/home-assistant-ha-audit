@@ -29,6 +29,7 @@ from power_state_evidence import check_power_state
 PORT = int(os.environ.get("HA_AUDIT_WEB_PORT", "8099"))
 REPORT = Path("/config/ha_audit_latest.txt")
 ISSUES = Path("/config/log_priority_final.json")
+AI_EVIDENCE = Path("/config/ha_audit_ai_evidence.json")
 HANDOFF = Path("/config/ha_audit_ai_handoff.md")
 CONTEXT = Path("/config/investigation_context.json")
 POWER_SNAPSHOT = Path("/config/investigation_evidence.json")
@@ -242,6 +243,116 @@ def current_families() -> list[dict]:
         return []
     return [family for family in payload["families"] if isinstance(family, dict)]
 
+
+
+def current_reader_guidance() -> dict[str, dict[str, str]]:
+    """Return scoped, same-run explanations keyed by stable issue ID.
+
+    AI evidence is optional. Do not show descriptions from an old run, a
+    different audit version, a different issue family, or incomplete reports.
+    The runtime's run marker is required for this additional UI display;
+    older installations without it simply omit the expandable guidance.
+    """
+    if not RUN_STATE.exists():
+        return {}
+    if not (report_is_current("issues", ISSUES)
+            and report_is_current("issues", AI_EVIDENCE)):
+        return {}
+
+    state = read_json(RUN_STATE)
+    priority = read_json(ISSUES)
+    evidence = read_json(AI_EVIDENCE)
+    if not state or not priority or not evidence:
+        return {}
+    version = priority.get("audit_version")
+    if (not isinstance(version, str) or not version
+            or evidence.get("audit_version") != version):
+        return {}
+    running_version = os.environ.get("HA_AUDIT_VERSION")
+    if running_version and running_version != version:
+        return {}
+
+    # A filesystem mtime alone cannot establish that these are the same run:
+    # check both report timestamps against the completed run marker as well.
+    try:
+        def stamp(value):
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                raise ValueError("Timezone missing")
+            return parsed.timestamp()
+
+        started = stamp(state["run_started_at_utc"])
+        finished = stamp(state["run_finished_at_utc"])
+        issue_time = stamp(priority["generated_at"])
+        evidence_time = stamp(evidence["generated_at"])
+        if not (started - 2 <= issue_time <= evidence_time <= finished + 2):
+            return {}
+    except (KeyError, ValueError, TypeError, OverflowError, OSError):
+        return {}
+
+    if not isinstance(evidence.get("system_issues"), list):
+        return {}
+    result = {}
+    duplicates = set()
+    for issue in evidence["system_issues"]:
+        if not isinstance(issue, dict):
+            continue
+        issue_id = issue.get("stable_issue_id")
+        family_id = issue.get("family_id")
+        summary = issue.get("reader_summary")
+        if (not isinstance(issue_id, str) or not issue_id
+                or not isinstance(family_id, str) or not family_id
+                or not isinstance(summary, dict)):
+            continue
+        # Duplicate IDs are ambiguous; do not select an arbitrary entry.
+        if issue_id in result:
+            duplicates.add(issue_id)
+            continue
+        result[issue_id] = {
+            "family_id": family_id,
+            "observed": summary.get("observed"),
+            "first_check": summary.get("first_check"),
+            "uncertainty": summary.get("uncertainty"),
+        }
+    for issue_id in duplicates:
+        result.pop(issue_id, None)
+    return result
+
+
+def render_reader_guidance(family: dict, guidance: dict[str, dict[str, str]]) -> str:
+    """Display existing structured evidence, without inventing a diagnosis."""
+    fingerprint = family.get("stable_fingerprint")
+    if not isinstance(fingerprint, str):
+        return ""
+    item = guidance.get(fingerprint)
+    if not isinstance(item, dict) or item.get("family_id") != family.get("family_id"):
+        return ""
+
+    observed = item.get("observed")
+    first_check = item.get("first_check")
+    uncertainty = item.get("uncertainty")
+    if not any(isinstance(value, str) and value.strip()
+               for value in (observed, first_check, uncertainty)):
+        return ""
+
+    def row(label: str, value: object) -> str:
+        if not isinstance(value, str) or not value.strip():
+            return ""
+        # Avoid unbounded HTML and escape all report-derived text.
+        cleaned = value.strip()
+        safe_value = escape(cleaned[:700] + ("… [truncated]" if len(cleaned) > 700 else ""))
+        return '<p><strong>' + label + ':</strong> ' + safe_value + '</p>'
+
+    return (
+        '<details class="reader-guidance">'
+        '<summary>What happened / first check</summary>'
+        + row("What happened", observed)
+        + row("Suggested first check", first_check or
+              "No specific first check is available from this audit.")
+        + (row("Still unknown", uncertainty) or
+           '<p class="muted">Remaining uncertainty not described in this report.</p>')
+        + '</details>'
+    )
 
 
 def latest_activity_by_fingerprint() -> dict[str, str] | None:
@@ -1229,6 +1340,7 @@ def build_issues() -> str:
     power_snapshot = last_audit_power_snapshot()
     maintenance_snapshot = last_audit_maintenance_snapshot()
     activity_statuses = latest_activity_by_fingerprint()
+    reader_guidance = current_reader_guidance()
     if not context:
         return '<p class="error">Investigation storage cannot be read. Feedback is disabled.</p>'
 
@@ -1360,7 +1472,8 @@ def build_issues() -> str:
         )
         rows.append(
             '<tr><td><strong>' + escape(family.get("final_priority", "")) + '</strong></td>'
-            '<td>' + escape(family.get("title", "Unnamed issue")) + '</td>'
+            '<td>' + escape(family.get("title", "Unnamed issue"))
+            + render_reader_guidance(family, reader_guidance) + '</td>'
             '<td>' + escape(rec_class) + '</td>'
             '<td><div>' + summary + '</div>' + feedback_form + '</td></tr>'
         )
@@ -1409,6 +1522,8 @@ fieldset p{margin:.1rem 0 .3rem}button{cursor:pointer;justify-self:start}
 form textarea{box-sizing:border-box;width:100%;min-height:11rem;line-height:1.5;resize:vertical}
 #ai-handoff-text{width:100%;box-sizing:border-box;margin:.6rem 0 1rem;font: .88rem ui-monospace,monospace;white-space:pre}
 #copy-result{margin-left:.5rem;font-size:.9rem}a{color:LinkText}
+.reader-guidance{max-width:390px;font-size:.88rem;line-height:1.45}
+.reader-guidance p{margin:.55rem 0;overflow-wrap:anywhere}
 .focus-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem}
 .focus-card{border:1px solid GrayText;border-radius:8px;padding:.65rem 1rem}
 .focus-card h3{font-size:1rem;margin:.35rem 0}
